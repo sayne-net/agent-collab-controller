@@ -2191,11 +2191,8 @@ function Get-PhaseString {
 function Get-ActiveTurn {
     $s1 = Get-Seat1Client
     $s2 = Get-Seat2Client
-    if ($script:ActiveTurnOverride) {
-        $badgeTurn.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F9E2AF")
-        $txtActiveTurn.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#11111B")
-        return "$script:ActiveTurnOverride | 👤 Waiting on Human"
-    }
+
+    # 1. All 3 signed off -> Ready to close
     $signHuman = $chkSignHuman.IsChecked
     $signCursor = $chkSignCursor.IsChecked
     $signGemini = $chkSignGemini.IsChecked
@@ -2204,13 +2201,44 @@ function Get-ActiveTurn {
         $txtActiveTurn.Foreground = [System.Windows.Media.Brushes]::White
         return "✅ Complete - Ready to Close"
     }
-    if (-not $signHuman) {
+
+    # 2. Flow control paused or stopped -> Waiting on human
+    $flow = Get-FlowControlString
+    if ($flow -match "STOP|PAUSE") {
         $badgeTurn.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F9E2AF")
         $txtActiveTurn.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#11111B")
-        return "👤 Waiting on Human (Lead)"
+        return "👤 Waiting on Human (Lead) [$flow]"
     }
+
+    # 3. Active Turn Override (Agent responded)
+    if ($script:ActiveTurnOverride) {
+        $s2Esc = [regex]::Escape($s2)
+        if ($script:ActiveTurnOverride -match "$s2Esc|Gemini|AI 2|Agent 2") {
+            $badgeTurn.Background = [System.Windows.Media.Brushes]::DarkBlue
+        } else {
+            $badgeTurn.Background = [System.Windows.Media.Brushes]::DarkCyan
+        }
+        $txtActiveTurn.Foreground = [System.Windows.Media.Brushes]::White
+        return $script:ActiveTurnOverride
+    }
+
+    # 4. Check active agents
     $cRole = if ($cbCursorRole.Text) { $cbCursorRole.Text } else { "idle" }
     $gRole = if ($cbGeminiRole.Text) { $cbGeminiRole.Text } else { "idle" }
+
+    # Prefer implementer turn first
+    if ($cRole -eq "implement" -and -not $signCursor) {
+        $badgeTurn.Background = [System.Windows.Media.Brushes]::DarkCyan
+        $txtActiveTurn.Foreground = [System.Windows.Media.Brushes]::White
+        return ("$s1 (implement)")
+    }
+    if ($gRole -eq "implement" -and -not $signGemini) {
+        $badgeTurn.Background = [System.Windows.Media.Brushes]::DarkBlue
+        $txtActiveTurn.Foreground = [System.Windows.Media.Brushes]::White
+        return ("$s2 (implement)")
+    }
+
+    # Active non-idle agents
     if ($cRole -ne "idle" -and -not $signCursor) {
         $badgeTurn.Background = [System.Windows.Media.Brushes]::DarkCyan
         $txtActiveTurn.Foreground = [System.Windows.Media.Brushes]::White
@@ -2221,9 +2249,11 @@ function Get-ActiveTurn {
         $txtActiveTurn.Foreground = [System.Windows.Media.Brushes]::White
         return ("$s2 (" + $gRole + ")")
     }
-    $badgeTurn.Background = [System.Windows.Media.Brushes]::DarkGreen
-    $txtActiveTurn.Foreground = [System.Windows.Media.Brushes]::White
-    return "✅ Complete - Ready to Close"
+
+    # 5. Neither agent active or both signed off -> Waiting on human
+    $badgeTurn.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F9E2AF")
+    $txtActiveTurn.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#11111B")
+    return "👤 Waiting on Human (Lead)"
 }
 
 function Update-UiActiveTurn {
@@ -2642,7 +2672,13 @@ Do not only reply in chat. Do not create AI_COLLAB.md, TASKS.md, or .geminirules
 "@
     }
 
-    $leadDirective = if ($customDirective) { $customDirective } else { "Read $boardPath again and respond to the latest notes from the other agent or the Human Lead." }
+    $leadDirective = if ($customDirective) {
+        $customDirective
+    } elseif ($normRole -eq "advise" -or $phase -eq "advise") {
+        "Read $boardPath again and respond to the latest notes from the other agent or the Human Lead. End your note with `- **Agreed**: <decision>` sentences, or a single `- **Agree**` if the other agent's scratchpad is already right, so consensus auto-promotes to Alignment."
+    } else {
+        "Read $boardPath again and respond to the latest notes from the other agent or the Human Lead."
+    }
     return @"
 $leadDirective
 - Agent: $agentName
