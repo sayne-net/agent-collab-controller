@@ -260,7 +260,7 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
             <RowDefinition Height="Auto"/> <!-- 0: Header & Presets -->
             <RowDefinition Height="Auto"/> <!-- 1: Stoplight & Phase -->
             <RowDefinition Height="Auto"/> <!-- 2: Roles & Issue Tracker -->
-            <RowDefinition Height="*" MinHeight="120"/> <!-- 3: Objective, Alignment & Steven Notes -->
+            <RowDefinition Height="*" MinHeight="120"/> <!-- 3: Objective, Alignment & Human Steering Notes -->
             <RowDefinition Height="*" MinHeight="240"/> <!-- 4: Cursor | Gemini last-response panes -->
             <RowDefinition Height="Auto"/> <!-- 5: Agent Kickoff & Re-prompting -->
             <RowDefinition Height="Auto"/> <!-- 6: Actions -->
@@ -401,7 +401,7 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
             </Grid>
         </Border>
 
-        <!-- 3: Objective, Alignment & Steven Steering Notes -->
+        <!-- 3: Objective, Alignment & Human Steering Notes -->
         <Grid Grid.Row="3" Margin="0,0,0,10">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
@@ -437,7 +437,7 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                 </Grid>
             </Border>
 
-            <!-- Steven (Lead) Steering Notes -->
+            <!-- Human (Lead) Steering Notes -->
             <Border Grid.Column="2" Background="#1E1E2E" CornerRadius="8" Padding="10" Margin="4,0,0,0" BorderBrush="#313244" BorderThickness="1" VerticalAlignment="Stretch">
                 <Grid>
                     <Grid.RowDefinitions>
@@ -1186,15 +1186,15 @@ if ($btnPromoteNotes) {
     $btnPromoteNotes.add_Click({
         $rawNotes = $txtStevenNotes.Text.Trim()
         if ([string]::IsNullOrWhiteSpace($rawNotes) -or $rawNotes -eq "- Active steering notes.") {
-            [System.Windows.MessageBox]::Show("Steven Notes are empty or default. Enter steering notes first.", "Promote Notes", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
+            [System.Windows.MessageBox]::Show("Human Notes are empty or default. Enter steering notes first.", "Promote Notes", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
             return
         }
-        $confirm = [System.Windows.MessageBox]::Show("Promote Steven Notes to Current Objective & Prompt?`n`n[Notes Preview]:`n$rawNotes`n`nNote: This will update the Prompt field and mark blackboard dirty. It will not auto-send or create an issue.", "Confirm Promote Notes", [System.Windows.MessageBoxButton]::YesNo, [System.Windows.MessageBoxImage]::Question)
+        $confirm = [System.Windows.MessageBox]::Show("Promote Human Notes to Current Objective & Prompt?`n`n[Notes Preview]:`n$rawNotes`n`nNote: This will update the Prompt field and mark blackboard dirty. It will not auto-send or create an issue.", "Confirm Promote Notes", [System.Windows.MessageBoxButton]::YesNo, [System.Windows.MessageBoxImage]::Question)
         if ($confirm -eq [System.Windows.MessageBoxResult]::Yes) {
             $clean = $rawNotes -replace '^(?:-\s*|\*\s*)', ''
             $txtPrompt.Text = $clean
             Mark-FormDirty
-            $txtStatus.Text = "Steven Notes promoted to Current Objective & Prompt."
+            $txtStatus.Text = "Human Notes promoted to Current Objective & Prompt."
         }
     })
 }
@@ -1597,7 +1597,7 @@ Do not only reply in chat. Do not create AI_COLLAB.md, TASKS.md, or .geminirules
     }
 
     return @"
-Read $boardPath again and respond to the latest notes from the other agent or Steven.
+Read $boardPath again and respond to the latest notes from the other agent or the Human Lead.
 - Agent: $agentName
 - Assigned Role: $normRole. Stay in that role.
 - Project Phase: $phase
@@ -1973,7 +1973,7 @@ function Clear-FormInMemory {
     $chkSignSteven.IsChecked = $false
     $chkSignCursor.IsChecked = $false
     $chkSignGemini.IsChecked = $false
-    $txtActiveTurn.Text = "Steven (Lead)"
+    $txtActiveTurn.Text = "Human (Lead)"
     $txtIssueNum.Text = ""
     $txtIssueTitle.Text = ""
     if ($chkNewChatKickoff) { $chkNewChatKickoff.IsChecked = $false }
@@ -2005,7 +2005,7 @@ $btnCloseProject.add_Click({
     }
     
     $confirmMsg = if ($allSigned) {
-        "All participants (Steven, Cursor, Gemini) have signed off.`n`nClose this project, archive session history, and reset board to idle?"
+        "All participants (Human, Agent 1, Agent 2) have signed off.`n`nClose this project, archive session history, and reset board to idle?"
     } else {
         "Not all sign-offs are complete.`n`nAre you sure you want to close and archive this project anyway?"
     }
@@ -2024,7 +2024,7 @@ $btnCloseProject.add_Click({
             try {
                 $txtStatus.Text = "Closing issue #$num via gh CLI..."
                 $targetRepo = Get-TargetGitHubRepo
-                $closeArgs = @("issue", "close", $num, "--comment", "Completed with sign-offs from Steven, Cursor, and Gemini.")
+                $closeArgs = @("issue", "close", $num, "--comment", "Completed with sign-offs from Human, Agent 1, and Agent 2.")
                 if ($targetRepo) { $closeArgs += @("--repo", $targetRepo) }
                 & gh @closeArgs
                 $txtStatus.Text = "Closed GitHub Issue #$num."
