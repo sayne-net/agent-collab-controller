@@ -1,12 +1,12 @@
 # Agent Collab Controller (WPF UI)
-# Version 1.2.7
+# Version 1.2.8
 # Standalone dual-session controller for multi-agent collaboration with human-in-the-loop steering.
 
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
 
-$script:AppVersion = "v1.2.7"
+$script:AppVersion = "v1.2.8"
 $script:RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $script:ProjectName = (Split-Path $script:RepoRoot -Leaf)
 $script:GitHubRepo = $null
@@ -1846,19 +1846,67 @@ $script:CompareViewerHeaderInfo = $null
 $script:CompareViewerSeat1Header = $null
 $script:CompareViewerSeat2Header = $null
 
+function Get-AgreedSentences {
+    param([string]$pad)
+    $out = @()
+    if ([string]::IsNullOrEmpty($pad)) { return $out }
+    $pattern = '(?im)^\s*[-*]?\s*`?(?:-\s*)?`?\*\*Agreed\*\*`?\s*:\s*(.+)$'
+    foreach ($m in [regex]::Matches($pad, $pattern)) {
+        $val = $m.Groups[1].Value.Trim().Trim('`').Trim()
+        if ($val -and ($out -notcontains $val)) { $out += $val }
+    }
+    return $out
+}
+
+function Test-HasAgreeToken {
+    param([string]$pad)
+    if ([string]::IsNullOrEmpty($pad)) { return $false }
+    return [regex]::IsMatch($pad, '(?im)^\s*[-*]?\s*`?(?:-\s*)?`?\*\*Agree\*\*`?\s*:?\s*$')
+}
+
+function Get-SharedAgreedLines {
+    param([string]$pad1, [string]$pad2)
+    $left = @(Get-AgreedSentences $pad1)
+    $right = @(Get-AgreedSentences $pad2)
+    $shared = New-Object System.Collections.Generic.List[string]
+    $add = {
+        param($text)
+        foreach ($existing in $shared) {
+            if ($existing.Equals([string]$text, [System.StringComparison]::OrdinalIgnoreCase)) { return }
+        }
+        [void]$shared.Add([string]$text)
+    }
+    if (Test-HasAgreeToken $pad2) { foreach ($s in $left) { & $add $s } }
+    if (Test-HasAgreeToken $pad1) { foreach ($s in $right) { & $add $s } }
+    foreach ($s in $left) {
+        foreach ($t in $right) {
+            if ($s.Equals([string]$t, [System.StringComparison]::OrdinalIgnoreCase)) { & $add $s }
+        }
+    }
+    return @($shared)
+}
+
 function Render-ScratchpadCompareDoc {
     param([string]$text, [string]$seatTitle)
     $doc = New-Object System.Windows.Documents.FlowDocument
     $doc.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#11111B")
     $doc.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#CDD6F4")
-    $doc.FontFamily = New-Object System.Windows.Media.FontFamily("Consolas, Segoe UI, monospace")
-    $doc.FontSize = 12
-    $doc.PagePadding = New-Object System.Windows.Thickness(10, 8, 10, 8)
+    $doc.FontFamily = New-Object System.Windows.Media.FontFamily("Segoe UI")
+    $doc.FontSize = 14
+    $doc.PagePadding = New-Object System.Windows.Thickness(12, 10, 12, 10)
 
     $lines = $text -split "\r?\n"
     foreach ($line in $lines) {
         $p = New-Object System.Windows.Documents.Paragraph
-        $p.Margin = New-Object System.Windows.Thickness(0, 1, 0, 1)
+        $p.LineHeight = 22
+        $top = 0
+        if ($line -match '^\s*-\s+\*\*') { $top = 10 }
+        if ([string]::IsNullOrWhiteSpace($line)) {
+            $p.Margin = New-Object System.Windows.Thickness(0, 6, 0, 6)
+            $line = " "
+        } else {
+            $p.Margin = New-Object System.Windows.Thickness(0, $top, 0, 8)
+        }
 
         $run = New-Object System.Windows.Documents.Run($line)
         if ($line -match '(?i)^\s*[-*]?\s*`?[-*]?\s*`?\*\*(?:Agreed|Agree)\*\*') {
@@ -1906,28 +1954,7 @@ function Update-CompareTurnsViewer {
             $script:CompareViewerRtb2.Document = Render-ScratchpadCompareDoc -text $pad2 -seatTitle $s2
         }
 
-        # Detect shared agreement items
-        $pattern = '(?im)^\s*[-*]?\s*`?[-*]?\s*`?\*\*(?:Agreed|Agree)\*\*:`?\s*(.+)$'
-        $m1 = [regex]::Matches($pad1, $pattern)
-        $m2 = [regex]::Matches($pad2, $pattern)
-        $items1 = @()
-        foreach ($m in $m1) { $val = $m.Groups[1].Value.Trim().TrimEnd('`').Trim(); if ($val) { $items1 += $val } }
-        $items2 = @()
-        foreach ($m in $m2) { $val = $m.Groups[1].Value.Trim().TrimEnd('`').Trim(); if ($val) { $items2 += $val } }
-
-        $matchedAgreed = @()
-        foreach ($it in $items1) {
-            $foundIn2 = ($items2 -contains $it) -or ($items2 | Where-Object { $_ -match [regex]::Escape($it) -or $it -match [regex]::Escape($_) })
-            if ($foundIn2 -and -not ($matchedAgreed -contains $it)) {
-                $matchedAgreed += $it
-            }
-        }
-        foreach ($it in $items2) {
-            $foundIn1 = ($items1 -contains $it) -or ($items1 | Where-Object { $_ -match [regex]::Escape($it) -or $it -match [regex]::Escape($_) })
-            if ($foundIn1 -and -not ($matchedAgreed -contains $it)) {
-                $matchedAgreed += $it
-            }
-        }
+        $matchedAgreed = @(Get-SharedAgreedLines $pad1 $pad2)
 
         $nowStr = Get-Date -Format "HH:mm:ss"
         if ($script:CompareViewerStatus) {
@@ -1969,21 +1996,17 @@ function Show-CompareTurnsViewer {
         
         <!-- Header -->
         <Border Grid.Row="0" Background="#1E1E2E" CornerRadius="6" Padding="10,6" Margin="0,0,0,8" BorderBrush="#313244" BorderThickness="1">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+            <StackPanel>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,0,8">
                     <TextBlock Text="⚖️ SCRATCHPAD COMPARE VIEWER" FontWeight="Bold" FontSize="12" Foreground="#89B4FA" VerticalAlignment="Center"/>
                     <TextBlock Name="txtCompareHeaderInfo" Text="Side-by-Side AI Turns" FontSize="10" Foreground="#BAC2DE" Background="#313244" Padding="6,2" Margin="8,0,0,0" VerticalAlignment="Center"/>
                 </StackPanel>
-                <StackPanel Grid.Column="1" Orientation="Horizontal">
-                    <Button Name="btnComparePromote" Content="✅ Promote Agreed to Alignment" Background="#313244" Foreground="#A6E3A1" Padding="10,3" Margin="0,0,6,0" FontWeight="SemiBold" Cursor="Hand" ToolTip="Promote shared agreed points into Alignment &amp; Decisions"/>
-                    <Button Name="btnCompareCopy" Content="📋 Copy Both" Background="#313244" Foreground="#CDD6F4" Padding="10,3" Margin="0,0,6,0" FontWeight="SemiBold" Cursor="Hand"/>
-                    <Button Name="btnCompareRefresh" Content="🔄 Refresh" Background="#313244" Foreground="#89B4FA" Padding="10,3" FontWeight="SemiBold" Cursor="Hand"/>
+                <StackPanel Orientation="Horizontal">
+                    <Button Name="btnComparePromote" Content="Promote shared lines" Background="#A6E3A1" Foreground="#11111B" Padding="12,4" Margin="0,0,6,0" FontWeight="Bold" Cursor="Hand" ToolTip="Copy a sentence into Alignment when one scratchpad has - **Agreed**: and the other has - **Agree**"/>
+                    <Button Name="btnCompareCopy" Content="Copy Both" Background="#313244" Foreground="#CDD6F4" Padding="10,4" Margin="0,0,6,0" FontWeight="SemiBold" Cursor="Hand"/>
+                    <Button Name="btnCompareRefresh" Content="Refresh" Background="#313244" Foreground="#89B4FA" Padding="10,4" FontWeight="SemiBold" Cursor="Hand"/>
                 </StackPanel>
-            </Grid>
+            </StackPanel>
         </Border>
 
         <!-- Side-by-Side Body Grid -->
@@ -2083,15 +2106,9 @@ function Show-CompareTurnsViewer {
             $pad1 = Get-LastMarkdownBody $raw "(?:###|##)\s+(?:$s1Esc|Cursor|Agent\s*1|AI\s*1)(?:\s+Scratchpad)?"
             $pad2 = Get-LastMarkdownBody $raw "(?:###|##)\s+(?:$s2Esc|Gemini(?:\s+\(Antigravity\))?|Agent\s*2|AI\s*2)(?:\s+Scratchpad)?"
 
-            $pattern = '(?im)^\s*[-*]?\s*`?[-*]?\s*`?\*\*(?:Agreed|Agree)\*\*:`?\s*(.+)$'
-            $m1 = [regex]::Matches($pad1, $pattern)
-            $m2 = [regex]::Matches($pad2, $pattern)
-            $candidates = @()
-            foreach ($m in $m1) { $val = $m.Groups[1].Value.Trim().TrimEnd('`').Trim(); if ($val) { $candidates += $val } }
-            foreach ($m in $m2) { $val = $m.Groups[1].Value.Trim().TrimEnd('`').Trim(); if ($val -and -not ($candidates -contains $val)) { $candidates += $val } }
-
+            $shared = @(Get-SharedAgreedLines $pad1 $pad2)
             $newItems = @()
-            foreach ($item in $candidates) {
+            foreach ($item in $shared) {
                 if (-not ($txtAlignment.Text -match [regex]::Escape($item))) {
                     $newItems += $item
                 }
@@ -2106,10 +2123,13 @@ function Show-CompareTurnsViewer {
                     $txtAlignment.Text = $appendLines
                 }
                 Save-BlackboardContent
-                if ($script:CompareViewerStatus) { $script:CompareViewerStatus.Text = "✅ Promoted $($newItems.Count) agreed item(s) to Alignment & saved." }
-                $txtStatus.Text = "Promoted $($newItems.Count) agreed item(s) from Compare Viewer to Alignment."
+                if ($script:CompareViewerStatus) { $script:CompareViewerStatus.Text = "Promoted $($newItems.Count) shared line(s) to Alignment and saved." }
+                $txtStatus.Text = "Promoted $($newItems.Count) shared line(s) from Compare Viewer to Alignment."
+            } elseif ($shared.Count -eq 0) {
+                if ($script:CompareViewerStatus) { $script:CompareViewerStatus.Text = "No shared line yet. One scratchpad needs a - **Agreed**: sentence and the other needs - **Agree**." }
+                $txtStatus.Text = "Promote found no shared line."
             } else {
-                if ($script:CompareViewerStatus) { $script:CompareViewerStatus.Text = "All agreed items already exist in Alignment." }
+                if ($script:CompareViewerStatus) { $script:CompareViewerStatus.Text = "Those shared lines are already in Alignment." }
             }
         } catch {
             if ($script:CompareViewerStatus) { $script:CompareViewerStatus.Text = "Promote error: $_" }
@@ -3665,42 +3685,15 @@ function Load-BlackboardIntoUI {
                 }
             }
 
-            # Auto-Promote matching - **Agreed**: / - **Agree**: lines into Alignment & Decisions during advise/plan
+            # Auto-promote a - **Agreed**: sentence when the other scratchpad has - **Agree**, or when both sentences match.
             $currentPhase = if ($cbPhase -and $cbPhase.SelectedItem) { [string]$cbPhase.SelectedItem.Content } else { "" }
             if ($currentPhase -match '^(?:advise|plan)' -and (-not $script:FormDirty)) {
-                $pattern = '(?im)^\s*[-*]?\s*`?[-*]?\s*`?\*\*(?:Agreed|Agree)\*\*:`?\s*(.+)$'
-                $cMatches = [regex]::Matches($newCursorPad, $pattern)
-                $gMatches = [regex]::Matches($newGeminiPad, $pattern)
-                
-                $cAgreed = @()
-                foreach ($m in $cMatches) {
-                    $val = $m.Groups[1].Value.Trim().TrimEnd('`').Trim()
-                    if ($val) { $cAgreed += $val }
-                }
-                
-                $gAgreed = @()
-                foreach ($m in $gMatches) {
-                    $val = $m.Groups[1].Value.Trim().TrimEnd('`').Trim()
-                    if ($val) { $gAgreed += $val }
-                }
-                
+                $sharedLines = @(Get-SharedAgreedLines $newCursorPad $newGeminiPad)
                 $newAgreedItems = @()
-                foreach ($item in $cAgreed) {
-                    $found = ($gAgreed -contains $item) -or ($gAgreed | Where-Object { $_ -match [regex]::Escape($item) -or $item -match [regex]::Escape($_) })
-                    if ($found) {
-                        $alreadyInAlign = ($txtAlignment.Text -match [regex]::Escape($item))
-                        if (-not $alreadyInAlign -and -not ($newAgreedItems -contains $item)) {
-                            $newAgreedItems += $item
-                        }
-                    }
-                }
-                foreach ($item in $gAgreed) {
-                    $found = ($cAgreed -contains $item) -or ($cAgreed | Where-Object { $_ -match [regex]::Escape($item) -or $item -match [regex]::Escape($_) })
-                    if ($found) {
-                        $alreadyInAlign = ($txtAlignment.Text -match [regex]::Escape($item))
-                        if (-not $alreadyInAlign -and -not ($newAgreedItems -contains $item)) {
-                            $newAgreedItems += $item
-                        }
+                foreach ($item in $sharedLines) {
+                    $alreadyInAlign = ($txtAlignment.Text -match [regex]::Escape($item))
+                    if (-not $alreadyInAlign -and -not ($newAgreedItems -contains $item)) {
+                        $newAgreedItems += $item
                     }
                 }
                 
