@@ -393,10 +393,7 @@ $mainXaml = @"
                 <StackPanel Orientation="Horizontal">
                     <Button Content="💾 Apply Blackboard" Background="#89B4FA" Foreground="#11111B" FontWeight="Bold" Margin="0,0,6,0" Padding="12,5"/>
                     <Button Content="🏁 Close Project" Background="#313244" Foreground="#A6E3A1" FontWeight="Bold" Margin="0,0,6,0" Padding="10,5"/>
-                    <Button Content="🧹 Reset (No Save)" Background="#45475A" Foreground="#CDD6F4" Margin="0,0,6,0" Padding="10,5"/>
                     <Button Content="🔄 Reset (Auto-Save)" Background="#F38BA8" Foreground="#11111B" FontWeight="Bold" Margin="0,0,6,0" Padding="10,5"/>
-                    <Button Content="📦 Save Snapshot" Margin="0,0,6,0" Padding="8,5"/>
-                    <Button Content="📂 Load State" Margin="0,0,6,0" Padding="8,5"/>
                     <Button Content="📄 Blackboard Output" Background="#45475A" Foreground="#89B4FA" Margin="0,0,6,0" Padding="8,5"/>
                     <Button Content="🔍 Review Diff" Background="#45475A" Foreground="#A6E3A1" Margin="0,0,6,0" Padding="8,5"/>
                 </StackPanel>
@@ -893,10 +890,7 @@ $closeXaml = @"
                     <Border Background="#A6E3A1" CornerRadius="4" Margin="0,0,6,0">
                         <Button Content="🏁 Close Project (Ready)" Background="#A6E3A1" Foreground="#11111B" FontWeight="Bold" BorderBrush="#A6E3A1" Padding="14,5"/>
                     </Border>
-                    <Button Content="🧹 Reset (No Save)" Background="#313244" Foreground="#CDD6F4" Margin="0,0,6,0" Padding="10,5"/>
                     <Button Content="🔄 Reset (Auto-Save)" Background="#313244" Foreground="#CDD6F4" Margin="0,0,6,0" Padding="10,5"/>
-                    <Button Content="📦 Save Snapshot" Margin="0,0,6,0" Padding="8,5"/>
-                    <Button Content="📂 Load State" Margin="0,0,6,0" Padding="8,5"/>
                     <Button Content="📄 Blackboard Output" Background="#45475A" Foreground="#89B4FA" Margin="0,0,6,0" Padding="8,5"/>
                     <Button Content="🔍 Review Diff" Background="#45475A" Foreground="#A6E3A1" Margin="0,0,6,0" Padding="8,5"/>
                 </StackPanel>

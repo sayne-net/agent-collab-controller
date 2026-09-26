@@ -1,12 +1,12 @@
 # Agent Collab Controller (WPF UI)
-# Version 1.2.5
+# Version 1.2.6
 # Standalone dual-session controller for multi-agent collaboration with human-in-the-loop steering.
 
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
 
-$script:AppVersion = "v1.2.5"
+$script:AppVersion = "v1.2.6"
 $script:RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $script:ProjectName = (Split-Path $script:RepoRoot -Leaf)
 $script:GitHubRepo = $null
@@ -571,14 +571,11 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
 
-            <!-- Left Controls: Apply, Close Project, Reset, Snapshots, Text Output Button -->
+            <!-- Left Controls: Apply, Close Project, Reset, Text Output -->
             <StackPanel Orientation="Horizontal">
                 <Button Name="btnApply" Content="💾 Apply Blackboard" Background="#89B4FA" Foreground="#11111B" FontWeight="Bold" Margin="0,0,6,0" Padding="12,5"/>
                 <Button Name="btnCloseProject" Content="🏁 Close Project" Background="#313244" Foreground="#A6E3A1" FontWeight="Bold" Margin="0,0,6,0" Padding="10,5" ToolTip="Audit git, optionally commit allowlisted files and ff-only push, then archive and idle"/>
-                <Button Name="btnResetNoSave" Content="🧹 Reset (No Save)" Background="#45475A" Foreground="#CDD6F4" FontWeight="SemiBold" Margin="0,0,6,0" Padding="10,5" ToolTip="Clear prompt and idle agents in UI only; disk blackboard and history unchanged (later Apply keeps agent scratchpads)"/>
-                <Button Name="btnReset" Content="🔄 Reset (Auto-Save)" Background="#F38BA8" Foreground="#11111B" FontWeight="Bold" Margin="0,0,6,0" Padding="10,5" ToolTip="Optional named snapshot to .ai/history, then clears prompt and idles agents"/>
-                <Button Name="btnSaveState" Content="📦 Save Snapshot" Margin="0,0,6,0" Padding="8,5"/>
-                <Button Name="btnLoadState" Content="📂 Load State" Margin="0,0,6,0" Padding="8,5"/>
+                <Button Name="btnReset" Content="🔄 Reset (Auto-Save)" Background="#F38BA8" Foreground="#11111B" FontWeight="Bold" Margin="0,0,6,0" Padding="10,5" ToolTip="Archive the current board to .ai/history, then clear the form for the next task on this same file"/>
                 <Button Name="btnViewText" Content="📄 Blackboard Output" Background="#45475A" Foreground="#89B4FA" Margin="0,0,6,0" Padding="8,5" ToolTip="Open separate window showing live blackboard markdown text"/>
                 <Button Name="btnViewDiff" Content="🔍 Review Diff" Background="#45475A" Foreground="#A6E3A1" Margin="0,0,6,0" Padding="8,5" ToolTip="Open window showing git diff of uncommitted changes"/>
             </StackPanel>
@@ -798,10 +795,7 @@ $btnRepromptBoth       = $window.FindName("btnRepromptBoth")
 $btnCompareNotes       = $window.FindName("btnCompareNotes")
 $btnApply              = $window.FindName("btnApply")
 $btnCloseProject        = $window.FindName("btnCloseProject")
-$btnResetNoSave        = $window.FindName("btnResetNoSave")
 $btnReset              = $window.FindName("btnReset")
-$btnSaveState          = $window.FindName("btnSaveState")
-$btnLoadState          = $window.FindName("btnLoadState")
 $btnViewText           = $window.FindName("btnViewText")
 $btnViewDiff           = $window.FindName("btnViewDiff")
 $btnPromoteNotes       = $window.FindName("btnPromoteNotes")
@@ -917,10 +911,7 @@ $script:MasterTooltips = @{
     # Bottom Toolbar Actions
     "btnApply"             = "Write current form configuration to active blackboard.md on disk"
     "btnCloseProject"      = "Audit git, archive session to .ai/history, and reset board to idle"
-    "btnResetNoSave"       = "Clear UI prompt and reset roles in UI without saving to disk"
-    "btnReset"             = "Snapshot session to .ai/history and reset board to idle"
-    "btnSaveState"         = "Save a named snapshot of current blackboard state"
-    "btnLoadState"         = "Load a previously saved snapshot"
+    "btnReset"             = "Archive the current board to .ai/history and clear the form for the next task on this same file"
     "btnViewText"          = "Open live blackboard markdown text viewer window"
     "btnViewDiff"          = "Open Review Diff viewer showing uncommitted working tree changes"
     "btnOpenHistory"       = "Open .ai/history directory in File Explorer"
@@ -2808,11 +2799,6 @@ $btnCloseProject.add_Click({
     $txtStatus.Text = "Project closed & archived to .ai/history. Board reset to idle. New Chat armed for next project."
 })
 
-$btnResetNoSave.add_Click({
-    Clear-FormInMemory
-    $txtStatus.Text = "Reset form in UI only — disk blackboard unchanged."
-})
-
 $btnReset.add_Click({
     Auto-ArchiveSnapshot
     Clear-FormInMemory
@@ -2983,35 +2969,6 @@ function Invoke-SendKickoffPrompt {
 if ($btnCopyKickoffPrompt) { $btnCopyKickoffPrompt.add_Click({ Invoke-CopyKickoffPrompt }) }
 if ($btnSendKickoffPrompt) { $btnSendKickoffPrompt.add_Click({ Invoke-SendKickoffPrompt }) }
 if ($cbKickoffTarget) { $cbKickoffTarget.add_SelectionChanged({ Update-KickoffButtonTooltips }) }
-
-$btnSaveState.add_Click({
-    try {
-        $name = [Microsoft.VisualBasic.Interaction]::InputBox("Named snapshot (no tokens/passwords). File goes to .ai/saved/ — git add only after a secrets glance:", "Save Project State", "project-" + (Get-Date -Format "yyyyMMdd-HHmm"))
-        if ($name) {
-            $base = [System.IO.Path]::GetFileNameWithoutExtension($name.Trim())
-            $safe = ($base -replace '[^a-zA-Z0-9_-]', '-')
-            if (-not $safe) { $safe = "project-" + (Get-Date -Format "yyyyMMdd-HHmm") }
-            $name = $safe + ".md"
-            $target = Join-Path $script:SavedDir $name
-            Save-BlackboardContent -customPath $target
-            [System.Windows.MessageBox]::Show("Saved state to .ai/saved/" + $name, "State Saved", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
-        }
-    } catch { $txtStatus.Text = "Error saving state: $_" }
-})
-
-$btnLoadState.add_Click({
-    try {
-        $dlg = New-Object System.Windows.Forms.OpenFileDialog
-        $dlg.InitialDirectory = $script:AiDir
-        $dlg.Filter = "Markdown files (*.md)|*.md|All files (*.*)|*.*"
-        if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
-            $loadedContent = [System.IO.File]::ReadAllText($dlg.FileName)
-            [System.IO.File]::WriteAllText($script:BlackboardPath, $loadedContent, [System.Text.Encoding]::UTF8)
-            Load-BlackboardIntoUI
-            $txtStatus.Text = "Loaded state from: " + [System.IO.Path]::GetFileName($dlg.FileName)
-        }
-    } catch { $txtStatus.Text = "Error loading state: $_" }
-})
 
 $btnOpenHistory.add_Click({
     try {
