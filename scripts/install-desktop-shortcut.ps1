@@ -10,7 +10,7 @@ if (-not (Test-Path $scriptPath)) {
 }
 
 $WshShell = New-Object -ComObject WScript.Shell
-$shortcutPath = Join-Path $desktop "Blackboard Controller.lnk"
+$shortcutPath = Join-Path $desktop "Agent Collab Controller.lnk"
 $Shortcut = $WshShell.CreateShortcut($shortcutPath)
 
 # Check if pwsh (PowerShell 7) is available, otherwise use powershell.exe
@@ -23,7 +23,7 @@ $Shortcut.TargetPath = $pwshPath
 $Shortcut.Arguments = "-STA -NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`""
 $Shortcut.WorkingDirectory = $repo
 $Shortcut.IconLocation = "powershell.exe,0"
-$Shortcut.Description = "Dual-Session Blackboard Controller"
+$Shortcut.Description = "Agent Collab Controller"
 $Shortcut.Save()
 
 Write-Host "============================================================" -ForegroundColor Cyan

@@ -72,6 +72,34 @@ Ensure your `.gitignore` contains:
    - When all tasks and verification steps are complete, all 3 participants sign off (`[x]`).
    - Click **🏁 Close Project** to archive the session tape to `.ai/history/` and reset the board.
 
+> [!TIP]
+> **Click-to-Copy Board Path**: The top bar of the controller displays the active blackboard path (`📋 Board: ...`). Click it at any time to instantly copy the full path to your clipboard.
+
+---
+
+## Setting Up Your Agents
+
+The controller is **zero-overhead and zero-daemon**: agents do not need background services, socket listeners, or proprietary extensions. They coordinate entirely through your filesystem using their native file read and write tools.
+
+### Option A: Automatic Grounding via Project Rules & Skills (Recommended)
+Place the included agent instruction files in your repository so your agents automatically follow the protocol:
+
+1. **For Cursor**:
+   - Copy `.cursor/rules/agent-collab.mdc` to `.cursor/rules/` in your project. Cursor will automatically adhere to the dual-session protocol whenever `.ai/blackboard.md` exists.
+2. **For Antigravity, Claude Code, Gemini CLI, or custom agents**:
+   - Copy `.agents/skills/blackboard/SKILL.md` into your agent's skill directory (or include its contents in your agent's instructions).
+   - Alternatively, add this single directive to your agent instructions:
+     > *"Collaborate via `.ai/blackboard.md`. Read your active role and objective. Only update your assigned scratchpad section using targeted replacements. Never race on tracked files."*
+
+### Option B: Zero Setup (Self-Contained Kickoff Prompts)
+Even without pre-configuring agent rules or skills, the controller works out of the box:
+1. In the controller UI, assign roles and click **📋 Copy Agent 1** or **📋 Copy Agent 2** (or use **🚀 Send Agent 1 / 2** to auto-focus and paste).
+2. The generated kickoff prompt injects all required protocol context:
+   - Specific identity (`Agent 1` or `Agent 2`)
+   - Assigned role permissions and hard-stop safety constraints
+   - Canonical absolute path to `.ai/blackboard.md`
+   - Strict instructions to only edit within the agent's assigned scratchpad section
+
 ---
 
 ## Role Matrix

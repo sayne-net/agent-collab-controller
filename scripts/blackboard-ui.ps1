@@ -1,12 +1,12 @@
-# Dual-Session Blackboard Controller (WPF UI)
-# Version 1.5.43
-# Edit this file in place. Do not regenerate it from a scratch generator (that overwrote v1.5.3).
+# Agent Collab Controller (WPF UI)
+# Version 1.0.0
+# Standalone dual-session controller for multi-agent collaboration with human-in-the-loop steering.
 
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
 
-$script:AppVersion = "v1.5.43"
+$script:AppVersion = "v1.0.0"
 $script:RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $script:ProjectName = (Split-Path $script:RepoRoot -Leaf)
 $script:GitHubRepo = $null
@@ -292,7 +292,7 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                 <Button Name="btnUpdateController" Content="🔄 Update App" Background="#313244" Foreground="#89B4FA" Margin="0,0,4,0" Padding="8,3" ToolTip="Check online GitHub for newer controller version, pull, and relaunch" FontWeight="SemiBold"/>
                 <Button Name="btnRelaunch" Content="⏭️ Relaunch" Background="#313244" Foreground="#BAC2DE" Margin="0,0,8,0" Padding="8,3" ToolTip="Relaunch controller script immediately (reloads local code changes)"/>
                 <Border Name="badgeTurn" Background="#45475A" CornerRadius="12" Padding="10,3">
-                    <TextBlock Name="txtActiveTurn" Text="Steven (Lead)" FontWeight="Bold" FontSize="11" Foreground="#A6E3A1"/>
+                    <TextBlock Name="txtActiveTurn" Text="Human (Lead)" FontWeight="Bold" FontSize="11" Foreground="#A6E3A1"/>
                 </Border>
             </StackPanel>
         </Grid>
@@ -313,6 +313,14 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                     <RadioButton Name="rbPause" Content="🟡 PAUSE" Foreground="#F9E2AF" VerticalAlignment="Center" ToolTip="Wait for human input/review"/>
                     <RadioButton Name="rbStop" Content="🔴 ALL STOP" Foreground="#F38BA8" VerticalAlignment="Center" ToolTip="Emergency freeze"/>
                 </StackPanel>
+
+                <!-- Board Path Info Box -->
+                <Border Grid.Column="1" Background="#11111B" CornerRadius="4" Padding="8,3" Margin="8,0,8,0" BorderBrush="#313244" BorderThickness="1" VerticalAlignment="Center" HorizontalAlignment="Center">
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBlock Text="📋 Board: " FontSize="10" Foreground="#6C7086" VerticalAlignment="Center"/>
+                        <TextBlock Name="txtBoardPath" Text="" FontSize="10" Foreground="#89B4FA" FontFamily="Consolas, monospace" VerticalAlignment="Center" ToolTip="Active Blackboard.md path (Click to copy)"/>
+                    </StackPanel>
+                </Border>
 
                 <!-- Phase Selector -->
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
@@ -565,7 +573,21 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
 
 $reader = (New-Object System.Xml.XmlNodeReader $xaml)
 $window = [System.Windows.Markup.XamlReader]::Load($reader)
-$window.Title = "Dual-Session Blackboard Controller - " + $script:AppVersion
+$window.Title = "Agent Collab Controller - " + $script:AppVersion
+
+$txtBoardPath          = $window.FindName("txtBoardPath")
+if ($txtBoardPath) {
+    $txtBoardPath.Text = $script:BlackboardPath
+    $txtBoardPath.Cursor = [System.Windows.Input.Cursors]::Hand
+    $txtBoardPath.add_MouseDown({
+        try {
+            [System.Windows.Clipboard]::SetText($script:BlackboardPath)
+            $txtStatus.Text = "Copied blackboard path to clipboard: $script:BlackboardPath"
+        } catch {
+            $txtStatus.Text = "Failed to copy path: $($_.Exception.Message)"
+        }
+    })
+}
 
 $btnUpdateController   = $window.FindName("btnUpdateController")
 $btnRelaunch           = $window.FindName("btnRelaunch")
@@ -1418,11 +1440,11 @@ function Get-RoleGuidance {
         return "Project phase is TEST. Verify the program/script/UI already landed. Exercise the live controller or script under test (do not relaunch a second blackboard-ui unless asked). Record pass/fail in your scratchpad. FORBIDDEN: new features. After a recorded pass (or N/A with why), set your Agent Roles Sign-off [x] and scratchpad Sign-off: [x]. GO does not mean implement."
     }
     switch (Get-NormalizedRole $role) {
-        "implement" { "You hold IMPLEMENT. Review objective and Alignment in '$boardPath', then land the change. Append progress under your scratchpad heading only. Do not edit the other agent's scratchpad or Steven's notes." }
+        "implement" { "You hold IMPLEMENT. Review objective and Alignment in '$boardPath', then land the change. Append progress under your scratchpad heading only. Do not edit the other agent's scratchpad or the Human Lead's notes." }
         "review"    { "You hold REVIEW. Read the implementer's notes and diff. Record findings in your scratchpad. FORBIDDEN: editing the same tracked files they are changing. GO does not make you implement." }
-        "advise"    { "You hold ADVISE. Analyze and recommend in your scratchpad only. FORBIDDEN: editing tracked repo files, git commit/push, live fabric changes. REQUIRED: Edit '$boardPath' under your scratchpad heading." }
-        "plan"      { "You hold PLAN. Propose approach and risks in your scratchpad. Do not edit tracked files unless Steven says so." }
-        "inventory" { "You hold INVENTORY. Read MCP/hosts/STATUS/INDEX/git log. No live writes. No tracked-file edits except your blackboard scratchpad." }
+        "advise"    { "You hold ADVISE. Analyze and recommend in your scratchpad only. FORBIDDEN: editing tracked repo files, git commit/push, live infrastructure changes. REQUIRED: Edit '$boardPath' under your scratchpad heading." }
+        "plan"      { "You hold PLAN. Propose approach and risks in your scratchpad. Do not edit tracked files unless the Human Lead says so." }
+        "inventory" { "You hold INVENTORY. Read environment/tools/git log. No live writes. No tracked-file edits except your blackboard scratchpad." }
         default     { "You hold IDLE. Read the board. Do not act. Do not edit files. Wait." }
     }
 }
@@ -1433,7 +1455,7 @@ function Get-NonImplementHardStop {
     if ((Get-PhaseString) -eq "closed") {
         return @"
 NOTICE: Project phase is CLOSED. All sign-offs have been completed.
-Hold IDLE. Do not modify files, execute tasks, or make commits unless Steven assigns a new active objective.
+Hold IDLE. Do not modify files, execute tasks, or make commits unless the Human Lead assigns a new active objective.
 
 "@
     }
@@ -1441,8 +1463,8 @@ Hold IDLE. Do not modify files, execute tasks, or make commits unless Steven ass
     if ($r -eq "implement") { return "" }
     return @"
 STOP. Assigned role is $r, not implement.
-FORBIDDEN: editing tracked repository files, git commit/push, live fabric changes (Omada/DNS/Unraid).
-ALLOWED & REQUIRED: Edit '$boardPath' using your file editing tool under your scratchpad section only (append/update; do not wipe Steven or the other agent).
+FORBIDDEN: editing tracked repository files, git commit/push, live production/infrastructure changes.
+ALLOWED & REQUIRED: Edit '$boardPath' using your file editing tool under your scratchpad section only (append/update; do not wipe the Human Lead or the other agent).
 Flow Control GO means continue in this role — it does not promote you to implement.
 If your role is not implement, ignore the GitHub issue's implementation checklist.
 
@@ -2128,33 +2150,33 @@ $btnPresetIdle.add_Click({
 $btnCopyCursorKickoff.add_Click({
     try {
         Save-BlackboardContent
-        $kPrompt = Get-KickoffPromptForAgent -agentName "Cursor" -role $cbCursorRole.Text
+        $kPrompt = Get-KickoffPromptForAgent -agentName "Agent 1" -role $cbCursorRole.Text
         Safe-SetClipboard $kPrompt
-        $txtStatus.Text = "📋 Copied Cursor Kickoff Prompt (" + $cbCursorRole.Text + ") to clipboard."
+        $txtStatus.Text = "📋 Copied Agent 1 Kickoff Prompt (" + $cbCursorRole.Text + ") to clipboard."
     } catch { $txtStatus.Text = "Error copying prompt: $_" }
 })
 
 $btnCopyGeminiKickoff.add_Click({
     try {
         Save-BlackboardContent
-        $kPrompt = Get-KickoffPromptForAgent -agentName "Gemini (Antigravity)" -role $cbGeminiRole.Text
+        $kPrompt = Get-KickoffPromptForAgent -agentName "Agent 2" -role $cbGeminiRole.Text
         Safe-SetClipboard $kPrompt
-        $txtStatus.Text = "📋 Copied Gemini Kickoff Prompt (" + $cbGeminiRole.Text + ") to clipboard."
+        $txtStatus.Text = "📋 Copied Agent 2 Kickoff Prompt (" + $cbGeminiRole.Text + ") to clipboard."
     } catch { $txtStatus.Text = "Error copying prompt: $_" }
 })
 
 $btnSendCursorKickoff.add_Click({
     try {
         Save-BlackboardContent
-        $kPrompt = Get-KickoffPromptForAgent -agentName "Cursor" -role $cbCursorRole.Text
+        $kPrompt = Get-KickoffPromptForAgent -agentName "Agent 1" -role $cbCursorRole.Text
         Safe-SetClipboard $kPrompt
         $doNew = [bool]($chkNewChatKickoff -and $chkNewChatKickoff.IsChecked)
         if (Send-CursorChatPaste -newChat $doNew) {
             Complete-KickoffNewChatOneShot -didNew $doNew
             $chatNote = if ($doNew) { " (New Chat, then off)" } else { "" }
-            $txtStatus.Text = "🚀 Sent Cursor Kickoff Prompt to active Cursor window$chatNote."
+            $txtStatus.Text = "🚀 Sent Agent 1 Kickoff Prompt to active IDE window$chatNote."
         } else {
-            $txtStatus.Text = "📋 Copied Cursor Kickoff to clipboard (Cursor window not found). Focus Cursor and paste."
+            $txtStatus.Text = "📋 Copied Agent 1 Kickoff to clipboard (IDE window not found). Focus Agent 1 and paste."
         }
     } catch { $txtStatus.Text = "Error sending prompt: $_" }
 })
@@ -2162,15 +2184,15 @@ $btnSendCursorKickoff.add_Click({
 $btnSendGeminiKickoff.add_Click({
     try {
         Save-BlackboardContent
-        $kPrompt = Get-KickoffPromptForAgent -agentName "Gemini (Antigravity)" -role $cbGeminiRole.Text
+        $kPrompt = Get-KickoffPromptForAgent -agentName "Agent 2" -role $cbGeminiRole.Text
         Safe-SetClipboard $kPrompt
         $doNew = [bool]($chkNewChatKickoff -and $chkNewChatKickoff.IsChecked)
         if (Send-GeminiChatPaste -newChat $doNew) {
             Complete-KickoffNewChatOneShot -didNew $doNew
-            $chatNote = if ($doNew) { " (New Chat Ctrl+Shift+I then Ctrl+Shift+L, then off)" } else { "" }
-            $txtStatus.Text = "🚀 Sent Gemini Kickoff Prompt to Antigravity$chatNote."
+            $chatNote = if ($doNew) { " (New Chat, then off)" } else { "" }
+            $txtStatus.Text = "🚀 Sent Agent 2 Kickoff Prompt to active IDE window$chatNote."
         } else {
-            $txtStatus.Text = "📋 Copied Gemini Kickoff to clipboard (Antigravity window not found). Focus Antigravity and paste."
+            $txtStatus.Text = "📋 Copied Agent 2 Kickoff to clipboard (IDE window not found). Focus Agent 2 and paste."
         }
     } catch { $txtStatus.Text = "Error sending prompt: $_" }
 })
@@ -2178,28 +2200,28 @@ $btnSendGeminiKickoff.add_Click({
 $btnCopyBothKickoff.add_Click({
     try {
         Save-BlackboardContent
-        $pCursor = Get-KickoffPromptForAgent -agentName "Cursor" -role $cbCursorRole.Text
-        $pGemini = Get-KickoffPromptForAgent -agentName "Gemini (Antigravity)" -role $cbGeminiRole.Text
-        $combined = "=== [CURSOR KICKOFF PROMPT] ===" + [Environment]::NewLine + $pCursor + [Environment]::NewLine + [Environment]::NewLine + "=== [GEMINI KICKOFF PROMPT] ===" + [Environment]::NewLine + $pGemini
+        $pAgent1 = Get-KickoffPromptForAgent -agentName "Agent 1" -role $cbCursorRole.Text
+        $pAgent2 = Get-KickoffPromptForAgent -agentName "Agent 2" -role $cbGeminiRole.Text
+        $combined = "=== [AGENT 1 KICKOFF PROMPT] ===" + [Environment]::NewLine + $pAgent1 + [Environment]::NewLine + [Environment]::NewLine + "=== [AGENT 2 KICKOFF PROMPT] ===" + [Environment]::NewLine + $pAgent2
         Safe-SetClipboard $combined
-        $txtStatus.Text = "📋 Copied combined Kickoff prompts for both Cursor and Gemini to clipboard."
+        $txtStatus.Text = "📋 Copied combined Kickoff prompts for both Agent 1 and Agent 2 to clipboard."
     } catch { $txtStatus.Text = "Error copying prompts: $_" }
 })
 
 $btnSendBothKickoff.add_Click({
     try {
         Save-BlackboardContent
-        $pCursor = Get-KickoffPromptForAgent -agentName "Cursor" -role $cbCursorRole.Text
-        $pGemini = Get-KickoffPromptForAgent -agentName "Gemini (Antigravity)" -role $cbGeminiRole.Text
+        $pAgent1 = Get-KickoffPromptForAgent -agentName "Agent 1" -role $cbCursorRole.Text
+        $pAgent2 = Get-KickoffPromptForAgent -agentName "Agent 2" -role $cbGeminiRole.Text
         $doNew = [bool]($chkNewChatKickoff -and $chkNewChatKickoff.IsChecked)
 
-        # 1. Focus & Send Cursor
-        Safe-SetClipboard $pCursor
+        # 1. Focus & Send Agent 1
+        Safe-SetClipboard $pAgent1
         $cFocused = Send-CursorChatPaste -newChat $doNew
         Start-Sleep -Milliseconds 600
 
-        # 2. Focus & Send Gemini (Antigravity only)
-        Safe-SetClipboard $pGemini
+        # 2. Focus & Send Agent 2
+        Safe-SetClipboard $pAgent2
         $gFocused = Send-GeminiChatPaste -newChat $doNew
 
         if ($cFocused -or $gFocused) {
@@ -2207,14 +2229,14 @@ $btnSendBothKickoff.add_Click({
         }
         if ($cFocused -and $gFocused) {
             $chatNote = if ($doNew) { " (New Chat one-shot, now off)" } else { "" }
-            $txtStatus.Text = "🚀 Successfully kicked off both Cursor and Gemini agents!$chatNote"
+            $txtStatus.Text = "🚀 Successfully kicked off both Agent 1 and Agent 2!$chatNote"
         } elseif ($cFocused) {
-            $txtStatus.Text = "🚀 Kicked off Cursor. (Antigravity window not found - focus Antigravity to paste Gemini prompt)."
+            $txtStatus.Text = "🚀 Kicked off Agent 1. (Agent 2 window not found - focus Agent 2 to paste prompt)."
         } elseif ($gFocused) {
-            Safe-SetClipboard $pCursor
-            $txtStatus.Text = "🚀 Kicked off Gemini. Cursor prompt copied to clipboard (Cursor window not found). Focus Cursor to paste."
+            Safe-SetClipboard $pAgent1
+            $txtStatus.Text = "🚀 Kicked off Agent 2. Agent 1 prompt copied to clipboard. Focus Agent 1 to paste."
         } else {
-            Safe-SetClipboard ("=== [CURSOR KICKOFF PROMPT] ===" + [Environment]::NewLine + $pCursor + [Environment]::NewLine + [Environment]::NewLine + "=== [GEMINI KICKOFF PROMPT] ===" + [Environment]::NewLine + $pGemini)
+            Safe-SetClipboard ("=== [AGENT 1 KICKOFF PROMPT] ===" + [Environment]::NewLine + $pAgent1 + [Environment]::NewLine + [Environment]::NewLine + "=== [AGENT 2 KICKOFF PROMPT] ===" + [Environment]::NewLine + $pAgent2)
             $txtStatus.Text = "📋 Copied both kickoff prompts to clipboard (focus IDEs to paste)."
         }
     } catch { $txtStatus.Text = "Error during dual kickoff: $_" }
@@ -2306,13 +2328,13 @@ function Trigger-AgentReprompt {
 
     try {
         Save-BlackboardContent
-        $pCursor = Get-RepromptPromptForAgent -agentName "Cursor" -role $cbCursorRole.Text
-        $pGemini = Get-RepromptPromptForAgent -agentName "Gemini (Antigravity)" -role $cbGeminiRole.Text
+        $pAgent1 = Get-RepromptPromptForAgent -agentName "Agent 1" -role $cbCursorRole.Text
+        $pAgent2 = Get-RepromptPromptForAgent -agentName "Agent 2" -role $cbGeminiRole.Text
         $cFocused = $false
         $gFocused = $false
 
         if ($target -eq "Cursor" -or $target -eq "Both") {
-            Safe-SetClipboard $pCursor
+            Safe-SetClipboard $pAgent1
             if (Send-CursorChatPaste -newChat $false) {
                 $cFocused = $true
             }
@@ -2321,28 +2343,28 @@ function Trigger-AgentReprompt {
             Start-Sleep -Milliseconds 600
         }
         if ($target -eq "Gemini" -or $target -eq "Both") {
-            Safe-SetClipboard $pGemini
+            Safe-SetClipboard $pAgent2
             if (Send-GeminiChatPaste -newChat $false) {
                 $gFocused = $true
             }
         }
 
         if ($cFocused -and $gFocused) {
-            $txtStatus.Text = "⚡ Re-prompted Cursor & Gemini (role-aware)."
+            $txtStatus.Text = "⚡ Re-prompted Agent 1 & Agent 2 (role-aware)."
         } elseif ($target -eq "Both" -and $cFocused) {
-            Safe-SetClipboard $pGemini
-            $txtStatus.Text = "⚡ Re-prompted Cursor. Gemini prompt copied (Antigravity not found)."
+            Safe-SetClipboard $pAgent2
+            $txtStatus.Text = "⚡ Re-prompted Agent 1. Agent 2 prompt copied (Agent 2 not found)."
         } elseif ($target -eq "Both" -and $gFocused) {
-            Safe-SetClipboard $pCursor
-            $txtStatus.Text = "⚡ Re-prompted Gemini. Cursor prompt copied (Cursor not found)."
+            Safe-SetClipboard $pAgent1
+            $txtStatus.Text = "⚡ Re-prompted Agent 2. Agent 1 prompt copied (Agent 1 not found)."
         } elseif ($cFocused -or $gFocused) {
-            $who = if ($cFocused) { "Cursor" } else { "Gemini" }
+            $who = if ($cFocused) { "Agent 1" } else { "Agent 2" }
             $txtStatus.Text = "⚡ Re-prompted $who (role-aware)."
         } else {
-            if ($target -eq "Cursor") { Safe-SetClipboard $pCursor }
-            elseif ($target -eq "Gemini") { Safe-SetClipboard $pGemini }
+            if ($target -eq "Cursor") { Safe-SetClipboard $pAgent1 }
+            elseif ($target -eq "Gemini") { Safe-SetClipboard $pAgent2 }
             else {
-                Safe-SetClipboard ("=== [CURSOR] ===" + [Environment]::NewLine + $pCursor + [Environment]::NewLine + [Environment]::NewLine + "=== [GEMINI] ===" + [Environment]::NewLine + $pGemini)
+                Safe-SetClipboard ("=== [AGENT 1] ===" + [Environment]::NewLine + $pAgent1 + [Environment]::NewLine + [Environment]::NewLine + "=== [AGENT 2] ===" + [Environment]::NewLine + $pAgent2)
             }
             $txtStatus.Text = "⚡ Copied role-aware re-prompt to clipboard (no IDE focused)."
         }
