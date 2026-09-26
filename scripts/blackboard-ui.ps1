@@ -1980,23 +1980,9 @@ function Update-CompareTurnsViewer {
 
         $matchedAgreed = @(Get-SharedAgreedLines $pad1 $pad2)
 
-        # Extract and pin unique - **Agreed**: lines
-        $allAgreed = [System.Collections.Generic.List[string]]::new()
-        foreach ($p in @($pad1, $pad2)) {
-            if ($p) {
-                foreach ($line in ($p -split "\r?\n")) {
-                    if ($line -match '(?i)^\s*[-*]?\s*`?[-*]?\s*`?\*\*(?:Agreed|Agree)\*\*:\s*(.+)$') {
-                        $item = $Matches[1].Trim()
-                        if (-not $allAgreed.Contains($item)) {
-                            [void]$allAgreed.Add($item)
-                        }
-                    }
-                }
-            }
-        }
         if ($script:CompareViewerPinnedPanel -and $script:CompareViewerPinnedAgreed) {
-            if ($allAgreed.Count -gt 0) {
-                $script:CompareViewerPinnedAgreed.Text = ($allAgreed | ForEach-Object { "- **Agreed**: $_" }) -join [Environment]::NewLine
+            if ($matchedAgreed.Count -gt 0) {
+                $script:CompareViewerPinnedAgreed.Text = ($matchedAgreed | ForEach-Object { "- **Agreed**: $_" }) -join [Environment]::NewLine
                 $script:CompareViewerPinnedPanel.Visibility = [System.Windows.Visibility]::Visible
             } else {
                 $script:CompareViewerPinnedPanel.Visibility = [System.Windows.Visibility]::Collapsed
@@ -2321,6 +2307,7 @@ function Update-UiActiveTurn {
     }
     if (-not $keepOverride) {
         $script:ActiveTurnOverride = $null
+        $script:TurnCueExpiresAt = $null
     }
     $txtActiveTurn.Text = Get-ActiveTurn
     if ($btnCloseProject) {
@@ -3732,6 +3719,7 @@ $script:LastReadBlackboardText = ""
 $script:LastCursorPad = $null
 $script:LastGeminiPad = $null
 $script:ActiveTurnOverride = $null
+$script:TurnCueExpiresAt = $null
 $script:SuppressTurnReset = $false
 $script:SuppressFormDirty = $false
 $script:FormDirty = $false
@@ -3755,6 +3743,15 @@ $timer.add_Tick({
         } catch {}
     }
     Update-GitStatusSummary
+    if ($badgeTurn) {
+        if ($script:TurnCueExpiresAt -and [DateTime]::UtcNow -lt $script:TurnCueExpiresAt) {
+            $badgeTurn.BorderBrush = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#A6E3A1")
+            $badgeTurn.BorderThickness = New-Object System.Windows.Thickness(2)
+        } else {
+            $badgeTurn.BorderThickness = New-Object System.Windows.Thickness(0)
+            $badgeTurn.BorderBrush = $null
+        }
+    }
     if (Test-Path $script:BlackboardPath) {
         try {
             $text = [System.IO.File]::ReadAllText($script:BlackboardPath, [System.Text.Encoding]::UTF8)
@@ -3863,6 +3860,7 @@ function Load-BlackboardIntoUI {
                     $turnChanged = $true
                 }
                 if ($turnChanged) {
+                    $script:TurnCueExpiresAt = [DateTime]::UtcNow.AddSeconds(6)
                     if ($badgeTurn) {
                         $badgeTurn.BorderBrush = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#A6E3A1")
                         $badgeTurn.BorderThickness = New-Object System.Windows.Thickness(2)
