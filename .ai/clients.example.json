@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "seat1": "Cursor",
   "seat2": "Antigravity",
+  "boardPath": "",
   "profiles": {
     "Cursor": {
       "process": "Cursor",

@@ -28,15 +28,18 @@ function Get-TargetGitHubRepo {
     } catch {}
     return $null
 }
+$script:ControllerRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
+$script:ControllerAiDir = Join-Path $script:ControllerRoot ".ai"
+$script:ClientsConfigPath = Join-Path $script:ControllerAiDir "clients.json"
+$script:ClientsExamplePath = Join-Path $script:ControllerAiDir "clients.example.json"
+
 $script:AiDir = Join-Path $script:RepoRoot ".ai"
 $script:HistoryDir = Join-Path $script:AiDir "history"
 $script:SavedDir = Join-Path $script:AiDir "saved"
 $script:BlackboardPath = Join-Path $script:AiDir "blackboard.md"
 $script:ExamplePath = Join-Path $script:AiDir "blackboard.example.md"
-$script:ClientsConfigPath = Join-Path $script:AiDir "clients.json"
-$script:ClientsExamplePath = Join-Path $script:AiDir "clients.example.json"
 
-foreach ($dir in @($script:AiDir, $script:HistoryDir, $script:SavedDir)) {
+foreach ($dir in @($script:ControllerAiDir, $script:AiDir, $script:HistoryDir, $script:SavedDir)) {
     if (-not (Test-Path $dir)) {
         New-Item -ItemType Directory -Force -Path $dir | Out-Null
     }
@@ -684,6 +687,7 @@ function Get-ClientConfiguration {
     $defaultConfig = [PSCustomObject]@{
         seat1 = "Cursor"
         seat2 = "Antigravity"
+        boardPath = ""
         profiles = [PSCustomObject]@{
             "Cursor" = [PSCustomObject]@{ process = "Cursor"; description = "Cursor AI IDE" }
             "Antigravity" = [PSCustomObject]@{ process = "Antigravity"; description = "Google Antigravity IDE" }
@@ -722,6 +726,7 @@ function Save-ClientConfiguration {
             '$schema' = "https://json-schema.org/draft/2020-12/schema"
             seat1 = $s1
             seat2 = $s2
+            boardPath = $script:BlackboardPath
             profiles = $cfg.profiles
         }
         $jsonStr = $exportObj | ConvertTo-Json -Depth 5
@@ -833,8 +838,6 @@ function Set-ActiveBlackboardPath {
         $script:HistoryDir = Join-Path $script:AiDir "history"
         $script:SavedDir = Join-Path $script:AiDir "saved"
         $script:ExamplePath = Join-Path $script:AiDir "blackboard.example.md"
-        $script:ClientsConfigPath = Join-Path $script:AiDir "clients.json"
-        $script:ClientsExamplePath = Join-Path $script:AiDir "clients.example.json"
         $script:GitHubRepo = $null
 
         foreach ($dir in @($script:AiDir, $script:HistoryDir, $script:SavedDir)) {
@@ -843,6 +846,7 @@ function Set-ActiveBlackboardPath {
             }
         }
 
+        Save-ClientConfiguration
         Populate-SeatClientDropdowns
 
         if ($txtBoardPath) {
@@ -2951,7 +2955,11 @@ function Load-BlackboardIntoUI {
     }
 }
 
-Load-BlackboardIntoUI
+if ($script:ClientConfig -and $script:ClientConfig.boardPath -and (Test-Path $script:ClientConfig.boardPath)) {
+    Set-ActiveBlackboardPath -targetPath $script:ClientConfig.boardPath
+} else {
+    Load-BlackboardIntoUI
+}
 if ($chkNewChatKickoff) { $chkNewChatKickoff.IsChecked = $false }
 Start-StartupUpdateCheck
 
