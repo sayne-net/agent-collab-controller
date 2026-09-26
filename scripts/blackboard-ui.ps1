@@ -1,14 +1,17 @@
 # Agent Collab Controller (WPF UI)
-# Version 1.2.8
+# Version 1.2.9
 # Standalone dual-session controller for multi-agent collaboration with human-in-the-loop steering.
 
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
 
-$script:AppVersion = "v1.2.8"
+$script:AppVersion = "v1.2.9"
 $script:RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $script:ProjectName = (Split-Path $script:RepoRoot -Leaf)
+$script:ScriptFilePath = if ($PSCommandPath) { $PSCommandPath } else { Join-Path $PSScriptRoot "blackboard-ui.ps1" }
+$script:LoadedScriptWriteTime = if (Test-Path $script:ScriptFilePath) { (Get-Item $script:ScriptFilePath).LastWriteTime } else { [DateTime]::MinValue }
+$script:DiskScriptIsNewer = $false
 $script:GitHubRepo = $null
 function Get-TargetGitHubRepo {
     if ($script:GitHubRepo) { return $script:GitHubRepo }
@@ -2189,36 +2192,37 @@ function Get-ActiveTurn {
     $s1 = Get-Seat1Client
     $s2 = Get-Seat2Client
     if ($script:ActiveTurnOverride) {
-        $s2Esc = [regex]::Escape($s2)
-        if ($script:ActiveTurnOverride -match "$s2Esc|Gemini|AI 2|Agent 2") {
-            $badgeTurn.Background = [System.Windows.Media.Brushes]::DarkBlue
-        } else {
-            $badgeTurn.Background = [System.Windows.Media.Brushes]::DarkCyan
-        }
-        return $script:ActiveTurnOverride
+        $badgeTurn.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F9E2AF")
+        $txtActiveTurn.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#11111B")
+        return "$script:ActiveTurnOverride | 👤 Waiting on Human"
     }
     $signHuman = $chkSignHuman.IsChecked
     $signCursor = $chkSignCursor.IsChecked
     $signGemini = $chkSignGemini.IsChecked
     if ($signHuman -and $signCursor -and $signGemini) {
         $badgeTurn.Background = [System.Windows.Media.Brushes]::DarkGreen
+        $txtActiveTurn.Foreground = [System.Windows.Media.Brushes]::White
         return "✅ Complete - Ready to Close"
     }
     if (-not $signHuman) {
-        $badgeTurn.Background = [System.Windows.Media.Brushes]::SlateGray
-        return "Human (Lead)"
+        $badgeTurn.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F9E2AF")
+        $txtActiveTurn.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#11111B")
+        return "👤 Waiting on Human (Lead)"
     }
     $cRole = if ($cbCursorRole.Text) { $cbCursorRole.Text } else { "idle" }
     $gRole = if ($cbGeminiRole.Text) { $cbGeminiRole.Text } else { "idle" }
     if ($cRole -ne "idle" -and -not $signCursor) {
         $badgeTurn.Background = [System.Windows.Media.Brushes]::DarkCyan
+        $txtActiveTurn.Foreground = [System.Windows.Media.Brushes]::White
         return ("$s1 (" + $cRole + ")")
     }
     if ($gRole -ne "idle" -and -not $signGemini) {
         $badgeTurn.Background = [System.Windows.Media.Brushes]::DarkBlue
+        $txtActiveTurn.Foreground = [System.Windows.Media.Brushes]::White
         return ("$s2 (" + $gRole + ")")
     }
     $badgeTurn.Background = [System.Windows.Media.Brushes]::DarkGreen
+    $txtActiveTurn.Foreground = [System.Windows.Media.Brushes]::White
     return "✅ Complete - Ready to Close"
 }
 
@@ -2417,7 +2421,7 @@ function Get-RoleGuidance {
     switch (Get-NormalizedRole $role) {
         "implement" { "You hold IMPLEMENT. Review objective and Alignment in '$boardPath', then land the change. Append progress under your scratchpad heading only. Do not edit the other agent's scratchpad or the Human Lead's notes." }
         "review"    { "You hold REVIEW. Read the implementer's notes and diff. Record findings in your scratchpad. FORBIDDEN: editing the same tracked files they are changing. GO does not make you implement." }
-        "advise"    { "You hold ADVISE. Analyze and recommend in your scratchpad only. FORBIDDEN: editing tracked repo files, git commit/push, live infrastructure changes. REQUIRED: Edit '$boardPath' under your scratchpad heading." }
+        "advise"    { "You hold ADVISE. Analyze and recommend in your scratchpad only. FORBIDDEN: editing tracked repo files, git commit/push, live infrastructure changes. REQUIRED: Edit '$boardPath' under your scratchpad heading. End your note with `- **Agreed**: <decision>` sentences, or a single `- **Agree**` if the other agent's scratchpad is already right, so consensus auto-promotes to Alignment." }
         "plan"      { "You hold PLAN. Propose approach and risks in your scratchpad. Do not edit tracked files unless the Human Lead says so." }
         "inventory" { "You hold INVENTORY. Read environment/tools/git log. No live writes. No tracked-file edits except your blackboard scratchpad." }
         default     { "You hold IDLE. Read the board. Do not act. Do not edit files. Wait." }
@@ -2473,6 +2477,50 @@ $align
 "@
 }
 
+function Get-LatestScratchpadSummary {
+    $boardPath = $script:BlackboardPath
+    if (-not (Test-Path $boardPath)) { return "" }
+    try {
+        $raw = [System.IO.File]::ReadAllText($boardPath, [System.Text.Encoding]::UTF8)
+        $s1 = Get-Seat1Client
+        $s2 = Get-Seat2Client
+        $s1Esc = [regex]::Escape($s1)
+        $s2Esc = [regex]::Escape($s2)
+
+        $cPad = Get-LastMarkdownBody $raw "(?:###|##)\s+(?:$s1Esc|Cursor|Agent\s*1|AI\s*1)(?:\s+Scratchpad)?"
+        $gPad = Get-LastMarkdownBody $raw "(?:###|##)\s+(?:$s2Esc|Gemini(?:\s+\(Antigravity\))?|Agent\s*2|AI\s*2)(?:\s+Scratchpad)?"
+
+        $cRole = if ($cbCursorRole -and $cbCursorRole.Text) { $cbCursorRole.Text } else { "" }
+        $gRole = if ($cbGeminiRole -and $cbGeminiRole.Text) { $cbGeminiRole.Text } else { "" }
+
+        $cEx = if ($cPad -and $cPad -notmatch "(?i)^-\s*\((?:$s1Esc|Cursor|Agent\s*1|AI\s*1)\s+(?:updates?|scratchpad)") {
+            Get-ScratchpadExcerpt $cPad -PreferRole $cRole -maxLines 15 -maxChars 2000
+        } else { "" }
+        $gEx = if ($gPad -and $gPad -notmatch "(?i)^-\s*\((?:$s2Esc|Gemini|Agent\s*2|AI\s*2)\s+(?:updates?|scratchpad)") {
+            Get-ScratchpadExcerpt $gPad -PreferRole $gRole -maxLines 15 -maxChars 2000
+        } else { "" }
+
+        $parts = @()
+        if ($cEx) {
+            $parts += "### $s1 (Latest Turn):"
+            $parts += $cEx.Trim()
+        }
+        if ($gEx) {
+            if ($parts.Count -gt 0) { $parts += "" }
+            $parts += "### $s2 (Latest Turn):"
+            $parts += $gEx.Trim()
+        }
+        if ($parts.Count -gt 0) {
+            return @"
+
+Latest Notes (scratchpad latest turn only):
+$($parts -join [Environment]::NewLine)
+"@
+        }
+    } catch {}
+    return ""
+}
+
 function Get-KickoffPromptForAgent {
     param(
         [string]$agentName,
@@ -2491,6 +2539,7 @@ function Get-KickoffPromptForAgent {
 
     $hardStop = Get-NonImplementHardStop $normRole
     $alignBlock = Get-AlignmentBlock
+    $latestNotes = Get-LatestScratchpadSummary
     $roleGuidance = Get-RoleGuidance $normRole
     $sNameEsc = [regex]::Escape($agentName)
     $scratchpadSection = if ($seatId -eq "seat1" -or $agentName -match 'Cursor|Agent\s*1|AI\s*1') {
@@ -2537,6 +2586,7 @@ $hardStop
 Current Objective:
 $objective
 $alignBlock
+$latestNotes
 
 Role Instructions:
 $roleGuidance
@@ -3401,7 +3451,7 @@ function Trigger-CompareNotesReprompt {
         Show-CompareTurnsViewer
         $s1 = Get-Seat1Client
         $s2 = Get-Seat2Client
-        $compareDirective = "Read $script:BlackboardPath again. Compare notes with the other agent's scratchpad: identify agreements, highlight key differences, and synthesize recommendations without replacing the Objective or Alignment."
+        $compareDirective = "Read $script:BlackboardPath again. Compare notes with the other agent's scratchpad: identify agreements, highlight key differences, and synthesize recommendations without replacing the Objective or Alignment. End your note with `- **Agreed**: <decision>` sentences, or a single `- **Agree**` if the other note is already right."
         $pAgent1 = Get-RepromptPromptForAgent -agentName $s1 -role $cbCursorRole.Text -seatId "seat1" -customDirective $compareDirective
         $pAgent2 = Get-RepromptPromptForAgent -agentName $s2 -role $cbGeminiRole.Text -seatId "seat2" -customDirective $compareDirective
 
@@ -3557,6 +3607,21 @@ $script:FormDirty = $false
 $timer = New-Object System.Windows.Threading.DispatcherTimer
 $timer.Interval = [TimeSpan]::FromSeconds(2)
 $timer.add_Tick({
+    if (Test-Path $script:ScriptFilePath) {
+        try {
+            $diskTime = (Get-Item $script:ScriptFilePath).LastWriteTime
+            if ($diskTime -gt $script:LoadedScriptWriteTime) {
+                $script:DiskScriptIsNewer = $true
+                if ($btnRelaunch -and $btnRelaunch.Content -notmatch "Newer on Disk") {
+                    $btnRelaunch.Content = "⏭️ Relaunch (Newer on Disk)"
+                    $btnRelaunch.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F9E2AF")
+                    $btnRelaunch.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#11111B")
+                    $btnRelaunch.FontWeight = [System.Windows.FontWeights]::Bold
+                    $btnRelaunch.ToolTip = "scripts/blackboard-ui.ps1 on disk is newer ($($diskTime.ToString('HH:mm:ss'))). Click to relaunch and load updates."
+                }
+            }
+        } catch {}
+    }
     if (Test-Path $script:BlackboardPath) {
         try {
             $text = [System.IO.File]::ReadAllText($script:BlackboardPath, [System.Text.Encoding]::UTF8)
@@ -3629,8 +3694,12 @@ function Load-BlackboardIntoUI {
                 }
             }
             
-            if ($raw -match '>\s*\*\*Last Updated\*\*:\s*(.+)') {
+            if ($script:DiskScriptIsNewer) {
+                $txtLastSaved.Text = "⚠️ Script on disk is newer! Click Relaunch"
+                $txtLastSaved.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F9E2AF")
+            } elseif ($raw -match '>\s*\*\*Last Updated\*\*:\s*(.+)') {
                 $txtLastSaved.Text = "File updated: " + $matches[1].Trim()
+                $txtLastSaved.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#6C7086")
             }
             
             Sync-SignoffCheckboxes $raw
@@ -3710,7 +3779,9 @@ function Load-BlackboardIntoUI {
                 }
             }
             
-            if (-not $fromTimer) {
+            if ($script:DiskScriptIsNewer -and (-not $script:FormDirty)) {
+                $txtStatus.Text = "⚠️ Controller script on disk is newer than this open window. Click Relaunch (⏭️) to update."
+            } elseif (-not $fromTimer) {
                 $txtStatus.Text = "Loaded blackboard from .ai/blackboard.md"
             } elseif (-not $script:FormDirty) {
                 $txtStatus.Text = "Updated from disk"
