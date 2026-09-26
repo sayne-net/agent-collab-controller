@@ -911,7 +911,7 @@ $closeXaml = @"
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    <TextBlock Text="✅ All 3 sign-offs complete (Human, Cursor, Antigravity). Ready to archive session into .ai/history/ and close project." FontSize="11" Foreground="#A6E3A1" FontWeight="SemiBold"/>
+                    <TextBlock Text="✅ All 3 sign-offs complete (Human, AI 1, AI 2). Ready to archive session into .ai/history/ and close project." FontSize="11" Foreground="#A6E3A1" FontWeight="SemiBold"/>
                     <TextBlock Grid.Column="1" Text="Last write: 2026-09-25 23:28:45" FontSize="11" Foreground="#6C7086"/>
                 </Grid>
             </Border>
