@@ -1,10 +1,10 @@
-# Ephemeral live session tape (never commit live board)
+# Ephemeral live session tape and archives
 .ai/blackboard.md
+.ai/history/
+.ai/saved/
 
-# Keep template and session archives
+# Keep template
 !.ai/blackboard.example.md
-!.ai/history/
-!.ai/saved/
 
 # Local client preferences
 .ai/clients.json

@@ -1,12 +1,12 @@
 # Agent Collab Controller (WPF UI)
-# Version 1.2.0
+# Version 1.2.1
 # Standalone dual-session controller for multi-agent collaboration with human-in-the-loop steering.
 
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
 
-$script:AppVersion = "v1.2.0"
+$script:AppVersion = "v1.2.1"
 $script:RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $script:ProjectName = (Split-Path $script:RepoRoot -Leaf)
 $script:GitHubRepo = $null
@@ -471,7 +471,7 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <TextBlock Text="👑 HUMAN (LEAD) NOTES" FontWeight="Bold" FontSize="11" Foreground="#F9E2AF" VerticalAlignment="Center"/>
+                        <TextBlock Text="👑 HUMAN STEERING NOTES" FontWeight="Bold" FontSize="11" Foreground="#F9E2AF" VerticalAlignment="Center"/>
                         <Button Grid.Column="1" Name="btnPromoteNotes" Content="📝 Promote to Prompt" Background="#313244" Foreground="#F9E2AF" Padding="6,2" FontSize="10" ToolTip="Draft a Prompt from these steering notes (requires confirmation before replacing Current Objective)"/>
                     </Grid>
                     <TextBox Name="txtStevenNotes" Grid.Row="1" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
