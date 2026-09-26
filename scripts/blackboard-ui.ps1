@@ -1,12 +1,12 @@
 # Agent Collab Controller (WPF UI)
-# Version 1.2.9
+# Version 1.2.10
 # Standalone dual-session controller for multi-agent collaboration with human-in-the-loop steering.
 
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
 
-$script:AppVersion = "v1.2.9"
+$script:AppVersion = "v1.2.10"
 $script:RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $script:ProjectName = (Split-Path $script:RepoRoot -Leaf)
 $script:ScriptFilePath = if ($PSCommandPath) { $PSCommandPath } else { Join-Path $PSScriptRoot "blackboard-ui.ps1" }
@@ -2297,9 +2297,9 @@ function Mark-FormDirty {
 $cbCursorRole.add_SelectionChanged({ Check-Safety; Mark-FormDirty })
 $cbGeminiRole.add_SelectionChanged({ Check-Safety; Mark-FormDirty })
 $cbPhase.add_SelectionChanged({ Mark-FormDirty })
-$rbGo.add_Checked({ Mark-FormDirty })
-$rbPause.add_Checked({ Mark-FormDirty })
-$rbStop.add_Checked({ Mark-FormDirty })
+$rbGo.add_Checked({ Update-UiActiveTurn; Mark-FormDirty })
+$rbPause.add_Checked({ Update-UiActiveTurn; Mark-FormDirty })
+$rbStop.add_Checked({ Update-UiActiveTurn; Mark-FormDirty })
 $chkSignHuman.add_Checked({ Update-UiActiveTurn; Mark-FormDirty })
 $chkSignHuman.add_Unchecked({ Update-UiActiveTurn; Mark-FormDirty })
 $chkSignCursor.add_Checked({ Update-UiActiveTurn; Mark-FormDirty })
