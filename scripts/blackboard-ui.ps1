@@ -685,17 +685,17 @@ $lblSeat2Pane          = $window.FindName("lblSeat2Pane")
 
 function Get-ClientConfiguration {
     $defaultConfig = [PSCustomObject]@{
-        seat1 = "Cursor"
-        seat2 = "Antigravity"
+        seat1 = "Agent 1"
+        seat2 = "Agent 2"
         boardPath = ""
         profiles = [PSCustomObject]@{
+            "Agent 1" = [PSCustomObject]@{ process = ""; description = "Generic Seat 1 (Manual Clipboard Copy)" }
+            "Agent 2" = [PSCustomObject]@{ process = ""; description = "Generic Seat 2 (Manual Clipboard Copy)" }
             "Cursor" = [PSCustomObject]@{ process = "Cursor"; description = "Cursor AI IDE" }
             "Antigravity" = [PSCustomObject]@{ process = "Antigravity"; description = "Google Antigravity IDE" }
             "Windsurf" = [PSCustomObject]@{ process = "Windsurf"; description = "Codeium Windsurf IDE" }
             "VS Code" = [PSCustomObject]@{ process = "Code"; description = "VS Code / GitHub Copilot" }
             "Terminal" = [PSCustomObject]@{ process = "WindowsTerminal"; description = "Windows Terminal (Claude Code, Aider, CLI)" }
-            "Agent 1" = [PSCustomObject]@{ process = ""; description = "Generic Seat 1 (Manual Clipboard Copy)" }
-            "Agent 2" = [PSCustomObject]@{ process = ""; description = "Generic Seat 2 (Manual Clipboard Copy)" }
         }
     }
 
@@ -722,6 +722,10 @@ function Save-ClientConfiguration {
         $s2 = Get-Seat2Client
         $cfg = $script:ClientConfig
         if (-not $cfg) { $cfg = Get-ClientConfiguration }
+        $cfg.seat1 = $s1
+        $cfg.seat2 = $s2
+        $cfg.boardPath = $script:BlackboardPath
+        $script:ClientConfig = $cfg
         $exportObj = [PSCustomObject]@{
             '$schema' = "https://json-schema.org/draft/2020-12/schema"
             seat1 = $s1
@@ -729,6 +733,8 @@ function Save-ClientConfiguration {
             boardPath = $script:BlackboardPath
             profiles = $cfg.profiles
         }
+        $dir = Split-Path $script:ClientsConfigPath -Parent
+        if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
         $jsonStr = $exportObj | ConvertTo-Json -Depth 5
         [System.IO.File]::WriteAllText($script:ClientsConfigPath, $jsonStr, [System.Text.Encoding]::UTF8)
     } catch {}
@@ -784,7 +790,7 @@ function Populate-SeatClientDropdowns {
     $script:ClientConfig = Get-ClientConfiguration
     $profileNames = @($script:ClientConfig.profiles.PSObject.Properties | ForEach-Object { $_.Name })
     if ($profileNames.Count -eq 0) {
-        $profileNames = @("Cursor", "Antigravity", "Windsurf", "VS Code", "Terminal", "Agent 1", "Agent 2")
+        $profileNames = @("Agent 1", "Agent 2", "Cursor", "Antigravity", "Windsurf", "VS Code", "Terminal")
     }
 
     if ($cbSeat1Client) {
@@ -793,7 +799,7 @@ function Populate-SeatClientDropdowns {
         foreach ($p in $profileNames) {
             [void]$cbSeat1Client.Items.Add($p)
         }
-        $target1 = if ($current1 -and $cbSeat1Client.Items.Contains($current1)) { $current1 } elseif ($script:ClientConfig.seat1) { [string]$script:ClientConfig.seat1 } else { "Cursor" }
+        $target1 = if ($current1 -and $cbSeat1Client.Items.Contains($current1)) { $current1 } elseif ($script:ClientConfig.seat1) { [string]$script:ClientConfig.seat1 } else { "Agent 1" }
         $idx1 = $cbSeat1Client.Items.IndexOf($target1)
         if ($idx1 -ge 0) { $cbSeat1Client.SelectedIndex = $idx1 } else { $cbSeat1Client.SelectedIndex = 0 }
     }
@@ -804,7 +810,7 @@ function Populate-SeatClientDropdowns {
         foreach ($p in $profileNames) {
             [void]$cbSeat2Client.Items.Add($p)
         }
-        $target2 = if ($current2 -and $cbSeat2Client.Items.Contains($current2)) { $current2 } elseif ($script:ClientConfig.seat2) { [string]$script:ClientConfig.seat2 } else { "Antigravity" }
+        $target2 = if ($current2 -and $cbSeat2Client.Items.Contains($current2)) { $current2 } elseif ($script:ClientConfig.seat2) { [string]$script:ClientConfig.seat2 } else { "Agent 2" }
         $idx2 = $cbSeat2Client.Items.IndexOf($target2)
         if ($idx2 -ge 0) { $cbSeat2Client.SelectedIndex = $idx2 } else { $cbSeat2Client.SelectedIndex = 1 }
     }
@@ -877,6 +883,12 @@ if ($cbSeat2Client) {
         Update-SeatClientLabels
         Save-ClientConfiguration
         Mark-FormDirty
+    })
+}
+
+if ($window) {
+    $window.add_Closing({
+        Save-ClientConfiguration
     })
 }
 
