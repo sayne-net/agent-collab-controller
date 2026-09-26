@@ -1,12 +1,12 @@
-# Agent Collab Controller (WPF UI)
-# Version 1.2.3
+﻿# Agent Collab Controller (WPF UI)
+# Version 1.2.4
 # Standalone dual-session controller for multi-agent collaboration with human-in-the-loop steering.
 
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
 
-$script:AppVersion = "v1.2.3"
+$script:AppVersion = "v1.2.4"
 $script:RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $script:ProjectName = (Split-Path $script:RepoRoot -Leaf)
 $script:GitHubRepo = $null
@@ -290,8 +290,7 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                     <ComboBoxItem Content="🧪 Test" Tag="Test"/>
                     <ComboBoxItem Content="📦 Inventory" Tag="Inventory"/>
                 </ComboBox>
-                <Button Name="btnApplyPreset" Content="⚡ Apply" ToolTip="Apply selected workflow preset" Margin="0,0,6,0" Background="#45475A" Foreground="#89B4FA" FontWeight="SemiBold"/>
-                <Button Name="btnPromoteAlign" Content="🚀 Promote Align" ToolTip="Promote agreed decisions directly to status and notes" Background="#313244" Foreground="#A6E3A1"/>
+                <Button Name="btnApplyPreset" Content="⚡ Apply" ToolTip="Apply selected workflow preset" Margin="0,0,0,0" Background="#45475A" Foreground="#89B4FA" FontWeight="SemiBold"/>
             </StackPanel>
 
             <!-- Active Turn Badge, Relaunch, Update Buttons & Tooltip Toggle -->
@@ -329,7 +328,8 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                         <ComboBox Name="cbRecentBoards" Width="135" Margin="0,0,6,0" ToolTip="Recent project boards (Select to switch)"/>
                         <TextBlock Name="txtBoardPath" Text="" FontSize="10" Foreground="#89B4FA" FontFamily="Consolas, monospace" VerticalAlignment="Center" ToolTip="Active Blackboard.md path (Click to copy)" Cursor="Hand" Margin="0,0,6,0"/>
                         <Button Name="btnNewBoard" Content="➕ New" FontSize="10" Padding="5,1" Margin="0,0,3,0" Background="#313244" Foreground="#A6E3A1" FontWeight="SemiBold" ToolTip="Start a new board in a project folder"/>
-                        <Button Name="btnSwitchBoard" Content="📂 Browse" FontSize="10" Padding="5,1" Margin="0,0,0,0" Background="#313244" Foreground="#BAC2DE" ToolTip="Browse to select an existing blackboard.md file"/>
+                        <Button Name="btnSwitchBoard" Content="📂 Browse" FontSize="10" Padding="5,1" Margin="0,0,3,0" Background="#313244" Foreground="#BAC2DE" ToolTip="Browse to select an existing blackboard.md file"/>
+                        <Button Name="btnReloadBoard" Content="🔄 Reload" FontSize="10" Padding="5,1" Margin="0,0,0,0" Background="#313244" Foreground="#89B4FA" FontWeight="SemiBold" ToolTip="Force reload active blackboard from disk"/>
                     </StackPanel>
                 </Border>
 
@@ -626,7 +626,9 @@ if ($cbRecentBoards) {
         $selectedItem = $cbRecentBoards.SelectedItem
         if ($selectedItem -and $selectedItem.Tag) {
             $target = [string]$selectedItem.Tag
-            if ($script:BlackboardPath -and ((Resolve-Path $script:BlackboardPath).Path -eq (Resolve-Path $target).Path)) {
+            $isSame = ($script:BlackboardPath -and ((Resolve-Path $script:BlackboardPath -ErrorAction SilentlyContinue).Path -eq (Resolve-Path $target -ErrorAction SilentlyContinue).Path))
+            if ($isSame) {
+                Reload-ActiveBlackboard
                 return
             }
             if (-not (Confirm-DiscardUnsavedEdits -actionName "switching boards")) {
@@ -748,6 +750,13 @@ if ($btnSwitchBoard) {
     })
 }
 
+$btnReloadBoard        = $window.FindName("btnReloadBoard")
+if ($btnReloadBoard) {
+    $btnReloadBoard.add_Click({
+        Reload-ActiveBlackboard
+    })
+}
+
 $btnUpdateController   = $window.FindName("btnUpdateController")
 $btnRelaunch           = $window.FindName("btnRelaunch")
 $badgeTurn             = $window.FindName("badgeTurn")
@@ -774,7 +783,6 @@ $rtbCursorLast         = $window.FindName("rtbCursorLast")
 $rtbGeminiLast         = $window.FindName("rtbGeminiLast")
 $cbPresets             = $window.FindName("cbPresets")
 $btnApplyPreset        = $window.FindName("btnApplyPreset")
-$btnPromoteAlign       = $window.FindName("btnPromoteAlign")
 $btnCopyCursorKickoff  = $window.FindName("btnCopyCursorKickoff")
 $btnSendCursorKickoff  = $window.FindName("btnSendCursorKickoff")
 $btnCopyGeminiKickoff  = $window.FindName("btnCopyGeminiKickoff")
@@ -811,6 +819,7 @@ function Get-ClientConfiguration {
         seat2 = "AI 2"
         boardPath = ""
         recentBoards = @()
+        boardSeats = [PSCustomObject]@{}
         tooltips = $true
         profiles = [PSCustomObject]@{
             "AI 1" = [PSCustomObject]@{ process = ""; description = "Generic Seat 1 (Manual Clipboard Copy)" }
@@ -828,6 +837,7 @@ function Get-ClientConfiguration {
             $json = Get-Content $script:ClientsConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
             if ($json -and $json.profiles) {
                 if (-not $json.recentBoards) { $json | Add-Member -NotePropertyName "recentBoards" -NotePropertyValue @() -Force }
+                if (-not $json.boardSeats) { $json | Add-Member -NotePropertyName "boardSeats" -NotePropertyValue ([PSCustomObject]@{}) -Force }
                 return $json
             }
         } catch {}
@@ -838,6 +848,7 @@ function Get-ClientConfiguration {
             $json = Get-Content $script:ClientsExamplePath -Raw -Encoding UTF8 | ConvertFrom-Json
             if ($json -and $json.profiles) {
                 if (-not $json.recentBoards) { $json | Add-Member -NotePropertyName "recentBoards" -NotePropertyValue @() -Force }
+                if (-not $json.boardSeats) { $json | Add-Member -NotePropertyName "boardSeats" -NotePropertyValue ([PSCustomObject]@{}) -Force }
                 return $json
             }
         } catch {}
@@ -850,7 +861,6 @@ $script:MasterTooltips = @{
     # Presets & Top Toolbar
     "cbPresets"            = "Select a dual-agent workflow preset"
     "btnApplyPreset"       = "Apply selected workflow preset roles and phase"
-    "btnPromoteAlign"      = "Promote agreed decisions directly to status and notes"
     "chkEnableTooltips"    = "Toggle hover tooltips on/off across all controller controls"
     "btnUpdateController"  = "Check GitHub for newer controller version, pull, and relaunch"
     "btnRelaunch"          = "Relaunch controller script immediately (reloads local code changes)"
@@ -865,6 +875,7 @@ $script:MasterTooltips = @{
     "txtBoardPath"         = "Active blackboard file path (Click to copy to clipboard)"
     "btnNewBoard"          = "Initialize a new blackboard in a project folder"
     "btnSwitchBoard"       = "Browse to select an existing blackboard.md file"
+    "btnReloadBoard"       = "Force reload active blackboard from disk"
     "cbPhase"              = "Select current project workflow phase (advise, plan, implement, review)"
 
     # Seat Profiles, Roles, Sign-offs & Issues
@@ -939,6 +950,20 @@ function Save-ClientConfiguration {
         $tooltipsVal = if ($chkEnableTooltips) { [bool]$chkEnableTooltips.IsChecked } elseif ($cfg -and $null -ne $cfg.tooltips) { [bool]$cfg.tooltips } else { $true }
         $cfg.tooltips = $tooltipsVal
 
+        if (-not $cfg.boardSeats) {
+            $cfg | Add-Member -NotePropertyName "boardSeats" -NotePropertyValue ([PSCustomObject]@{}) -Force
+        }
+        if ($script:BlackboardPath) {
+            $resolvedPath = (Resolve-Path $script:BlackboardPath -ErrorAction SilentlyContinue).Path
+            if ($resolvedPath) {
+                $boardSeatObj = [PSCustomObject]@{
+                    seat1 = $s1
+                    seat2 = $s2
+                }
+                $cfg.boardSeats | Add-Member -NotePropertyName $resolvedPath -NotePropertyValue $boardSeatObj -Force
+            }
+        }
+
         $recent = @()
         if ($cfg.recentBoards) {
             $recent = @($cfg.recentBoards | Where-Object { $_ -and (Test-Path $_) })
@@ -956,6 +981,7 @@ function Save-ClientConfiguration {
             seat2 = $s2
             boardPath = $script:BlackboardPath
             recentBoards = $recent
+            boardSeats = $cfg.boardSeats
             tooltips = $tooltipsVal
             profiles = $cfg.profiles
         }
@@ -1017,10 +1043,21 @@ function Update-SeatClientLabels {
 }
 
 function Populate-SeatClientDropdowns {
+    param([switch]$forceFromBoard)
     $script:ClientConfig = Get-ClientConfiguration
     $profileNames = @($script:ClientConfig.profiles.PSObject.Properties | ForEach-Object { $_.Name })
     if ($profileNames.Count -eq 0) {
         $profileNames = @("AI 1", "AI 2", "Cursor", "Antigravity", "Windsurf", "VS Code", "Terminal")
+    }
+
+    $boardSeat1 = $null
+    $boardSeat2 = $null
+    if ($script:BlackboardPath) {
+        $resolvedActive = (Resolve-Path $script:BlackboardPath -ErrorAction SilentlyContinue).Path
+        if ($resolvedActive -and $script:ClientConfig.boardSeats -and $script:ClientConfig.boardSeats.$resolvedActive) {
+            $boardSeat1 = [string]$script:ClientConfig.boardSeats.$resolvedActive.seat1
+            $boardSeat2 = [string]$script:ClientConfig.boardSeats.$resolvedActive.seat2
+        }
     }
 
     if ($cbSeat1Client) {
@@ -1029,8 +1066,10 @@ function Populate-SeatClientDropdowns {
         foreach ($p in $profileNames) {
             [void]$cbSeat1Client.Items.Add($p)
         }
-        $target1 = if ($current1 -and $cbSeat1Client.Items.Contains($current1)) {
+        $target1 = if (-not $forceFromBoard -and $current1 -and $cbSeat1Client.Items.Contains($current1)) {
             $current1
+        } elseif ($boardSeat1 -and $cbSeat1Client.Items.Contains($boardSeat1)) {
+            $boardSeat1
         } elseif ($script:ClientConfig.seat1 -and $script:ClientConfig.seat1 -ne "Agent 1") {
             [string]$script:ClientConfig.seat1
         } else {
@@ -1046,8 +1085,10 @@ function Populate-SeatClientDropdowns {
         foreach ($p in $profileNames) {
             [void]$cbSeat2Client.Items.Add($p)
         }
-        $target2 = if ($current2 -and $cbSeat2Client.Items.Contains($current2)) {
+        $target2 = if (-not $forceFromBoard -and $current2 -and $cbSeat2Client.Items.Contains($current2)) {
             $current2
+        } elseif ($boardSeat2 -and $cbSeat2Client.Items.Contains($boardSeat2)) {
+            $boardSeat2
         } elseif ($script:ClientConfig.seat2 -and $script:ClientConfig.seat2 -ne "Agent 2") {
             [string]$script:ClientConfig.seat2
         } else {
@@ -1162,7 +1203,7 @@ function Set-ActiveBlackboardPath {
         }
 
         Save-ClientConfiguration
-        Populate-SeatClientDropdowns
+        Populate-SeatClientDropdowns -forceFromBoard
         Populate-RecentBoardsDropdown
 
         if ($txtBoardPath) {
@@ -1171,11 +1212,33 @@ function Set-ActiveBlackboardPath {
         }
         $window.Title = "Agent Collab Controller - " + $script:AppVersion + " [" + $script:ProjectName + "]"
 
+        $script:FormDirty = $false
         $script:LastReadBlackboardText = ""
+        $script:LastCursorPad = $null
+        $script:LastGeminiPad = $null
+        $script:ActiveTurnOverride = $null
         Load-BlackboardIntoUI
+        Update-BlackboardViewer -force
         $txtStatus.Text = "Switched active board to: $script:BlackboardPath (Project: $script:ProjectName)"
     } catch {
         [System.Windows.MessageBox]::Show("Failed to switch blackboard: $($_.Exception.Message)", "Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
+    }
+}
+
+function Reload-ActiveBlackboard {
+    param([switch]$force)
+    if (-not (Test-Path $script:BlackboardPath)) { return }
+    if (-not $force -and -not (Confirm-DiscardUnsavedEdits -actionName "reloading board")) { return }
+    $script:FormDirty = $false
+    $script:LastReadBlackboardText = ""
+    $script:LastCursorPad = $null
+    $script:LastGeminiPad = $null
+    $script:ActiveTurnOverride = $null
+    Populate-SeatClientDropdowns -forceFromBoard
+    Load-BlackboardIntoUI
+    Update-BlackboardViewer -force
+    if ($txtStatus) {
+        $txtStatus.Text = "Reloaded blackboard from disk (" + (Get-Date -Format "HH:mm:ss") + "): " + (Split-Path $script:BlackboardPath -Leaf)
     }
 }
 
@@ -2739,19 +2802,6 @@ $btnReset.add_Click({
     $txtStatus.Text = "Reset blackboard (Archived previous state to .ai/history)."
 })
 
-$btnPromoteAlign.add_Click({
-    $align = $txtAlignment.Text.Trim()
-    if ($align) {
-        $txtPrompt.Text = "Promoted Alignment Decision:" + [Environment]::NewLine + $align
-        $cbPhase.SelectedIndex = 2 # implement
-        $cbCursorRole.SelectedIndex = 1 # review
-        $cbGeminiRole.SelectedIndex = 1 # implement
-        $txtHumanNotes.Text = "- Active steering notes."
-        Save-BlackboardContent -clearScratchpads
-        $txtStatus.Text = "Promoted agreed decisions to active implementation objective."
-    }
-})
-
 # Workflow Preset Handler
 function Apply-SelectedWorkflowPreset {
     $s1 = Get-Seat1Client
@@ -3283,6 +3333,50 @@ function Load-BlackboardIntoUI {
                 $humanLoaded = Get-LastMarkdownBody $raw '(?:###|##)\s+(?:Human(?:\s+\(Lead\))?|[^\r\n]+?\s+\(Lead\)|Lead)'
                 if ($humanLoaded) { $txtHumanNotes.Text = $humanLoaded }
                 $script:FormDirty = $false
+            } else {
+                if (-not $script:FormDirty) {
+                    $alignLoaded = Get-LastMarkdownBody $raw '##\s+Alignment\s*&\s*Agreed Decisions'
+                    if ($alignLoaded -eq "---") { $alignLoaded = "" }
+                    if ($alignLoaded -ne $txtAlignment.Text) {
+                        $txtAlignment.Text = $alignLoaded
+                    }
+                }
+            }
+
+            # Auto-Promote matching - **Agreed**: lines into Alignment & Decisions during advise/plan
+            $currentPhase = if ($cbPhase -and $cbPhase.SelectedItem) { [string]$cbPhase.SelectedItem.Content } else { "" }
+            if ($currentPhase -match '^(?:advise|plan)' -and (-not $script:FormDirty)) {
+                $pattern = '(?im)^\s*[-*]\s*\*\*Agreed\*\*:\s*(.+)$'
+                $cMatches = [regex]::Matches($newCursorPad, $pattern)
+                $gMatches = [regex]::Matches($newGeminiPad, $pattern)
+                
+                $cAgreed = @()
+                foreach ($m in $cMatches) { $cAgreed += $m.Groups[1].Value.Trim() }
+                
+                $gAgreed = @()
+                foreach ($m in $gMatches) { $gAgreed += $m.Groups[1].Value.Trim() }
+                
+                $newAgreedItems = @()
+                foreach ($item in $cAgreed) {
+                    if ($gAgreed -contains $item) {
+                        $alreadyInAlign = ($txtAlignment.Text -match [regex]::Escape($item))
+                        if (-not $alreadyInAlign -and -not ($newAgreedItems -contains $item)) {
+                            $newAgreedItems += $item
+                        }
+                    }
+                }
+                
+                if ($newAgreedItems.Count -gt 0) {
+                    $existing = $txtAlignment.Text.Trim()
+                    $appendLines = ($newAgreedItems | ForEach-Object { "- **Agreed**: $_" }) -join [Environment]::NewLine
+                    if ($existing) {
+                        $txtAlignment.Text = $existing + [Environment]::NewLine + $appendLines
+                    } else {
+                        $txtAlignment.Text = $appendLines
+                    }
+                    Save-BlackboardContent
+                    $txtStatus.Text = "Auto-promoted $($newAgreedItems.Count) agreed decision(s) to Alignment."
+                }
             }
             
             if (-not $fromTimer) {
