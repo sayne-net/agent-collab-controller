@@ -1,12 +1,12 @@
 # Agent Collab Controller (WPF UI)
-# Version 1.2.1
+# Version 1.2.2
 # Standalone dual-session controller for multi-agent collaboration with human-in-the-loop steering.
 
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
 
-$script:AppVersion = "v1.2.1"
+$script:AppVersion = "v1.2.2"
 $script:RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $script:ProjectName = (Split-Path $script:RepoRoot -Leaf)
 $script:GitHubRepo = $null
@@ -356,14 +356,14 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                     <ColumnDefinition Width="1.1*"/>
                 </Grid.ColumnDefinitions>
 
-                <!-- Agent 1 Role -->
+                <!-- AI 1 Role -->
                 <StackPanel Grid.Column="0" Margin="0,0,6,0">
                     <Grid Margin="0,0,0,4">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <TextBlock Name="lblSeat1Role" Text="Agent 1 Role" FontWeight="Bold" FontSize="11" Foreground="#89B4FA" VerticalAlignment="Center"/>
+                        <TextBlock Name="lblSeat1Role" Text="AI 1 Role" FontWeight="Bold" FontSize="11" Foreground="#89B4FA" VerticalAlignment="Center"/>
                         <ComboBox Name="cbSeat1Client" Grid.Column="1" Width="105" Margin="4,0,0,0" Padding="4,2" FontSize="11" FontWeight="SemiBold" ToolTip="Select AI Client / IDE profile for Seat 1"/>
                     </Grid>
                     <ComboBox Name="cbCursorRole" SelectedIndex="5">
@@ -376,14 +376,14 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                     </ComboBox>
                 </StackPanel>
 
-                <!-- Agent 2 Role -->
+                <!-- AI 2 Role -->
                 <StackPanel Grid.Column="1" Margin="6,0,6,0">
                     <Grid Margin="0,0,0,4">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <TextBlock Name="lblSeat2Role" Text="Agent 2 Role" FontWeight="Bold" FontSize="11" Foreground="#A6E3A1" VerticalAlignment="Center"/>
+                        <TextBlock Name="lblSeat2Role" Text="AI 2 Role" FontWeight="Bold" FontSize="11" Foreground="#A6E3A1" VerticalAlignment="Center"/>
                         <ComboBox Name="cbSeat2Client" Grid.Column="1" Width="105" Margin="4,0,0,0" Padding="4,2" FontSize="11" FontWeight="SemiBold" ToolTip="Select AI Client / IDE profile for Seat 2"/>
                     </Grid>
                     <ComboBox Name="cbGeminiRole" SelectedIndex="5">
@@ -401,8 +401,8 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                     <TextBlock Text="Project Sign-off" FontWeight="Bold" FontSize="11" Foreground="#F9E2AF" Margin="0,0,0,4"/>
                     <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
                         <CheckBox Name="chkSignHuman" Content="Human" Margin="0,0,6,0"/>
-                        <CheckBox Name="chkSignCursor" Content="Agent 1" Margin="0,0,6,0"/>
-                        <CheckBox Name="chkSignGemini" Content="Agent 2"/>
+                        <CheckBox Name="chkSignCursor" Content="AI 1" Margin="0,0,6,0"/>
+                        <CheckBox Name="chkSignGemini" Content="AI 2"/>
                     </StackPanel>
                 </StackPanel>
 
@@ -482,7 +482,7 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
             </Border>
         </Grid>
 
-        <!-- 4: Agent 1 | Agent 2 last-response panes (#23) -->
+        <!-- 4: AI 1 | AI 2 last-response panes (#23) -->
         <Grid Grid.Row="4" Margin="0,0,0,8">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
@@ -494,7 +494,7 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
-                    <TextBlock Name="lblSeat1Pane" Grid.Row="0" Text="💠 AGENT 1 LAST RESPONSE" FontWeight="Bold" FontSize="11" Foreground="#89B4FA" Margin="0,0,0,6"/>
+                    <TextBlock Name="lblSeat1Pane" Grid.Row="0" Text="💠 AI 1 LAST RESPONSE" FontWeight="Bold" FontSize="11" Foreground="#89B4FA" Margin="0,0,0,6"/>
                     <RichTextBox Name="rtbCursorLast" Grid.Row="1" IsReadOnly="True" IsTabStop="False" IsUndoEnabled="False"
                              MinHeight="120" VerticalAlignment="Stretch"
                              VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
@@ -508,7 +508,7 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
-                    <TextBlock Name="lblSeat2Pane" Grid.Row="0" Text="🪐 AGENT 2 LAST RESPONSE" FontWeight="Bold" FontSize="11" Foreground="#A6E3A1" Margin="0,0,0,6"/>
+                    <TextBlock Name="lblSeat2Pane" Grid.Row="0" Text="🪐 AI 2 LAST RESPONSE" FontWeight="Bold" FontSize="11" Foreground="#A6E3A1" Margin="0,0,0,6"/>
                     <RichTextBox Name="rtbGeminiLast" Grid.Row="1" IsReadOnly="True" IsTabStop="False" IsUndoEnabled="False"
                              MinHeight="120" VerticalAlignment="Stretch"
                              VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
@@ -534,12 +534,12 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                 <!-- Row 0 Left: Kickoff Buttons -->
                 <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
                     <TextBlock Text="🚀 Kickoff:" FontWeight="Bold" FontSize="11" Foreground="#A6E3A1" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                    <Button Name="btnCopyCursorKickoff" Content="📋 Copy Agent 1" Background="#313244" Margin="0,0,4,0" ToolTip="Copy tailored Kickoff Prompt for Agent 1 to Clipboard"/>
-                    <Button Name="btnSendCursorKickoff" Content="🚀 Send Agent 1" Background="#45475A" Foreground="#89B4FA" Margin="0,0,6,0" ToolTip="Focus Agent 1 window and paste Kickoff Prompt"/>
-                    <Button Name="btnCopyGeminiKickoff" Content="📋 Copy Agent 2" Background="#313244" Margin="0,0,4,0" ToolTip="Copy tailored Kickoff Prompt for Agent 2 to Clipboard"/>
-                    <Button Name="btnSendGeminiKickoff" Content="🚀 Send Agent 2" Background="#45475A" Foreground="#A6E3A1" Margin="0,0,6,0" ToolTip="Focus Agent 2 window and paste Kickoff Prompt"/>
+                    <Button Name="btnCopyCursorKickoff" Content="📋 Copy AI 1" Background="#313244" Margin="0,0,4,0" ToolTip="Copy tailored Kickoff Prompt for AI 1 to Clipboard"/>
+                    <Button Name="btnSendCursorKickoff" Content="🚀 Send AI 1" Background="#45475A" Foreground="#89B4FA" Margin="0,0,6,0" ToolTip="Focus AI 1 window and paste Kickoff Prompt"/>
+                    <Button Name="btnCopyGeminiKickoff" Content="📋 Copy AI 2" Background="#313244" Margin="0,0,4,0" ToolTip="Copy tailored Kickoff Prompt for AI 2 to Clipboard"/>
+                    <Button Name="btnSendGeminiKickoff" Content="🚀 Send AI 2" Background="#45475A" Foreground="#A6E3A1" Margin="0,0,6,0" ToolTip="Focus AI 2 window and paste Kickoff Prompt"/>
                     <Button Name="btnCopyBothKickoff" Content="📋 Copy Both" Background="#313244" Foreground="#BAC2DE" Margin="0,0,4,0" ToolTip="Copy combined Kickoff prompts for both agents to Clipboard"/>
-                    <Button Name="btnSendBothKickoff" Content="🚀 Send Both" Background="#89B4FA" Foreground="#11111B" FontWeight="Bold" Margin="0,0,4,0" ToolTip="Sequence and send Kickoff prompts to both Agent 1 and Agent 2"/>
+                    <Button Name="btnSendBothKickoff" Content="🚀 Send Both" Background="#89B4FA" Foreground="#11111B" FontWeight="Bold" Margin="0,0,4,0" ToolTip="Sequence and send Kickoff prompts to both AI 1 and AI 2"/>
                     <CheckBox Name="chkNewChatKickoff" Content="New Chat" IsChecked="False" VerticalAlignment="Center" Margin="6,0,4,0" Foreground="#A6E3A1" ToolTip="Optional one-shot on Kickoff (default off at launch and Reset; armed on Close Project). Cursor palette Chat: New Chat; Antigravity Ctrl+Shift+I then Ctrl+Shift+L (never Ctrl+L / Ctrl+N). Unchecks after send. Re-prompt never opens a new chat."/>
                 </StackPanel>
 
@@ -549,8 +549,8 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                 <!-- Row 0 Right: Re-prompt Buttons -->
                 <StackPanel Grid.Row="0" Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                     <TextBlock Text="⚡ Re-prompt Sync:" FontWeight="Bold" FontSize="11" Foreground="#F9E2AF" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                    <Button Name="btnRepromptCursor" Content="Agent 1" Background="#313244" Margin="0,0,4,0" ToolTip="Focus Agent 1 &amp; re-prompt"/>
-                    <Button Name="btnRepromptGemini" Content="Agent 2" Background="#313244" Margin="0,0,4,0" ToolTip="Focus Agent 2 &amp; re-prompt"/>
+                    <Button Name="btnRepromptCursor" Content="AI 1" Background="#313244" Margin="0,0,4,0" ToolTip="Focus AI 1 &amp; re-prompt"/>
+                    <Button Name="btnRepromptGemini" Content="AI 2" Background="#313244" Margin="0,0,4,0" ToolTip="Focus AI 2 &amp; re-prompt"/>
                     <Button Name="btnRepromptBoth" Content="⚡ Both" Background="#45475A" Foreground="#F9E2AF" ToolTip="Re-prompt both agents"/>
                 </StackPanel>
             </Grid>
@@ -688,13 +688,13 @@ $lblSeat2Pane          = $window.FindName("lblSeat2Pane")
 
 function Get-ClientConfiguration {
     $defaultConfig = [PSCustomObject]@{
-        seat1 = "Agent 1"
-        seat2 = "Agent 2"
+        seat1 = "AI 1"
+        seat2 = "AI 2"
         boardPath = ""
         tooltips = $true
         profiles = [PSCustomObject]@{
-            "Agent 1" = [PSCustomObject]@{ process = ""; description = "Generic Seat 1 (Manual Clipboard Copy)" }
-            "Agent 2" = [PSCustomObject]@{ process = ""; description = "Generic Seat 2 (Manual Clipboard Copy)" }
+            "AI 1" = [PSCustomObject]@{ process = ""; description = "Generic Seat 1 (Manual Clipboard Copy)" }
+            "AI 2" = [PSCustomObject]@{ process = ""; description = "Generic Seat 2 (Manual Clipboard Copy)" }
             "Cursor" = [PSCustomObject]@{ process = "Cursor"; description = "Cursor AI IDE" }
             "Antigravity" = [PSCustomObject]@{ process = "Antigravity"; description = "Google Antigravity IDE" }
             "Windsurf" = [PSCustomObject]@{ process = "Windsurf"; description = "Codeium Windsurf IDE" }
@@ -831,9 +831,11 @@ function Get-Seat1Client {
         return [string]$cbSeat1Client.SelectedItem
     }
     if ($script:ClientConfig -and $script:ClientConfig.seat1) {
-        return [string]$script:ClientConfig.seat1
+        $val = [string]$script:ClientConfig.seat1
+        if ($val -eq "Agent 1") { return "AI 1" }
+        return $val
     }
-    return "Agent 1"
+    return "AI 1"
 }
 
 function Get-Seat2Client {
@@ -841,9 +843,11 @@ function Get-Seat2Client {
         return [string]$cbSeat2Client.SelectedItem
     }
     if ($script:ClientConfig -and $script:ClientConfig.seat2) {
-        return [string]$script:ClientConfig.seat2
+        $val = [string]$script:ClientConfig.seat2
+        if ($val -eq "Agent 2") { return "AI 2" }
+        return $val
     }
-    return "Agent 2"
+    return "AI 2"
 }
 
 function Update-SeatClientLabels {
@@ -876,7 +880,7 @@ function Populate-SeatClientDropdowns {
     $script:ClientConfig = Get-ClientConfiguration
     $profileNames = @($script:ClientConfig.profiles.PSObject.Properties | ForEach-Object { $_.Name })
     if ($profileNames.Count -eq 0) {
-        $profileNames = @("Agent 1", "Agent 2", "Cursor", "Antigravity", "Windsurf", "VS Code", "Terminal")
+        $profileNames = @("AI 1", "AI 2", "Cursor", "Antigravity", "Windsurf", "VS Code", "Terminal")
     }
 
     if ($cbSeat1Client) {
@@ -885,7 +889,13 @@ function Populate-SeatClientDropdowns {
         foreach ($p in $profileNames) {
             [void]$cbSeat1Client.Items.Add($p)
         }
-        $target1 = if ($current1 -and $cbSeat1Client.Items.Contains($current1)) { $current1 } elseif ($script:ClientConfig.seat1) { [string]$script:ClientConfig.seat1 } else { "Agent 1" }
+        $target1 = if ($current1 -and $cbSeat1Client.Items.Contains($current1)) {
+            $current1
+        } elseif ($script:ClientConfig.seat1 -and $script:ClientConfig.seat1 -ne "Agent 1") {
+            [string]$script:ClientConfig.seat1
+        } else {
+            "AI 1"
+        }
         $idx1 = $cbSeat1Client.Items.IndexOf($target1)
         if ($idx1 -ge 0) { $cbSeat1Client.SelectedIndex = $idx1 } else { $cbSeat1Client.SelectedIndex = 0 }
     }
@@ -896,7 +906,13 @@ function Populate-SeatClientDropdowns {
         foreach ($p in $profileNames) {
             [void]$cbSeat2Client.Items.Add($p)
         }
-        $target2 = if ($current2 -and $cbSeat2Client.Items.Contains($current2)) { $current2 } elseif ($script:ClientConfig.seat2) { [string]$script:ClientConfig.seat2 } else { "Agent 2" }
+        $target2 = if ($current2 -and $cbSeat2Client.Items.Contains($current2)) {
+            $current2
+        } elseif ($script:ClientConfig.seat2 -and $script:ClientConfig.seat2 -ne "Agent 2") {
+            [string]$script:ClientConfig.seat2
+        } else {
+            "AI 2"
+        }
         $idx2 = $cbSeat2Client.Items.IndexOf($target2)
         if ($idx2 -ge 0) { $cbSeat2Client.SelectedIndex = $idx2 } else { $cbSeat2Client.SelectedIndex = 1 }
     }
@@ -1570,7 +1586,7 @@ function Get-ActiveTurn {
     $s2 = Get-Seat2Client
     if ($script:ActiveTurnOverride) {
         $s2Esc = [regex]::Escape($s2)
-        if ($script:ActiveTurnOverride -match "$s2Esc|Gemini|Agent 2") {
+        if ($script:ActiveTurnOverride -match "$s2Esc|Gemini|AI 2|Agent 2") {
             $badgeTurn.Background = [System.Windows.Media.Brushes]::DarkBlue
         } else {
             $badgeTurn.Background = [System.Windows.Media.Brushes]::DarkCyan
@@ -1873,13 +1889,15 @@ function Get-KickoffPromptForAgent {
     $alignBlock = Get-AlignmentBlock
     $roleGuidance = Get-RoleGuidance $normRole
     $sNameEsc = [regex]::Escape($agentName)
-    $scratchpadSection = if ($seatId -eq "seat1" -or $agentName -match 'Cursor|Agent\s*1') {
+    $scratchpadSection = if ($seatId -eq "seat1" -or $agentName -match 'Cursor|Agent\s*1|AI\s*1') {
         if ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### $sNameEsc Scratchpad" -Quiet)) { "### $agentName Scratchpad" }
+        elseif ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### AI 1 Scratchpad" -Quiet)) { "### AI 1 Scratchpad" }
         elseif ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### Cursor Scratchpad" -Quiet)) { "### Cursor Scratchpad" }
         elseif ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### Agent 1 Scratchpad" -Quiet)) { "### Agent 1 Scratchpad" }
         else { "### $agentName Scratchpad" }
     } else {
         if ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### $sNameEsc Scratchpad" -Quiet)) { "### $agentName Scratchpad" }
+        elseif ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### AI 2 Scratchpad" -Quiet)) { "### AI 2 Scratchpad" }
         elseif ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### Gemini \(Antigravity\) Scratchpad" -Quiet)) { "### Gemini (Antigravity) Scratchpad" }
         elseif ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### Agent 2 Scratchpad" -Quiet)) { "### Agent 2 Scratchpad" }
         else { "### $agentName Scratchpad" }
@@ -1937,13 +1955,15 @@ function Get-RepromptPromptForAgent {
     $signOffGuidance = Get-SignOffGuidance
     $boardPath = $script:BlackboardPath
     $sNameEsc = [regex]::Escape($agentName)
-    $scratchpadSection = if ($seatId -eq "seat1" -or $agentName -match 'Cursor|Agent\s*1') {
+    $scratchpadSection = if ($seatId -eq "seat1" -or $agentName -match 'Cursor|Agent\s*1|AI\s*1') {
         if ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### $sNameEsc Scratchpad" -Quiet)) { "### $agentName Scratchpad" }
+        elseif ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### AI 1 Scratchpad" -Quiet)) { "### AI 1 Scratchpad" }
         elseif ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### Cursor Scratchpad" -Quiet)) { "### Cursor Scratchpad" }
         elseif ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### Agent 1 Scratchpad" -Quiet)) { "### Agent 1 Scratchpad" }
         else { "### $agentName Scratchpad" }
     } else {
         if ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### $sNameEsc Scratchpad" -Quiet)) { "### $agentName Scratchpad" }
+        elseif ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### AI 2 Scratchpad" -Quiet)) { "### AI 2 Scratchpad" }
         elseif ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### Gemini \(Antigravity\) Scratchpad" -Quiet)) { "### Gemini (Antigravity) Scratchpad" }
         elseif ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### Agent 2 Scratchpad" -Quiet)) { "### Agent 2 Scratchpad" }
         else { "### $agentName Scratchpad" }
@@ -2994,7 +3014,7 @@ function Load-BlackboardIntoUI {
                 $s1Esc = [regex]::Escape($s1)
                 $s2Esc = [regex]::Escape($s2)
 
-                if ($raw -match ('(?m)\|\s*\*\*(?:' + $s1Esc + '|Cursor|Agent\s*1)\*\*\s*\|\s*`([^`]+)`')) {
+                if ($raw -match ('(?m)\|\s*\*\*(?:' + $s1Esc + '|Cursor|Agent\s*1|AI\s*1)\*\*\s*\|\s*`([^`]+)`')) {
                     $r = $matches[1].Trim()
                     for ($i = 0; $i -lt $cbCursorRole.Items.Count; $i++) {
                         if ($cbCursorRole.Items[$i].Content -eq $r) {
@@ -3004,7 +3024,7 @@ function Load-BlackboardIntoUI {
                     }
                 }
                 
-                if ($raw -match ('(?m)\|\s*\*\*(?:' + $s2Esc + '|Gemini(?:\s+\(Antigravity\))?|Agent\s*2)\*\*\s*\|\s*`([^`]+)`')) {
+                if ($raw -match ('(?m)\|\s*\*\*(?:' + $s2Esc + '|Gemini(?:\s+\(Antigravity\))?|Agent\s*2|AI\s*2)\*\*\s*\|\s*`([^`]+)`')) {
                     $r = $matches[1].Trim()
                     for ($i = 0; $i -lt $cbGeminiRole.Items.Count; $i++) {
                         if ($cbGeminiRole.Items[$i].Content -eq $r) {
@@ -3026,8 +3046,8 @@ function Load-BlackboardIntoUI {
             $s1Esc = [regex]::Escape($s1)
             $s2Esc = [regex]::Escape($s2)
 
-            $newCursorPad = Get-LastMarkdownBody $raw "(?:###|##)\s+(?:$s1Esc|Cursor|Agent\s*1)(?:\s+Scratchpad)?"
-            $newGeminiPad = Get-LastMarkdownBody $raw "(?:###|##)\s+(?:$s2Esc|Gemini(?:\s+\(Antigravity\))?|Agent\s*2)(?:\s+Scratchpad)?"
+            $newCursorPad = Get-LastMarkdownBody $raw "(?:###|##)\s+(?:$s1Esc|Cursor|Agent\s*1|AI\s*1)(?:\s+Scratchpad)?"
+            $newGeminiPad = Get-LastMarkdownBody $raw "(?:###|##)\s+(?:$s2Esc|Gemini(?:\s+\(Antigravity\))?|Agent\s*2|AI\s*2)(?:\s+Scratchpad)?"
             Update-LastResponsePanes -cursorPad $newCursorPad -geminiPad $newGeminiPad
             
             if ($null -eq $script:LastCursorPad) {
@@ -3035,11 +3055,11 @@ function Load-BlackboardIntoUI {
                 $script:LastGeminiPad = $newGeminiPad
                 $script:ActiveTurnOverride = $null
             } else {
-                if ($newCursorPad -ne $script:LastCursorPad -and $newCursorPad -notmatch "(?i)^-\s*\((?:$s1Esc|Cursor|Agent\s*1)\s+(?:updates?|scratchpad)" -and $newCursorPad.Trim()) {
+                if ($newCursorPad -ne $script:LastCursorPad -and $newCursorPad -notmatch "(?i)^-\s*\((?:$s1Esc|Cursor|Agent\s*1|AI\s*1)\s+(?:updates?|scratchpad)" -and $newCursorPad.Trim()) {
                     $script:LastCursorPad = $newCursorPad
                     $script:ActiveTurnOverride = "$s1 responded at " + (Get-Date -Format "HH:mm")
                 }
-                if ($newGeminiPad -ne $script:LastGeminiPad -and $newGeminiPad -notmatch "(?i)^-\s*\((?:$s2Esc|Gemini|Agent\s*2)\s+(?:updates?|scratchpad)" -and $newGeminiPad.Trim()) {
+                if ($newGeminiPad -ne $script:LastGeminiPad -and $newGeminiPad -notmatch "(?i)^-\s*\((?:$s2Esc|Gemini|Agent\s*2|AI\s*2)\s+(?:updates?|scratchpad)" -and $newGeminiPad.Trim()) {
                     $script:LastGeminiPad = $newGeminiPad
                     $script:ActiveTurnOverride = "$s2 responded at " + (Get-Date -Format "HH:mm")
                 }

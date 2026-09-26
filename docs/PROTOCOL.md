@@ -43,13 +43,13 @@ Most multi-agent frameworks run autonomous loops that quickly diverge, race each
 
 ## The Blackboard Lifecycle
 
-1. **Kickoff**: Human Lead launches the WPF Controller (`scripts\blackboard-ui.bat`), enters the objective, selects roles (e.g. Agent 1: `implement`, Agent 2: `review`), and clicks **Copy Kickoff** (or **Send**).
+1. **Kickoff**: Human Lead launches the WPF Controller (`scripts\blackboard-ui.bat`), enters the objective, selects roles (e.g. AI 1: `implement`, AI 2: `review`), and clicks **Copy Kickoff** (or **Send**).
 2. **Execution**:
    - The implementing agent writes code, updates progress in its scratchpad, and commits changes locally.
    - The reviewing agent inspects the working tree diff (via the controller's built-in Review Diff viewer) and appends feedback.
 3. **Verification & Sign-off**:
    - Once all tests pass and requirements are verified, each agent marks their sign-off cell `[x]`.
-   - When all 3 participants (Human + Agent 1 + Agent 2) have signed off, the **Close Project** button activates.
+   - When all 3 participants (Human + AI 1 + AI 2) have signed off, the **Close Project** button activates.
 4. **Close Project**:
    - Automatically archives the current blackboard session into `.ai/history/blackboard-<timestamp>.md`.
    - Optionally closes the linked GitHub issue via `gh CLI`.

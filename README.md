@@ -61,9 +61,9 @@ Ensure your `.gitignore` contains:
 ### 3. Start a Session
 1. **Enter Objective**: Describe what you want accomplished in the **Current Objective & Prompt** box.
 2. **Assign Roles**:
-   - Set **Agent 1** (e.g. Cursor) to `implement`.
-   - Set **Agent 2** (e.g. Gemini Antigravity) to `review`.
-3. **Copy & Paste Kickoff**: Click **📋 Copy Agent 1** (or **🚀 Send Agent 1**) to paste the generated prompt directly into your agent's chat window.
+   - Set **AI 1** (e.g. Cursor) to `implement`.
+   - Set **AI 2** (e.g. Gemini Antigravity) to `review`.
+3. **Copy & Paste Kickoff**: Click **📋 Copy AI 1** (or **🚀 Send AI 1**) to paste the generated prompt directly into your agent's chat window.
 4. **Watch & Steer**:
    - The implementing agent writes code, updates progress in its scratchpad, and commits changes.
    - The reviewing agent tests and audits the diff.
@@ -93,9 +93,9 @@ Place the included agent instruction files in your repository so your agents aut
 
 ### Option B: Zero Setup (Self-Contained Kickoff Prompts)
 Even without pre-configuring agent rules or skills, the controller works out of the box:
-1. In the controller UI, assign roles and click **📋 Copy Agent 1** or **📋 Copy Agent 2** (or use **🚀 Send Agent 1 / 2** to auto-focus and paste).
+1. In the controller UI, assign roles and click **📋 Copy AI 1** or **📋 Copy AI 2** (or use **🚀 Send AI 1 / 2** to auto-focus and paste).
 2. The generated kickoff prompt injects all required protocol context:
-   - Specific identity (`Agent 1` or `Agent 2`)
+   - Specific identity (`AI 1` or `AI 2`)
    - Assigned role permissions and hard-stop safety constraints
    - Canonical absolute path to `.ai/blackboard.md`
    - Strict instructions to only edit within the agent's assigned scratchpad section

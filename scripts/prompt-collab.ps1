@@ -75,18 +75,18 @@ if (Test-Path $BlackboardPath) {
     if ($raw -match '>\s*\*\*Project Phase\*\*:\s*`([^`]+)`') { $currentPhase = $matches[1] }
     if ($raw -match '>\s*\*\*Active Turn\*\*:\s*(.+)') { $currentTurn = $matches[1].Trim() }
     if ($raw -match '>\s*\*\*GitHub Issue\*\*:\s*(.+)') { $currentIssue = $matches[1].Trim() }
-    if ($raw -match '\|\s*\*\*(?:Agent\s*1|Cursor)\*\*\s*\|\s*`([^`]+)`') { $currentAgent1 = $matches[1] }
-    if ($raw -match '\|\s*\*\*(?:Agent\s*2|Gemini(?:\s+\(Antigravity\))?)\*\*\s*\|\s*`([^`]+)`') { $currentAgent2 = $matches[1] }
+    if ($raw -match '\|\s*\*\*(?:AI\s*1|Agent\s*1|Cursor)\*\*\s*\|\s*`([^`]+)`') { $currentAgent1 = $matches[1] }
+    if ($raw -match '\|\s*\*\*(?:AI\s*2|Agent\s*2|Gemini(?:\s+\(Antigravity\))?)\*\*\s*\|\s*`([^`]+)`') { $currentAgent2 = $matches[1] }
 
     if ($raw -match '(?m)\|\s*\*\*([^*]+)\*\*\s*\|\s*`lead`\s*\|\s*Active\s*\|\s*(\[[ xX]\])') { $signHuman = $matches[2] }
-    if ($raw -match '\|\s*\*\*(?:Agent\s*1|Cursor)\*\*\s*\|\s*`[^`]*`\s*\|\s*Active\s*\|\s*(\[[ xX]\])') { $signAgent1 = $matches[1] }
-    if ($raw -match '\|\s*\*\*(?:Agent\s*2|Gemini(?:\s+\(Antigravity\))?)\*\*\s*\|\s*`[^`]*`\s*\|\s*Active\s*\|\s*(\[[ xX]\])') { $signAgent2 = $matches[1] }
+    if ($raw -match '\|\s*\*\*(?:AI\s*1|Agent\s*1|Cursor)\*\*\s*\|\s*`[^`]*`\s*\|\s*Active\s*\|\s*(\[[ xX]\])') { $signAgent1 = $matches[1] }
+    if ($raw -match '\|\s*\*\*(?:AI\s*2|Agent\s*2|Gemini(?:\s+\(Antigravity\))?)\*\*\s*\|\s*`[^`]*`\s*\|\s*Active\s*\|\s*(\[[ xX]\])') { $signAgent2 = $matches[1] }
 
     if ($raw -match '(?ms)^##\s+Current Objective\s*&\s*Prompt\s*\r?\n(.*?)(?=\r?\n\s*---\s*\r?\n\s*##|\Z)') { $currentPrompt = $matches[1].Trim() }
     if ($raw -match '(?ms)^##\s+Alignment\s*&\s*Agreed Decisions\s*\r?\n(.*?)(?=\r?\n\s*---\s*\r?\n\s*##|\Z)') { $currentAlign = $matches[1].Trim() }
     if ($raw -match '(?ms)^(?:###|##)\s+(?:Human(?:\s+\(Lead\))?|[^\r\n]+?\s+\(Lead\)|Lead)\s*\r?\n(.*?)(?=\r?\n\s*(?:###|##)|\Z)') { $currentHuman = $matches[1].Trim() }
-    if ($raw -match '(?ms)^(?:###|##)\s+(?:Agent\s*1|Cursor)(?:\s+Scratchpad)?\s*\r?\n(.*?)(?=\r?\n\s*(?:###|##)\s+(?:Agent\s*2|Gemini)|\Z)') { $currentAgent1Pad = $matches[1].Trim() }
-    if ($raw -match '(?ms)^(?:###|##)\s+(?:Agent\s*2|Gemini(?:\s+\(Antigravity\))?)(?:\s+Scratchpad)?\s*\r?\n(.*?)\Z') { $currentAgent2Pad = $matches[1].Trim() }
+    if ($raw -match '(?ms)^(?:###|##)\s+(?:AI\s*1|Agent\s*1|Cursor)(?:\s+Scratchpad)?\s*\r?\n(.*?)(?=\r?\n\s*(?:###|##)\s+(?:AI\s*2|Agent\s*2|Gemini)|\Z)') { $currentAgent1Pad = $matches[1].Trim() }
+    if ($raw -match '(?ms)^(?:###|##)\s+(?:AI\s*2|Agent\s*2|Gemini(?:\s+\(Antigravity\))?)(?:\s+Scratchpad)?\s*\r?\n(.*?)\Z') { $currentAgent2Pad = $matches[1].Trim() }
 }
 
 if ($Preset) {
@@ -136,8 +136,8 @@ if ($Reset) {
     $currentFlow = "$([char]::ConvertFromUtf32(0x1F7E2)) GO"
     $currentTurn = 'Human (Lead)'
     $currentHuman = '- Active steering notes.'
-    $currentAgent1Pad = '- (Agent 1 updates here)'
-    $currentAgent2Pad = '- (Agent 2 updates here)'
+    $currentAgent1Pad = '- (AI 1 updates here)'
+    $currentAgent2Pad = '- (AI 2 updates here)'
     $signHuman = '[ ]'
     $signAgent1 = '[ ]'
     $signAgent2 = '[ ]'
@@ -151,8 +151,8 @@ if ($Promote) {
         $currentAgent2 = 'review'
         $currentFlow = "$([char]::ConvertFromUtf32(0x1F7E2)) GO"
         $currentHuman = '- Active steering notes.'
-        $currentAgent1Pad = '- (Agent 1 updates here)'
-        $currentAgent2Pad = '- (Agent 2 updates here)'
+        $currentAgent1Pad = '- (AI 1 updates here)'
+        $currentAgent2Pad = '- (AI 2 updates here)'
         Write-Host "Promoted alignment decisions to implementation objective." -ForegroundColor Green
     } else {
         Write-Warning "Cannot promote: Alignment section is empty."
@@ -172,7 +172,7 @@ if ($PSBoundParameters.ContainsKey('Prompt')) { $currentPrompt = $Prompt }
 if ($PSBoundParameters.ContainsKey('Alignment')) { $currentAlign = $Alignment }
 
 if ($currentAgent1 -eq 'implement' -and $currentAgent2 -eq 'implement') {
-    Write-Warning "SAFETY GUARD: Both Agent 1 and Agent 2 are configured with implement role! Risk of concurrent write collision."
+    Write-Warning "SAFETY GUARD: Both AI 1 and AI 2 are configured with implement role! Risk of concurrent write collision."
 }
 
 $timestamp = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
@@ -194,8 +194,8 @@ $lines = @(
     '| Participant | Active Role | Status | Sign-off (Complete) |',
     '|-------------|-------------|--------|---------------------|',
     "| **Human (Lead)** | $($q)lead$($q) | Active | $signHuman |",
-    "| **Agent 1** | $q$currentAgent1$q | Active | $signAgent1 |",
-    "| **Agent 2** | $q$currentAgent2$q | Active | $signAgent2 |",
+    "| **AI 1** | $q$currentAgent1$q | Active | $signAgent1 |",
+    "| **AI 2** | $q$currentAgent2$q | Active | $signAgent2 |",
     '',
     '> [!NOTE]',
     "> **Safety Guard**: Only ONE agent may hold the $($q)implement$($q) role at any time. When one implements, the other must be $($q)review$($q), $($q)advise$($q), or $($q)idle$($q).",
@@ -219,10 +219,10 @@ $lines = @(
     '### Human (Lead)',
     $currentHuman,
     '',
-    '### Agent 1 Scratchpad',
+    '### AI 1 Scratchpad',
     $currentAgent1Pad,
     '',
-    '### Agent 2 Scratchpad',
+    '### AI 2 Scratchpad',
     $currentAgent2Pad
 )
 
@@ -230,7 +230,7 @@ $outputContent = $lines -join [Environment]::NewLine
 [System.IO.File]::WriteAllText($BlackboardPath, $outputContent, [System.Text.Encoding]::UTF8)
 
 Write-Host "Blackboard updated ($BlackboardPath)" -ForegroundColor Green
-Write-Host "Flow: $currentFlow | Phase: $currentPhase | Agent 1: $currentAgent1 | Agent 2: $currentAgent2" -ForegroundColor Cyan
+Write-Host "Flow: $currentFlow | Phase: $currentPhase | AI 1: $currentAgent1 | AI 2: $currentAgent2" -ForegroundColor Cyan
 
 if ($Show) {
     Get-Content $BlackboardPath

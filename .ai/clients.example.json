@@ -1,15 +1,15 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "seat1": "Agent 1",
-  "seat2": "Agent 2",
+  "seat1": "AI 1",
+  "seat2": "AI 2",
   "boardPath": "",
   "tooltips": true,
   "profiles": {
-    "Agent 1": {
+    "AI 1": {
       "process": "",
       "description": "Generic Seat 1 (Manual Clipboard Copy)"
     },
-    "Agent 2": {
+    "AI 2": {
       "process": "",
       "description": "Generic Seat 2 (Manual Clipboard Copy)"
     },
