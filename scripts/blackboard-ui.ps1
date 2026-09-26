@@ -1,12 +1,12 @@
 # Agent Collab Controller (WPF UI)
-# Version 1.2.12
+# Version 1.2.13
 # Standalone dual-session controller for multi-agent collaboration with human-in-the-loop steering.
 
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
 
-$script:AppVersion = "v1.2.12"
+$script:AppVersion = "v1.2.13"
 $script:RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $script:ProjectName = (Split-Path $script:RepoRoot -Leaf)
 $script:ScriptFilePath = if ($PSCommandPath) { $PSCommandPath } else { Join-Path $PSScriptRoot "blackboard-ui.ps1" }
