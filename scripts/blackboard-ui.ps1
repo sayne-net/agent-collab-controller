@@ -1,12 +1,12 @@
 # Agent Collab Controller (WPF UI)
-# Version 1.2.10
+# Version 1.2.11
 # Standalone dual-session controller for multi-agent collaboration with human-in-the-loop steering.
 
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
 
-$script:AppVersion = "v1.2.10"
+$script:AppVersion = "v1.2.11"
 $script:RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $script:ProjectName = (Split-Path $script:RepoRoot -Leaf)
 $script:ScriptFilePath = if ($PSCommandPath) { $PSCommandPath } else { Join-Path $PSScriptRoot "blackboard-ui.ps1" }
@@ -2223,8 +2223,10 @@ function Get-ActiveTurn {
     }
 
     # 4. Check active agents
-    $cRole = if ($cbCursorRole.Text) { $cbCursorRole.Text } else { "idle" }
-    $gRole = if ($cbGeminiRole.Text) { $cbGeminiRole.Text } else { "idle" }
+    $cRole = Get-ComboRoleText $cbCursorRole
+    if (-not $cRole) { $cRole = "idle" }
+    $gRole = Get-ComboRoleText $cbGeminiRole
+    if (-not $gRole) { $gRole = "idle" }
 
     # Prefer implementer turn first
     if ($cRole -eq "implement" -and -not $signCursor) {
@@ -2276,9 +2278,18 @@ function Update-UiActiveTurn {
     }
 }
 
+function Get-ComboRoleText {
+    param($combo)
+    if ($combo -and $combo.SelectedItem -and $combo.SelectedItem.Content) {
+        return [string]$combo.SelectedItem.Content
+    }
+    if ($combo -and $combo.Text) { return [string]$combo.Text }
+    return ""
+}
+
 function Check-Safety {
-    $cursor = $cbCursorRole.Text
-    $gemini = $cbGeminiRole.Text
+    $cursor = Get-ComboRoleText $cbCursorRole
+    $gemini = Get-ComboRoleText $cbGeminiRole
     if ($cursor -eq "implement" -and $gemini -eq "implement") {
         $txtSafetyWarning.Text = "⚠️ SAFETY WARNING: Both agents set to implement! Conflict risk."
         $txtSafetyWarning.Foreground = [System.Windows.Media.Brushes]::Salmon
