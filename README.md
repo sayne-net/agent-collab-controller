@@ -13,6 +13,10 @@
 
 ---
 
+![Agent Collab Controller - Active Dual-Session Cockpit](docs/images/controller-main-window.png)
+
+---
+
 ## Why Agent Collab Controller?
 
 Running multiple autonomous AI coding agents in parallel usually leads to one of two failure modes:
@@ -72,7 +76,9 @@ Ensure your `.gitignore` contains:
 4. **Watch & Steer**:
    - The implementing agent writes code, updates progress in its scratchpad, and commits changes.
    - The reviewing agent tests and audits the diff.
-   - You can review working tree changes instantly via the **🔍 Review Diff** button.
+   - You can review working tree changes instantly via the **🔍 Review Diff** button:
+     
+     ![Built-in Git Review Diff Viewer](docs/images/controller-diff-viewer.png)
 5. **Sign-off & Close**:
    - When all tasks and verification steps are complete, all 3 participants sign off (`[x]`).
    - Click **🏁 Close Project** to archive the session tape to `.ai/history/` and reset the board.
