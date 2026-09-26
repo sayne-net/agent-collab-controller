@@ -323,14 +323,14 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                 </StackPanel>
 
                 <!-- Board Path Info Box -->
-                <Border Grid.Column="1" Background="#11111B" CornerRadius="4" Padding="6,2" Margin="6,0,6,0" BorderBrush="#313244" BorderThickness="1" VerticalAlignment="Center" HorizontalAlignment="Center">
-                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                        <TextBlock Text="📋 Board: " FontSize="11" FontWeight="SemiBold" Foreground="#BAC2DE" VerticalAlignment="Center" Margin="0,0,4,0"/>
-                        <ComboBox Name="cbRecentBoards" Width="150" Margin="0,0,4,0" ToolTip="Recent project boards (Select to switch)"/>
-                        <TextBlock Name="txtBoardPath" Text="" FontSize="10" Foreground="#89B4FA" FontFamily="Consolas, monospace" VerticalAlignment="Center" MaxWidth="160" TextTrimming="CharacterEllipsis" ToolTip="Active Blackboard.md path (Click to copy)" Cursor="Hand"/>
-                        <Button Name="btnNewBoard" Content="➕ New" FontSize="10" Padding="5,1" Margin="6,0,2,0" Background="#313244" Foreground="#A6E3A1" FontWeight="SemiBold" ToolTip="Start a new board in a project folder"/>
-                        <Button Name="btnSwitchBoard" Content="📂 Browse" FontSize="10" Padding="5,1" Margin="2,0,0,0" Background="#313244" Foreground="#BAC2DE" ToolTip="Browse to select an existing blackboard.md file"/>
-                    </StackPanel>
+                <Border Grid.Column="1" Background="#11111B" CornerRadius="4" Padding="6,2" Margin="6,0,6,0" BorderBrush="#313244" BorderThickness="1" VerticalAlignment="Center">
+                    <DockPanel LastChildFill="True" VerticalAlignment="Center">
+                        <TextBlock Text="📋 Board: " FontSize="11" FontWeight="SemiBold" Foreground="#BAC2DE" VerticalAlignment="Center" Margin="0,0,4,0" DockPanel.Dock="Left"/>
+                        <ComboBox Name="cbRecentBoards" Width="135" Margin="0,0,6,0" ToolTip="Recent project boards (Select to switch)" DockPanel.Dock="Left"/>
+                        <Button Name="btnSwitchBoard" Content="📂 Browse" FontSize="10" Padding="6,1" Margin="3,0,0,0" Background="#313244" Foreground="#BAC2DE" ToolTip="Browse to select an existing blackboard.md file" DockPanel.Dock="Right"/>
+                        <Button Name="btnNewBoard" Content="➕ New" FontSize="10" Padding="6,1" Margin="6,0,0,0" Background="#313244" Foreground="#A6E3A1" FontWeight="SemiBold" ToolTip="Start a new board in a project folder" DockPanel.Dock="Right"/>
+                        <TextBlock Name="txtBoardPath" Text="" FontSize="10" Foreground="#89B4FA" FontFamily="Consolas, monospace" VerticalAlignment="Center" ToolTip="Active Blackboard.md path (Click to copy)" Cursor="Hand" TextTrimming="CharacterEllipsis"/>
+                    </DockPanel>
                 </Border>
 
                 <!-- Phase Selector -->
@@ -368,7 +368,7 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                         <TextBlock Name="lblSeat1Role" Text="AI 1 Role" FontWeight="Bold" FontSize="11" Foreground="#89B4FA" VerticalAlignment="Center"/>
                         <ComboBox Name="cbSeat1Client" Grid.Column="1" Width="105" Margin="4,0,0,0" Padding="4,2" FontSize="11" FontWeight="SemiBold" ToolTip="Select AI Client / IDE profile for Seat 1"/>
                     </Grid>
-                    <ComboBox Name="cbCursorRole" SelectedIndex="5">
+                    <ComboBox Name="cbCursorRole" Width="120" HorizontalAlignment="Left" SelectedIndex="5">
                         <ComboBoxItem Content="implement"/>
                         <ComboBoxItem Content="review"/>
                         <ComboBoxItem Content="advise"/>
@@ -388,7 +388,7 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                         <TextBlock Name="lblSeat2Role" Text="AI 2 Role" FontWeight="Bold" FontSize="11" Foreground="#A6E3A1" VerticalAlignment="Center"/>
                         <ComboBox Name="cbSeat2Client" Grid.Column="1" Width="105" Margin="4,0,0,0" Padding="4,2" FontSize="11" FontWeight="SemiBold" ToolTip="Select AI Client / IDE profile for Seat 2"/>
                     </Grid>
-                    <ComboBox Name="cbGeminiRole" SelectedIndex="5">
+                    <ComboBox Name="cbGeminiRole" Width="120" HorizontalAlignment="Left" SelectedIndex="5">
                         <ComboBoxItem Content="review"/>
                         <ComboBoxItem Content="implement"/>
                         <ComboBoxItem Content="advise"/>
