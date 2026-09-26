@@ -14,6 +14,7 @@
 ---
 
 ![Agent Collab Controller - Active Dual-Session Cockpit](docs/images/controller-main-window.png)
+*Note: Screenshots shown are simulated UI captures for demonstration purposes.*
 
 ---
 
@@ -79,6 +80,7 @@ Ensure your `.gitignore` contains:
    - You can review working tree changes instantly via the **🔍 Review Diff** button:
      
      ![Built-in Git Review Diff Viewer](docs/images/controller-diff-viewer.png)
+     *Note: Simulated screenshot demonstrating git diff and untracked file auditing.*
 5. **Sign-off & Close**:
    - When all tasks and verification steps are complete, all 3 participants sign off (`[x]`).
    - Click **🏁 Close Project** to archive the session tape to `.ai/history/` and reset the board.
