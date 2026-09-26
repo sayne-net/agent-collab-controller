@@ -1,7 +1,7 @@
 ---
 name: Bug Report
 about: Report a bug or issue with Agent Collab Controller
-title: 'fix(ui): '
+title: '[Bug]: '
 labels: ['bug']
 assignees: ''
 ---
