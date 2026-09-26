@@ -77,13 +77,17 @@ Ensure your `.gitignore` contains:
 4. **Watch & Steer**:
    - The implementing agent writes code, updates progress in its scratchpad, and commits changes.
    - The reviewing agent tests and audits the diff.
-   - You can review working tree changes instantly via the **🔍 Review Diff** button:
-     
-     ![Built-in Git Review Diff Viewer](docs/images/controller-diff-viewer.png)
-     *Note: Simulated screenshot demonstrating git diff and untracked file auditing.*
+   - Review working tree changes instantly via the **🔍 Review Diff** button:
+
+   ![Built-in Git Review Diff Viewer](docs/images/controller-diff-viewer.png)
+   *Note: Simulated screenshot demonstrating git diff and untracked file auditing.*
+
 5. **Sign-off & Close**:
    - When all tasks and verification steps are complete, all 3 participants sign off (`[x]`).
-   - Click **🏁 Close Project** to archive the session tape to `.ai/history/` and reset the board.
+   - The **🏁 Close Project** button activates, archiving the session tape to `.ai/history/`, resetting the board, and auto-closing associated GitHub issues:
+
+   ![3-Way Sign-off and Close Project](docs/images/controller-signoff-close.png)
+   *Note: Simulated screenshot demonstrating 3-way sign-off gating and session close.*
 
 > [!TIP]
 > **Click-to-Copy Board Path**: The top bar of the controller displays the active blackboard path (`📋 Board: ...`). Click it at any time to instantly copy the full path to your clipboard.
