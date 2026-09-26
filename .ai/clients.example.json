@@ -3,6 +3,7 @@
   "seat1": "AI 1",
   "seat2": "AI 2",
   "boardPath": "",
+  "recentBoards": [],
   "tooltips": true,
   "profiles": {
     "AI 1": {

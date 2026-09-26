@@ -1,12 +1,12 @@
 # Agent Collab Controller (WPF UI)
-# Version 1.2.2
+# Version 1.2.3
 # Standalone dual-session controller for multi-agent collaboration with human-in-the-loop steering.
 
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
 
-$script:AppVersion = "v1.2.2"
+$script:AppVersion = "v1.2.3"
 $script:RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $script:ProjectName = (Split-Path $script:RepoRoot -Leaf)
 $script:GitHubRepo = $null
@@ -323,11 +323,13 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                 </StackPanel>
 
                 <!-- Board Path Info Box -->
-                <Border Grid.Column="1" Background="#11111B" CornerRadius="4" Padding="8,3" Margin="8,0,8,0" BorderBrush="#313244" BorderThickness="1" VerticalAlignment="Center" HorizontalAlignment="Center">
+                <Border Grid.Column="1" Background="#11111B" CornerRadius="4" Padding="6,2" Margin="6,0,6,0" BorderBrush="#313244" BorderThickness="1" VerticalAlignment="Center" HorizontalAlignment="Center">
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                        <TextBlock Text="📋 Board: " FontSize="10" Foreground="#6C7086" VerticalAlignment="Center"/>
-                        <TextBlock Name="txtBoardPath" Text="" FontSize="10" Foreground="#89B4FA" FontFamily="Consolas, monospace" VerticalAlignment="Center" ToolTip="Active Blackboard.md path (Click to copy)"/>
-                        <Button Name="btnSwitchBoard" Content="📂 Switch" FontSize="10" Padding="6,1" Margin="8,0,0,0" Background="#313244" Foreground="#BAC2DE" ToolTip="Select a different target blackboard.md file"/>
+                        <TextBlock Text="📋 Board: " FontSize="11" FontWeight="SemiBold" Foreground="#BAC2DE" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                        <ComboBox Name="cbRecentBoards" Width="150" Margin="0,0,4,0" ToolTip="Recent project boards (Select to switch)"/>
+                        <TextBlock Name="txtBoardPath" Text="" FontSize="10" Foreground="#89B4FA" FontFamily="Consolas, monospace" VerticalAlignment="Center" MaxWidth="160" TextTrimming="CharacterEllipsis" ToolTip="Active Blackboard.md path (Click to copy)" Cursor="Hand"/>
+                        <Button Name="btnNewBoard" Content="➕ New" FontSize="10" Padding="5,1" Margin="6,0,2,0" Background="#313244" Foreground="#A6E3A1" FontWeight="SemiBold" ToolTip="Start a new board in a project folder"/>
+                        <Button Name="btnSwitchBoard" Content="📂 Browse" FontSize="10" Padding="5,1" Margin="2,0,0,0" Background="#313244" Foreground="#BAC2DE" ToolTip="Browse to select an existing blackboard.md file"/>
                     </StackPanel>
                 </Border>
 
@@ -602,6 +604,7 @@ $txtBoardPath          = $window.FindName("txtBoardPath")
 if ($txtBoardPath) {
     $txtBoardPath.Text = $script:BlackboardPath
     $txtBoardPath.Cursor = [System.Windows.Input.Cursors]::Hand
+    $txtBoardPath.ToolTip = "Active Blackboard.md path (Click to copy):`n$script:BlackboardPath"
     $txtBoardPath.add_MouseDown({
         try {
             [System.Windows.Clipboard]::SetText($script:BlackboardPath)
@@ -612,10 +615,122 @@ if ($txtBoardPath) {
     })
 }
 
+$cbRecentBoards        = $window.FindName("cbRecentBoards")
+if ($cbRecentBoards) {
+    $cbRecentBoards.add_SelectionChanged({
+        if ($script:SuppressBoardSwitch) { return }
+        $selectedItem = $cbRecentBoards.SelectedItem
+        if ($selectedItem -and $selectedItem.Tag) {
+            $target = [string]$selectedItem.Tag
+            if ($script:BlackboardPath -and ((Resolve-Path $script:BlackboardPath).Path -eq (Resolve-Path $target).Path)) {
+                return
+            }
+            if (-not (Confirm-DiscardUnsavedEdits -actionName "switching boards")) {
+                Populate-RecentBoardsDropdown
+                return
+            }
+            Set-ActiveBlackboardPath -targetPath $target
+        }
+    })
+}
+
+$btnNewBoard           = $window.FindName("btnNewBoard")
+if ($btnNewBoard) {
+    $btnNewBoard.add_Click({
+        try {
+            if (-not (Confirm-DiscardUnsavedEdits -actionName "creating a new board")) { return }
+            $fbd = New-Object System.Windows.Forms.FolderBrowserDialog
+            $fbd.Description = "Select Project / Repository Folder for New Blackboard"
+            $fbd.SelectedPath = if (Test-Path $script:RepoRoot) { $script:RepoRoot } else { [Environment]::GetFolderPath("UserProfile") }
+            $fbd.ShowNewFolderButton = $true
+            if ($fbd.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+                $chosenFolder = $fbd.SelectedPath
+                if ([string]::IsNullOrWhiteSpace($chosenFolder) -or -not (Test-Path $chosenFolder)) { return }
+                
+                $targetAiDir = Join-Path $chosenFolder ".ai"
+                $targetBlackboard = Join-Path $targetAiDir "blackboard.md"
+                
+                if (-not (Test-Path $targetAiDir)) {
+                    New-Item -ItemType Directory -Force -Path $targetAiDir | Out-Null
+                }
+                
+                if (-not (Test-Path $targetBlackboard)) {
+                    $templateSource = if (Test-Path $script:ExamplePath) {
+                        $script:ExamplePath
+                    } elseif (Test-Path (Join-Path $script:ControllerAiDir "blackboard.example.md")) {
+                        Join-Path $script:ControllerAiDir "blackboard.example.md"
+                    } else {
+                        $null
+                    }
+                    
+                    if ($templateSource) {
+                        Copy-Item -Path $templateSource -Destination $targetBlackboard -Force
+                    } else {
+                        $initContent = @"
+# Dual-Session Agent Blackboard
+
+> **Flow Control**: `🟢 GO`
+> **Project Phase**: `advise`
+> **Active Turn**: Human (Lead)
+> **GitHub Issue**: none
+> **Last Updated**: $((Get-Date).ToString("yyyy-MM-dd HH:mm:ss"))
+
+---
+
+## Agent Roles & Safety
+
+| Participant | Active Role | Status | Sign-off (Complete) |
+|-------------|-------------|--------|---------------------|
+| **Human (Lead)** | `lead` | Active | [ ] |
+| **Cursor** | `advise` | Active | [ ] |
+| **Antigravity** | `advise` | Active | [ ] |
+
+> [!NOTE]
+> **Safety Guard**: Only ONE agent may hold the `implement` role at any time. When one implements, the other must be `review`, `advise`, or `idle`.
+
+---
+
+## Current Objective & Prompt
+
+New board initialized.
+
+---
+
+## Alignment & Agreed Decisions
+
+
+
+---
+
+## Working Notes & Scratchpads
+
+### Human (Lead)
+- Active steering notes.
+
+### Cursor Scratchpad
+- (Cursor updates here)
+
+### Antigravity Scratchpad
+- (Antigravity updates here)
+"@
+                        [System.IO.File]::WriteAllText($targetBlackboard, $initContent, [System.Text.Encoding]::UTF8)
+                    }
+                }
+                
+                Set-ActiveBlackboardPath -targetPath $targetBlackboard
+                $txtStatus.Text = "Initialized active board at: $targetBlackboard"
+            }
+        } catch {
+            $txtStatus.Text = "Error creating new board: $_"
+        }
+    })
+}
+
 $btnSwitchBoard        = $window.FindName("btnSwitchBoard")
 if ($btnSwitchBoard) {
     $btnSwitchBoard.add_Click({
         try {
+            if (-not (Confirm-DiscardUnsavedEdits -actionName "switching boards")) { return }
             $dlg = New-Object System.Windows.Forms.OpenFileDialog
             $dlg.Title = "Select Target Blackboard Markdown File"
             $dlg.InitialDirectory = if (Test-Path $script:AiDir) { $script:AiDir } else { $script:RepoRoot }
@@ -691,6 +806,7 @@ function Get-ClientConfiguration {
         seat1 = "AI 1"
         seat2 = "AI 2"
         boardPath = ""
+        recentBoards = @()
         tooltips = $true
         profiles = [PSCustomObject]@{
             "AI 1" = [PSCustomObject]@{ process = ""; description = "Generic Seat 1 (Manual Clipboard Copy)" }
@@ -706,14 +822,20 @@ function Get-ClientConfiguration {
     if (Test-Path $script:ClientsConfigPath) {
         try {
             $json = Get-Content $script:ClientsConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
-            if ($json -and $json.profiles) { return $json }
+            if ($json -and $json.profiles) {
+                if (-not $json.recentBoards) { $json | Add-Member -NotePropertyName "recentBoards" -NotePropertyValue @() -Force }
+                return $json
+            }
         } catch {}
     }
 
     if (Test-Path $script:ClientsExamplePath) {
         try {
             $json = Get-Content $script:ClientsExamplePath -Raw -Encoding UTF8 | ConvertFrom-Json
-            if ($json -and $json.profiles) { return $json }
+            if ($json -and $json.profiles) {
+                if (-not $json.recentBoards) { $json | Add-Member -NotePropertyName "recentBoards" -NotePropertyValue @() -Force }
+                return $json
+            }
         } catch {}
     }
 
@@ -735,8 +857,10 @@ $script:MasterTooltips = @{
     "rbGo"                 = "Normal execution — agents proceed with tasks in assigned roles"
     "rbPause"              = "Pause execution — agents wait for Human Lead input or review"
     "rbStop"               = "Emergency freeze — all agents cease work immediately"
+    "cbRecentBoards"       = "Select a recent project board to switch active context"
     "txtBoardPath"         = "Active blackboard file path (Click to copy to clipboard)"
-    "btnSwitchBoard"       = "Select a different target blackboard.md file"
+    "btnNewBoard"          = "Initialize a new blackboard in a project folder"
+    "btnSwitchBoard"       = "Browse to select an existing blackboard.md file"
     "cbPhase"              = "Select current project workflow phase (advise, plan, implement, review)"
 
     # Seat Profiles, Roles, Sign-offs & Issues
@@ -810,12 +934,24 @@ function Save-ClientConfiguration {
         $cfg.boardPath = $script:BlackboardPath
         $tooltipsVal = if ($chkEnableTooltips) { [bool]$chkEnableTooltips.IsChecked } elseif ($cfg -and $null -ne $cfg.tooltips) { [bool]$cfg.tooltips } else { $true }
         $cfg.tooltips = $tooltipsVal
+
+        $recent = @()
+        if ($cfg.recentBoards) {
+            $recent = @($cfg.recentBoards | Where-Object { $_ -and (Test-Path $_) })
+        }
+        if ($script:BlackboardPath -and (Test-Path $script:BlackboardPath)) {
+            $resolvedActive = (Resolve-Path $script:BlackboardPath).Path
+            $recent = @($resolvedActive) + @($recent | Where-Object { (Resolve-Path $_).Path -ne $resolvedActive })
+            if ($recent.Count -gt 8) { $recent = $recent[0..7] }
+        }
+        $cfg.recentBoards = $recent
         $script:ClientConfig = $cfg
         $exportObj = [PSCustomObject]@{
             '$schema' = "https://json-schema.org/draft/2020-12/schema"
             seat1 = $s1
             seat2 = $s2
             boardPath = $script:BlackboardPath
+            recentBoards = $recent
             tooltips = $tooltipsVal
             profiles = $cfg.profiles
         }
@@ -920,6 +1056,73 @@ function Populate-SeatClientDropdowns {
     Update-SeatClientLabels
 }
 
+function Confirm-DiscardUnsavedEdits {
+    param([string]$actionName = "switching boards")
+    if ($script:FormDirty) {
+        $res = [System.Windows.MessageBox]::Show(
+            "You have unsaved changes in the Blackboard UI.`n`nDo you want to save before $actionName?`n`nYes = Save & Continue`nNo = Discard & Continue`nCancel = Stay here",
+            "Unsaved Changes",
+            [System.Windows.MessageBoxButton]::YesNoCancel,
+            [System.Windows.MessageBoxImage]::Warning
+        )
+        if ($res -eq [System.Windows.MessageBoxResult]::Cancel) { return $false }
+        if ($res -eq [System.Windows.MessageBoxResult]::Yes) {
+            Save-BlackboardContent
+        }
+    }
+    return $true
+}
+
+$script:SuppressBoardSwitch = $false
+
+function Populate-RecentBoardsDropdown {
+    if (-not $cbRecentBoards) { return }
+    $script:SuppressBoardSwitch = $true
+    try {
+        $cbRecentBoards.Items.Clear()
+        $cfg = $script:ClientConfig
+        if (-not $cfg) { $cfg = Get-ClientConfiguration }
+        $recent = @()
+        if ($cfg.recentBoards) {
+            $recent = @($cfg.recentBoards | Where-Object { $_ -and (Test-Path $_) })
+        }
+        if ($script:BlackboardPath -and (Test-Path $script:BlackboardPath)) {
+            $activeResolved = (Resolve-Path $script:BlackboardPath).Path
+            if (-not ($recent | Where-Object { (Resolve-Path $_).Path -eq $activeResolved })) {
+                $recent = @($activeResolved) + $recent
+            }
+        }
+
+        $selectedIdx = -1
+        $currentIdx = 0
+        foreach ($bPath in $recent) {
+            $rPath = (Resolve-Path $bPath).Path
+            $pDir = Split-Path $rPath -Parent
+            $isAi = ((Split-Path $pDir -Leaf) -eq ".ai")
+            $projName = if ($isAi) { Split-Path (Split-Path $pDir -Parent) -Leaf } else { Split-Path $pDir -Leaf }
+            $fileName = Split-Path $rPath -Leaf
+
+            $itemText = if ($fileName -eq "blackboard.md") { $projName } else { "$projName ($fileName)" }
+            $item = New-Object System.Windows.Controls.ComboBoxItem
+            $item.Content = $itemText
+            $item.Tag = $rPath
+            $item.ToolTip = $rPath
+            $cbRecentBoards.Items.Add($item) | Out-Null
+
+            if ($script:BlackboardPath -and ((Resolve-Path $script:BlackboardPath).Path -eq $rPath)) {
+                $selectedIdx = $currentIdx
+            }
+            $currentIdx++
+        }
+
+        if ($selectedIdx -ge 0) {
+            $cbRecentBoards.SelectedIndex = $selectedIdx
+        }
+    } finally {
+        $script:SuppressBoardSwitch = $false
+    }
+}
+
 function Set-ActiveBlackboardPath {
     param([string]$targetPath)
     
@@ -956,9 +1159,11 @@ function Set-ActiveBlackboardPath {
 
         Save-ClientConfiguration
         Populate-SeatClientDropdowns
+        Populate-RecentBoardsDropdown
 
         if ($txtBoardPath) {
             $txtBoardPath.Text = $script:BlackboardPath
+            $txtBoardPath.ToolTip = "Active Blackboard.md path (Click to copy):`n$script:BlackboardPath"
         }
         $window.Title = "Agent Collab Controller - " + $script:AppVersion + " [" + $script:ProjectName + "]"
 
@@ -971,6 +1176,7 @@ function Set-ActiveBlackboardPath {
 }
 
 Populate-SeatClientDropdowns
+Populate-RecentBoardsDropdown
 
 if ($cbSeat1Client) {
     $cbSeat1Client.add_SelectionChanged({
@@ -3098,6 +3304,7 @@ if ($script:ClientConfig -and $script:ClientConfig.boardPath -and (Test-Path $sc
     Set-ActiveBlackboardPath -targetPath $script:ClientConfig.boardPath
 } else {
     Load-BlackboardIntoUI
+    Populate-RecentBoardsDropdown
 }
 if ($chkNewChatKickoff) { $chkNewChatKickoff.IsChecked = $false }
 Start-StartupUpdateCheck
