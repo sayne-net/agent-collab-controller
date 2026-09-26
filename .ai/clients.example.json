@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "seat1": "Cursor",
+  "seat2": "Antigravity",
+  "profiles": {
+    "Cursor": {
+      "process": "Cursor",
+      "description": "Cursor AI IDE"
+    },
+    "Antigravity": {
+      "process": "Antigravity",
+      "description": "Google Antigravity IDE"
+    },
+    "Windsurf": {
+      "process": "Windsurf",
+      "description": "Codeium Windsurf IDE"
+    },
+    "VS Code": {
+      "process": "Code",
+      "description": "VS Code / GitHub Copilot"
+    },
+    "Terminal": {
+      "process": "WindowsTerminal",
+      "description": "Windows Terminal (Claude Code, Aider, CLI)"
+    },
+    "Agent 1": {
+      "process": "",
+      "description": "Generic Seat 1 (Manual Clipboard Copy)"
+    },
+    "Agent 2": {
+      "process": "",
+      "description": "Generic Seat 2 (Manual Clipboard Copy)"
+    }
+  }
+}

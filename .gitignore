@@ -6,6 +6,10 @@
 !.ai/history/
 !.ai/saved/
 
+# Local client preferences
+.ai/clients.json
+!.ai/clients.example.json
+
 # OS / Editor artifacts
 Thumbs.db
 Desktop.ini

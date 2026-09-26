@@ -1,12 +1,12 @@
 # Agent Collab Controller (WPF UI)
-# Version 1.0.0
+# Version 1.1.0
 # Standalone dual-session controller for multi-agent collaboration with human-in-the-loop steering.
 
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
 
-$script:AppVersion = "v1.0.0"
+$script:AppVersion = "v1.1.0"
 $script:RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $script:ProjectName = (Split-Path $script:RepoRoot -Leaf)
 $script:GitHubRepo = $null
@@ -33,6 +33,8 @@ $script:HistoryDir = Join-Path $script:AiDir "history"
 $script:SavedDir = Join-Path $script:AiDir "saved"
 $script:BlackboardPath = Join-Path $script:AiDir "blackboard.md"
 $script:ExamplePath = Join-Path $script:AiDir "blackboard.example.md"
+$script:ClientsConfigPath = Join-Path $script:AiDir "clients.json"
+$script:ClientsExamplePath = Join-Path $script:AiDir "clients.example.json"
 
 foreach ($dir in @($script:AiDir, $script:HistoryDir, $script:SavedDir)) {
     if (-not (Test-Path $dir)) {
@@ -349,7 +351,14 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
 
                 <!-- Agent 1 Role -->
                 <StackPanel Grid.Column="0" Margin="0,0,6,0">
-                    <TextBlock Text="Agent 1 Role" FontWeight="Bold" FontSize="11" Foreground="#89B4FA" Margin="0,0,0,4"/>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Name="lblSeat1Role" Text="Agent 1 Role" FontWeight="Bold" FontSize="11" Foreground="#89B4FA" VerticalAlignment="Center"/>
+                        <ComboBox Name="cbSeat1Client" Grid.Column="1" Width="105" Margin="4,0,0,0" Padding="4,2" FontSize="11" FontWeight="SemiBold" ToolTip="Select AI Client / IDE profile for Seat 1"/>
+                    </Grid>
                     <ComboBox Name="cbCursorRole" SelectedIndex="5">
                         <ComboBoxItem Content="implement"/>
                         <ComboBoxItem Content="review"/>
@@ -362,7 +371,14 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
 
                 <!-- Agent 2 Role -->
                 <StackPanel Grid.Column="1" Margin="6,0,6,0">
-                    <TextBlock Text="Agent 2 Role" FontWeight="Bold" FontSize="11" Foreground="#A6E3A1" Margin="0,0,0,4"/>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Name="lblSeat2Role" Text="Agent 2 Role" FontWeight="Bold" FontSize="11" Foreground="#A6E3A1" VerticalAlignment="Center"/>
+                        <ComboBox Name="cbSeat2Client" Grid.Column="1" Width="105" Margin="4,0,0,0" Padding="4,2" FontSize="11" FontWeight="SemiBold" ToolTip="Select AI Client / IDE profile for Seat 2"/>
+                    </Grid>
                     <ComboBox Name="cbGeminiRole" SelectedIndex="5">
                         <ComboBoxItem Content="review"/>
                         <ComboBoxItem Content="implement"/>
@@ -471,7 +487,7 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
-                    <TextBlock Grid.Row="0" Text="💠 AGENT 1 LAST RESPONSE" FontWeight="Bold" FontSize="11" Foreground="#89B4FA" Margin="0,0,0,6"/>
+                    <TextBlock Name="lblSeat1Pane" Grid.Row="0" Text="💠 AGENT 1 LAST RESPONSE" FontWeight="Bold" FontSize="11" Foreground="#89B4FA" Margin="0,0,0,6"/>
                     <RichTextBox Name="rtbCursorLast" Grid.Row="1" IsReadOnly="True" IsTabStop="False" IsUndoEnabled="False"
                              MinHeight="120" VerticalAlignment="Stretch"
                              VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
@@ -485,7 +501,7 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
-                    <TextBlock Grid.Row="0" Text="🪐 AGENT 2 LAST RESPONSE" FontWeight="Bold" FontSize="11" Foreground="#A6E3A1" Margin="0,0,0,6"/>
+                    <TextBlock Name="lblSeat2Pane" Grid.Row="0" Text="🪐 AGENT 2 LAST RESPONSE" FontWeight="Bold" FontSize="11" Foreground="#A6E3A1" Margin="0,0,0,6"/>
                     <RichTextBox Name="rtbGeminiLast" Grid.Row="1" IsReadOnly="True" IsTabStop="False" IsUndoEnabled="False"
                              MinHeight="120" VerticalAlignment="Stretch"
                              VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
@@ -642,6 +658,145 @@ $btnOpenHistory        = $window.FindName("btnOpenHistory")
 $txtSafetyWarning      = $window.FindName("txtSafetyWarning")
 $txtStatus             = $window.FindName("txtStatus")
 $txtLastSaved          = $window.FindName("txtLastSaved")
+$cbSeat1Client         = $window.FindName("cbSeat1Client")
+$cbSeat2Client         = $window.FindName("cbSeat2Client")
+$lblSeat1Role          = $window.FindName("lblSeat1Role")
+$lblSeat2Role          = $window.FindName("lblSeat2Role")
+$lblSeat1Pane          = $window.FindName("lblSeat1Pane")
+$lblSeat2Pane          = $window.FindName("lblSeat2Pane")
+
+function Get-ClientConfiguration {
+    $defaultConfig = [PSCustomObject]@{
+        seat1 = "Cursor"
+        seat2 = "Antigravity"
+        profiles = [PSCustomObject]@{
+            "Cursor" = [PSCustomObject]@{ process = "Cursor"; description = "Cursor AI IDE" }
+            "Antigravity" = [PSCustomObject]@{ process = "Antigravity"; description = "Google Antigravity IDE" }
+            "Windsurf" = [PSCustomObject]@{ process = "Windsurf"; description = "Codeium Windsurf IDE" }
+            "VS Code" = [PSCustomObject]@{ process = "Code"; description = "VS Code / GitHub Copilot" }
+            "Terminal" = [PSCustomObject]@{ process = "WindowsTerminal"; description = "Windows Terminal (Claude Code, Aider, CLI)" }
+            "Agent 1" = [PSCustomObject]@{ process = ""; description = "Generic Seat 1 (Manual Clipboard Copy)" }
+            "Agent 2" = [PSCustomObject]@{ process = ""; description = "Generic Seat 2 (Manual Clipboard Copy)" }
+        }
+    }
+
+    if (Test-Path $script:ClientsConfigPath) {
+        try {
+            $json = Get-Content $script:ClientsConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($json -and $json.profiles) { return $json }
+        } catch {}
+    }
+
+    if (Test-Path $script:ClientsExamplePath) {
+        try {
+            $json = Get-Content $script:ClientsExamplePath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($json -and $json.profiles) { return $json }
+        } catch {}
+    }
+
+    return $defaultConfig
+}
+
+function Save-ClientConfiguration {
+    try {
+        $s1 = Get-Seat1Client
+        $s2 = Get-Seat2Client
+        $cfg = $script:ClientConfig
+        if (-not $cfg) { $cfg = Get-ClientConfiguration }
+        $exportObj = [PSCustomObject]@{
+            '$schema' = "https://json-schema.org/draft/2020-12/schema"
+            seat1 = $s1
+            seat2 = $s2
+            profiles = $cfg.profiles
+        }
+        $jsonStr = $exportObj | ConvertTo-Json -Depth 5
+        [System.IO.File]::WriteAllText($script:ClientsConfigPath, $jsonStr, [System.Text.Encoding]::UTF8)
+    } catch {}
+}
+
+function Get-Seat1Client {
+    if ($cbSeat1Client -and $cbSeat1Client.SelectedItem) {
+        return [string]$cbSeat1Client.SelectedItem
+    }
+    if ($script:ClientConfig -and $script:ClientConfig.seat1) {
+        return [string]$script:ClientConfig.seat1
+    }
+    return "Agent 1"
+}
+
+function Get-Seat2Client {
+    if ($cbSeat2Client -and $cbSeat2Client.SelectedItem) {
+        return [string]$cbSeat2Client.SelectedItem
+    }
+    if ($script:ClientConfig -and $script:ClientConfig.seat2) {
+        return [string]$script:ClientConfig.seat2
+    }
+    return "Agent 2"
+}
+
+function Update-SeatClientLabels {
+    $s1 = Get-Seat1Client
+    $s2 = Get-Seat2Client
+    
+    if ($lblSeat1Role) { $lblSeat1Role.Text = "$s1 Role" }
+    if ($lblSeat2Role) { $lblSeat2Role.Text = "$s2 Role" }
+    
+    if ($chkSignCursor) { $chkSignCursor.Content = $s1 }
+    if ($chkSignGemini) { $chkSignGemini.Content = $s2 }
+    
+    if ($btnCopyCursorKickoff) { $btnCopyCursorKickoff.Content = "📋 Copy $s1" }
+    if ($btnSendCursorKickoff) { $btnSendCursorKickoff.Content = "🚀 Send $s1" }
+    if ($btnCopyGeminiKickoff) { $btnCopyGeminiKickoff.Content = "📋 Copy $s2" }
+    if ($btnSendGeminiKickoff) { $btnSendGeminiKickoff.Content = "🚀 Send $s2" }
+    
+    if ($btnRepromptCursor) { $btnRepromptCursor.Content = $s1 }
+    if ($btnRepromptGemini) { $btnRepromptGemini.Content = $s2 }
+    
+    if ($lblSeat1Pane) { $lblSeat1Pane.Text = "💠 " + $s1.ToUpper() + " LAST RESPONSE" }
+    if ($lblSeat2Pane) { $lblSeat2Pane.Text = "🪐 " + $s2.ToUpper() + " LAST RESPONSE" }
+    
+    if (Get-Command Update-UiActiveTurn -ErrorAction SilentlyContinue) {
+        Update-UiActiveTurn -keepOverride
+    }
+}
+
+$script:ClientConfig = Get-ClientConfiguration
+$profileNames = @($script:ClientConfig.profiles.PSObject.Properties | ForEach-Object { $_.Name })
+if ($profileNames.Count -eq 0) {
+    $profileNames = @("Cursor", "Antigravity", "Windsurf", "VS Code", "Terminal", "Agent 1", "Agent 2")
+}
+
+if ($cbSeat1Client) {
+    $cbSeat1Client.Items.Clear()
+    foreach ($p in $profileNames) {
+        [void]$cbSeat1Client.Items.Add($p)
+    }
+    $target1 = if ($script:ClientConfig.seat1) { [string]$script:ClientConfig.seat1 } else { "Cursor" }
+    $idx1 = $cbSeat1Client.Items.IndexOf($target1)
+    if ($idx1 -ge 0) { $cbSeat1Client.SelectedIndex = $idx1 } else { $cbSeat1Client.SelectedIndex = 0 }
+    $cbSeat1Client.add_SelectionChanged({
+        Update-SeatClientLabels
+        Save-ClientConfiguration
+        Mark-FormDirty
+    })
+}
+
+if ($cbSeat2Client) {
+    $cbSeat2Client.Items.Clear()
+    foreach ($p in $profileNames) {
+        [void]$cbSeat2Client.Items.Add($p)
+    }
+    $target2 = if ($script:ClientConfig.seat2) { [string]$script:ClientConfig.seat2 } else { "Antigravity" }
+    $idx2 = $cbSeat2Client.Items.IndexOf($target2)
+    if ($idx2 -ge 0) { $cbSeat2Client.SelectedIndex = $idx2 } else { $cbSeat2Client.SelectedIndex = 1 }
+    $cbSeat2Client.add_SelectionChanged({
+        Update-SeatClientLabels
+        Save-ClientConfiguration
+        Mark-FormDirty
+    })
+}
+
+Update-SeatClientLabels
 
 # Live Blackboard Text Viewer Window with Color/Diff Highlighting
 $script:ViewerWindow = $null
@@ -1214,8 +1369,11 @@ function Get-PhaseString {
 }
 
 function Get-ActiveTurn {
+    $s1 = Get-Seat1Client
+    $s2 = Get-Seat2Client
     if ($script:ActiveTurnOverride) {
-        if ($script:ActiveTurnOverride -match "Gemini|Agent 2") {
+        $s2Esc = [regex]::Escape($s2)
+        if ($script:ActiveTurnOverride -match "$s2Esc|Gemini|Agent 2") {
             $badgeTurn.Background = [System.Windows.Media.Brushes]::DarkBlue
         } else {
             $badgeTurn.Background = [System.Windows.Media.Brushes]::DarkCyan
@@ -1237,11 +1395,11 @@ function Get-ActiveTurn {
     $gRole = if ($cbGeminiRole.Text) { $cbGeminiRole.Text } else { "idle" }
     if ($cRole -ne "idle" -and -not $signCursor) {
         $badgeTurn.Background = [System.Windows.Media.Brushes]::DarkCyan
-        return ("Agent 1 (" + $cRole + ")")
+        return ("$s1 (" + $cRole + ")")
     }
     if ($gRole -ne "idle" -and -not $signGemini) {
         $badgeTurn.Background = [System.Windows.Media.Brushes]::DarkBlue
-        return ("Agent 2 (" + $gRole + ")")
+        return ("$s2 (" + $gRole + ")")
     }
     $badgeTurn.Background = [System.Windows.Media.Brushes]::DarkGreen
     return "✅ Complete - Ready to Close"
@@ -1501,7 +1659,8 @@ $align
 function Get-KickoffPromptForAgent {
     param(
         [string]$agentName,
-        [string]$role
+        [string]$role,
+        [string]$seatId = "seat1"
     )
 
     $normRole = Get-NormalizedRole $role
@@ -1516,10 +1675,17 @@ function Get-KickoffPromptForAgent {
     $hardStop = Get-NonImplementHardStop $normRole
     $alignBlock = Get-AlignmentBlock
     $roleGuidance = Get-RoleGuidance $normRole
-    $scratchpadSection = if ($agentName -match 'Cursor|Agent\s*1') {
-        if ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### Cursor Scratchpad" -Quiet)) { "### Cursor Scratchpad" } else { "### Agent 1 Scratchpad" }
+    $sNameEsc = [regex]::Escape($agentName)
+    $scratchpadSection = if ($seatId -eq "seat1" -or $agentName -match 'Cursor|Agent\s*1') {
+        if ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### $sNameEsc Scratchpad" -Quiet)) { "### $agentName Scratchpad" }
+        elseif ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### Cursor Scratchpad" -Quiet)) { "### Cursor Scratchpad" }
+        elseif ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### Agent 1 Scratchpad" -Quiet)) { "### Agent 1 Scratchpad" }
+        else { "### $agentName Scratchpad" }
     } else {
-        if ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### Gemini \(Antigravity\) Scratchpad" -Quiet)) { "### Gemini (Antigravity) Scratchpad" } else { "### Agent 2 Scratchpad" }
+        if ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### $sNameEsc Scratchpad" -Quiet)) { "### $agentName Scratchpad" }
+        elseif ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### Gemini \(Antigravity\) Scratchpad" -Quiet)) { "### Gemini (Antigravity) Scratchpad" }
+        elseif ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### Agent 2 Scratchpad" -Quiet)) { "### Agent 2 Scratchpad" }
+        else { "### $agentName Scratchpad" }
     }
 
     $mandatoryBlock = if ($normRole -eq "implement") {
@@ -1564,7 +1730,8 @@ $mandatoryBlock
 function Get-RepromptPromptForAgent {
     param(
         [string]$agentName,
-        [string]$role
+        [string]$role,
+        [string]$seatId = "seat1"
     )
     $normRole = Get-NormalizedRole $role
     $flow = Get-FlowControlString
@@ -1572,10 +1739,17 @@ function Get-RepromptPromptForAgent {
     $hardStop = Get-NonImplementHardStop $normRole
     $signOffGuidance = Get-SignOffGuidance
     $boardPath = $script:BlackboardPath
-    $scratchpadSection = if ($agentName -match 'Cursor|Agent\s*1') {
-        if ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### Cursor Scratchpad" -Quiet)) { "### Cursor Scratchpad" } else { "### Agent 1 Scratchpad" }
+    $sNameEsc = [regex]::Escape($agentName)
+    $scratchpadSection = if ($seatId -eq "seat1" -or $agentName -match 'Cursor|Agent\s*1') {
+        if ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### $sNameEsc Scratchpad" -Quiet)) { "### $agentName Scratchpad" }
+        elseif ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### Cursor Scratchpad" -Quiet)) { "### Cursor Scratchpad" }
+        elseif ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### Agent 1 Scratchpad" -Quiet)) { "### Agent 1 Scratchpad" }
+        else { "### $agentName Scratchpad" }
     } else {
-        if ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### Gemini \(Antigravity\) Scratchpad" -Quiet)) { "### Gemini (Antigravity) Scratchpad" } else { "### Agent 2 Scratchpad" }
+        if ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### $sNameEsc Scratchpad" -Quiet)) { "### $agentName Scratchpad" }
+        elseif ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### Gemini \(Antigravity\) Scratchpad" -Quiet)) { "### Gemini (Antigravity) Scratchpad" }
+        elseif ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### Agent 2 Scratchpad" -Quiet)) { "### Agent 2 Scratchpad" }
+        else { "### $agentName Scratchpad" }
     }
 
     $mandatoryBlock = if ($normRole -eq "implement") {
@@ -1715,10 +1889,12 @@ function Update-LastResponsePanes {
         [string]$cursorPad,
         [string]$geminiPad
     )
+    $s1 = Get-Seat1Client
+    $s2 = Get-Seat2Client
     $cRole = if ($cbCursorRole.Text) { $cbCursorRole.Text } else { "" }
     $gRole = if ($cbGeminiRole.Text) { $cbGeminiRole.Text } else { "" }
-    $cText = if ($cursorPad) { Get-ScratchpadExcerpt $cursorPad -PreferRole $cRole } else { "(no Cursor scratchpad yet)" }
-    $gText = if ($geminiPad) { Get-ScratchpadExcerpt $geminiPad -PreferRole $gRole } else { "(no Gemini scratchpad yet)" }
+    $cText = if ($cursorPad) { Get-ScratchpadExcerpt $cursorPad -PreferRole $cRole } else { "(no $s1 scratchpad yet)" }
+    $gText = if ($geminiPad) { Get-ScratchpadExcerpt $geminiPad -PreferRole $gRole } else { "(no $s2 scratchpad yet)" }
     Set-LastResponseDocument $rtbCursorLast $cText
     Set-LastResponseDocument $rtbGeminiLast $gText
 }
@@ -1727,24 +1903,29 @@ function Sync-SignoffCheckboxes {
     param([string]$raw)
     if ([string]::IsNullOrEmpty($raw)) { return }
     
-    $signPattern = '(?im)^\s*[-*]\s+(?:\*\*)?(?:(?:Cursor|Gemini|Agent\s*1|Agent\s*2)\s+)?sign-?off(?:\*\*)?[:\s].*?(\[x\]|yes|complete|approved)'
+    $s1 = Get-Seat1Client
+    $s2 = Get-Seat2Client
+    $s1Esc = [regex]::Escape($s1)
+    $s2Esc = [regex]::Escape($s2)
+
+    $signPattern = "(?im)^\s*[-*]\s+(?:\*\*)?(?:(?:$s1Esc|$s2Esc|Cursor|Gemini|Agent\s*1|Agent\s*2)\s+)?sign-?off(?:\*\*)?[:\s].*?(\[x\]|yes|complete|approved)"
     
     # 1. Human (Lead) / Steven: role table [x] or manual GUI check
     if ($raw -match '(?m)\|\s*\*\*(?:Human|Steven)\s*(?:\(Lead\))?\*\*\s*\|\s*`[^`]*`\s*\|\s*Active\s*\|\s*\[x\]') {
         $chkSignSteven.IsChecked = $true
     }
     
-    # 2. Agent 1 (Cursor): role table [x] OR last scratchpad sign-off confirmation
-    $cTable = ($raw -match '(?m)\|\s*\*\*(?:Cursor|Agent\s*1)\*\*\s*\|\s*`[^`]*`\s*\|\s*Active\s*\|\s*\[x\]')
-    $cPad = Get-LastMarkdownBody $raw '(?:###|##)\s+(?:Cursor|Agent\s*1)(?:\s+Scratchpad)?'
+    # 2. Seat 1: role table [x] OR last scratchpad sign-off confirmation
+    $cTable = ($raw -match ('(?m)\|\s*\*\*(?:' + $s1Esc + '|Cursor|Agent\s*1)\*\*\s*\|\s*`[^`]*`\s*\|\s*Active\s*\|\s*\[x\]'))
+    $cPad = Get-LastMarkdownBody $raw "(?:###|##)\s+(?:$s1Esc|Cursor|Agent\s*1)(?:\s+Scratchpad)?"
     $cPadSign = ($cPad -match $signPattern)
     if ($cTable -or $cPadSign) {
         $chkSignCursor.IsChecked = $true
     }
     
-    # 3. Agent 2 (Gemini): role table [x] OR last scratchpad sign-off confirmation
-    $gTable = ($raw -match '(?m)\|\s*\*\*(?:Gemini(?:\s+\(Antigravity\))?|Agent\s*2)\*\*\s*\|\s*`[^`]*`\s*\|\s*Active\s*\|\s*\[x\]')
-    $gPad = Get-LastMarkdownBody $raw '(?:###|##)\s+(?:Gemini(?:\s+\(Antigravity\))?|Agent\s*2)(?:\s+Scratchpad)?'
+    # 3. Seat 2: role table [x] OR last scratchpad sign-off confirmation
+    $gTable = ($raw -match ('(?m)\|\s*\*\*(?:' + $s2Esc + '|Gemini(?:\s+\(Antigravity\))?|Agent\s*2)\*\*\s*\|\s*`[^`]*`\s*\|\s*Active\s*\|\s*\[x\]'))
+    $gPad = Get-LastMarkdownBody $raw "(?:###|##)\s+(?:$s2Esc|Gemini(?:\s+\(Antigravity\))?|Agent\s*2)(?:\s+Scratchpad)?"
     $gPadSign = ($gPad -match $signPattern)
     if ($gTable -or $gPadSign) {
         $chkSignGemini.IsChecked = $true
@@ -1755,6 +1936,11 @@ function Save-BlackboardContent {
     param([string]$customPath = $script:BlackboardPath, [switch]$clearScratchpads)
     
     Update-UiActiveTurn -keepOverride
+    $s1 = Get-Seat1Client
+    $s2 = Get-Seat2Client
+    $s1Esc = [regex]::Escape($s1)
+    $s2Esc = [regex]::Escape($s2)
+
     $flow = Get-FlowControlString
     $phase = Get-PhaseString
     $cursorRole = if ($cbCursorRole.Text) { $cbCursorRole.Text } else { "idle" }
@@ -1765,35 +1951,54 @@ function Save-BlackboardContent {
     
     $stevenNotes = if ($txtStevenNotes.Text.Trim()) { $txtStevenNotes.Text } else { "- Active steering notes." }
     $humanLabel = "**Human (Lead)**"
-    $agent1Label = "**Agent 1**"
-    $agent2Label = "**Agent 2**"
+    $agent1Label = "**$s1**"
+    $agent2Label = "**$s2**"
     $humanHeader = "### Human (Lead)"
-    $agent1Header = "### Agent 1 Scratchpad"
-    $agent2Header = "### Agent 2 Scratchpad"
-    $cursorScratchpad = "- (Agent 1 updates here)"
-    $geminiScratchpad = "- (Agent 2 updates here)"
+    $agent1Header = "### $s1 Scratchpad"
+    $agent2Header = "### $s2 Scratchpad"
+    $cursorScratchpad = "- ($s1 updates here)"
+    $geminiScratchpad = "- ($s2 updates here)"
     $cPadSign = $false
     $gPadSign = $false
-    $signPattern = '(?im)^\s*[-*]\s+(?:\*\*)?(?:(?:Cursor|Gemini|Agent\s*1|Agent\s*2)\s+)?sign-?off(?:\*\*)?[:\s].*?(\[x\]|yes|complete|approved)'
+    $signPattern = "(?im)^\s*[-*]\s+(?:\*\*)?(?:(?:$s1Esc|$s2Esc|Cursor|Gemini|Agent\s*1|Agent\s*2)\s+)?sign-?off(?:\*\*)?[:\s].*?(\[x\]|yes|complete|approved)"
     if (Test-Path $script:BlackboardPath) {
         try {
             $existing = [System.IO.File]::ReadAllText($script:BlackboardPath, [System.Text.Encoding]::UTF8)
             if ($existing -match '(?m)\|\s*\*\*Steven \(Lead\)\*\*') { $humanLabel = "**Steven (Lead)**" }
-            if ($existing -match '(?m)\|\s*\*\*Cursor\*\*') { $agent1Label = "**Cursor**" }
-            if ($existing -match '(?m)\|\s*\*\*Gemini \(Antigravity\)\*\*') { $agent2Label = "**Gemini (Antigravity)**" }
+            if ($existing -match "(?m)\|\s*\*\*$s1Esc\*\*") { $agent1Label = "**$s1**" }
+            elseif ($existing -match '(?m)\|\s*\*\*Cursor\*\*') { $agent1Label = "**Cursor**" }
+            elseif ($existing -match '(?m)\|\s*\*\*Agent 1\*\*') { $agent1Label = "**Agent 1**" }
+
+            if ($existing -match "(?m)\|\s*\*\*$s2Esc\*\*") { $agent2Label = "**$s2**" }
+            elseif ($existing -match '(?m)\|\s*\*\*Gemini \(Antigravity\)\*\*') { $agent2Label = "**Gemini (Antigravity)**" }
+            elseif ($existing -match '(?m)\|\s*\*\*Agent 2\*\*') { $agent2Label = "**Agent 2**" }
+
             if ($existing -match '### Steven \(Lead\)') { $humanHeader = "### Steven (Lead)" }
-            if ($existing -match '### Cursor Scratchpad') { 
+            if ($existing -match "### $s1Esc Scratchpad") { 
+                $agent1Header = "### $s1 Scratchpad"
+                $cursorScratchpad = "- ($s1 updates here)"
+            } elseif ($existing -match '### Cursor Scratchpad') { 
                 $agent1Header = "### Cursor Scratchpad"
                 $cursorScratchpad = "- (Cursor updates here)"
+            } elseif ($existing -match '### Agent 1 Scratchpad') {
+                $agent1Header = "### Agent 1 Scratchpad"
+                $cursorScratchpad = "- (Agent 1 updates here)"
             }
-            if ($existing -match '### Gemini \(Antigravity\) Scratchpad') { 
+
+            if ($existing -match "### $s2Esc Scratchpad") { 
+                $agent2Header = "### $s2 Scratchpad"
+                $geminiScratchpad = "- ($s2 updates here)"
+            } elseif ($existing -match '### Gemini \(Antigravity\) Scratchpad') { 
                 $agent2Header = "### Gemini (Antigravity) Scratchpad"
                 $geminiScratchpad = "- (Gemini updates here)"
+            } elseif ($existing -match '### Agent 2 Scratchpad') {
+                $agent2Header = "### Agent 2 Scratchpad"
+                $geminiScratchpad = "- (Agent 2 updates here)"
             }
 
             if (-not $clearScratchpads) {
-                $cPad = Get-LastMarkdownBody $existing '(?:###|##)\s+(?:Cursor|Agent\s*1)(?:\s+Scratchpad)?'
-                $gPad = Get-LastMarkdownBody $existing '(?:###|##)\s+(?:Gemini(?:\s+\(Antigravity\))?|Agent\s*2)(?:\s+Scratchpad)?'
+                $cPad = Get-LastMarkdownBody $existing "(?:###|##)\s+(?:$s1Esc|Cursor|Agent\s*1)(?:\s+Scratchpad)?"
+                $gPad = Get-LastMarkdownBody $existing "(?:###|##)\s+(?:$s2Esc|Gemini(?:\s+\(Antigravity\))?|Agent\s*2)(?:\s+Scratchpad)?"
                 if ($cPad) { 
                     $cursorScratchpad = $cPad
                     $cPadSign = ($cPad -match $signPattern)
@@ -1909,50 +2114,123 @@ function Safe-SendKeys([string]$keys) {
     } catch {}
 }
 
-# Cursor chat caret: focus Cursor, optionally open a new chat via Command Palette, then paste+enter.
-function Send-CursorChatPaste {
-    param([bool]$newChat = $false)
-    if (-not [WinHelper]::FocusProcess("Cursor")) { return $false }
-    Start-Sleep -Milliseconds 150
-    Safe-SendKeys "{ESC}"
-    Start-Sleep -Milliseconds 80
-    if ($newChat) {
-        Safe-SendKeys "^+p"
-        Start-Sleep -Milliseconds 400
-        Safe-SendKeys "Chat: New Chat"
-        Start-Sleep -Milliseconds 220
-        Safe-SendKeys "{ENTER}"
-        Start-Sleep -Milliseconds 500
-        Safe-SendKeys "{ESC}"
-        Start-Sleep -Milliseconds 120
+function Send-AgentChatPaste {
+    param(
+        [string]$clientName,
+        [bool]$newChat = $false
+    )
+    
+    $procName = ""
+    if ($script:ClientConfig -and $script:ClientConfig.profiles) {
+        $profiles = $script:ClientConfig.profiles
+        if ($profiles.PSObject.Properties[$clientName]) {
+            $procName = $profiles.$clientName.process
+        }
     }
-    Safe-SendKeys "^l"
-    Start-Sleep -Milliseconds 350
-    Safe-SendKeys "^a"
-    Start-Sleep -Milliseconds 80
-    Safe-SendKeys "^v{ENTER}"
-    return $true
+    if ([string]::IsNullOrWhiteSpace($procName)) {
+        if ($clientName -eq "Cursor") { $procName = "Cursor" }
+        elseif ($clientName -eq "Antigravity") { $procName = "Antigravity" }
+        elseif ($clientName -eq "Windsurf") { $procName = "Windsurf" }
+        elseif ($clientName -eq "VS Code") { $procName = "Code" }
+        elseif ($clientName -eq "Terminal") { $procName = "WindowsTerminal" }
+    }
+    
+    if ([string]::IsNullOrWhiteSpace($procName)) {
+        return $false
+    }
+    
+    if (-not [WinHelper]::FocusProcess($procName)) {
+        return $false
+    }
+    
+    Start-Sleep -Milliseconds 250
+    
+    switch ($clientName) {
+        "Cursor" {
+            Safe-SendKeys "{ESC}"
+            Start-Sleep -Milliseconds 80
+            if ($newChat) {
+                Safe-SendKeys "^+p"
+                Start-Sleep -Milliseconds 400
+                Safe-SendKeys "Chat: New Chat"
+                Start-Sleep -Milliseconds 220
+                Safe-SendKeys "{ENTER}"
+                Start-Sleep -Milliseconds 500
+                Safe-SendKeys "{ESC}"
+                Start-Sleep -Milliseconds 120
+            }
+            Safe-SendKeys "^l"
+            Start-Sleep -Milliseconds 350
+            Safe-SendKeys "^a"
+            Start-Sleep -Milliseconds 80
+            Safe-SendKeys "^v{ENTER}"
+            return $true
+        }
+        "Antigravity" {
+            Safe-SendKeys "^+i"
+            if ($newChat) {
+                Start-Sleep -Milliseconds 400
+                Safe-SendKeys "^+l"
+                Start-Sleep -Milliseconds 700
+            } else {
+                Start-Sleep -Milliseconds 200
+            }
+            Safe-SendKeys "^v{ENTER}"
+            return $true
+        }
+        "Windsurf" {
+            Safe-SendKeys "{ESC}"
+            Start-Sleep -Milliseconds 80
+            if ($newChat) {
+                Safe-SendKeys "^+p"
+                Start-Sleep -Milliseconds 400
+                Safe-SendKeys "Cascade: New Chat"
+                Start-Sleep -Milliseconds 220
+                Safe-SendKeys "{ENTER}"
+                Start-Sleep -Milliseconds 500
+            }
+            Safe-SendKeys "^l"
+            Start-Sleep -Milliseconds 250
+            Safe-SendKeys "^v{ENTER}"
+            return $true
+        }
+        "VS Code" {
+            if ($newChat) {
+                Safe-SendKeys "^+p"
+                Start-Sleep -Milliseconds 400
+                Safe-SendKeys "Chat: New Chat"
+                Start-Sleep -Milliseconds 220
+                Safe-SendKeys "{ENTER}"
+                Start-Sleep -Milliseconds 500
+            }
+            Safe-SendKeys "^+i"
+            Start-Sleep -Milliseconds 250
+            Safe-SendKeys "^v{ENTER}"
+            return $true
+        }
+        "Terminal" {
+            Start-Sleep -Milliseconds 150
+            Safe-SendKeys "^v{ENTER}"
+            return $true
+        }
+        default {
+            Start-Sleep -Milliseconds 150
+            Safe-SendKeys "^v{ENTER}"
+            return $true
+        }
+    }
 }
 
-# Gemini (Antigravity): never type guessed palette titles. Never Ctrl+L (toggles agent panel shut).
-# Never click the composer — empty New Chat is centered, so pixel clicks steal focus.
-# New Chat: Ctrl+Shift+I then Ctrl+Shift+L, wait for the centered composer caret, paste.
-# Same-thread Kickoff / Re-prompt: Ctrl+Shift+I (focus composer, no new thread), then paste.
-# Never Esc (dismisses composer), Ctrl+N, or Ctrl+A.
+function Send-CursorChatPaste {
+    param([bool]$newChat = $false)
+    $s1 = Get-Seat1Client
+    return Send-AgentChatPaste -clientName $s1 -newChat $newChat
+}
+
 function Send-GeminiChatPaste {
     param([bool]$newChat = $false)
-    if (-not [WinHelper]::FocusProcess("Antigravity")) { return $false }
-    Start-Sleep -Milliseconds 280
-    Safe-SendKeys "^+i"
-    if ($newChat) {
-        Start-Sleep -Milliseconds 400
-        Safe-SendKeys "^+l"
-        Start-Sleep -Milliseconds 700
-    } else {
-        Start-Sleep -Milliseconds 200
-    }
-    Safe-SendKeys "^v{ENTER}"
-    return $true
+    $s2 = Get-Seat2Client
+    return Send-AgentChatPaste -clientName $s2 -newChat $newChat
 }
 
 function Complete-KickoffNewChatOneShot {
@@ -2004,8 +2282,10 @@ $btnCloseProject.add_Click({
         }
     }
     
+    $s1 = Get-Seat1Client
+    $s2 = Get-Seat2Client
     $confirmMsg = if ($allSigned) {
-        "All participants (Human, Agent 1, Agent 2) have signed off.`n`nClose this project, archive session history, and reset board to idle?"
+        "All participants (Human, $s1, $s2) have signed off.`n`nClose this project, archive session history, and reset board to idle?"
     } else {
         "Not all sign-offs are complete.`n`nAre you sure you want to close and archive this project anyway?"
     }
@@ -2024,7 +2304,7 @@ $btnCloseProject.add_Click({
             try {
                 $txtStatus.Text = "Closing issue #$num via gh CLI..."
                 $targetRepo = Get-TargetGitHubRepo
-                $closeArgs = @("issue", "close", $num, "--comment", "Completed with sign-offs from Human, Agent 1, and Agent 2.")
+                $closeArgs = @("issue", "close", $num, "--comment", "Completed with sign-offs from Human, $s1, and $s2.")
                 if ($targetRepo) { $closeArgs += @("--repo", $targetRepo) }
                 & gh @closeArgs
                 $txtStatus.Text = "Closed GitHub Issue #$num."
@@ -2084,57 +2364,69 @@ $btnPromoteAlign.add_Click({
 
 # 1-Click Workflow Preset Handlers
 $btnPresetDiscuss.add_Click({
+    $s1 = Get-Seat1Client
+    $s2 = Get-Seat2Client
     $cbCursorRole.SelectedIndex = 2
     $cbGeminiRole.SelectedIndex = 2
     $cbPhase.SelectedIndex = 0
     $script:FormDirty = $true
-    $txtStatus.Text = "Preset: Discussion Mode (Cursor advise + Gemini advise)"
+    $txtStatus.Text = "Preset: Discussion Mode ($s1 advise + $s2 advise)"
     Check-Safety
 })
 
 $btnPresetImplement.add_Click({
+    $s1 = Get-Seat1Client
+    $s2 = Get-Seat2Client
     $cbCursorRole.SelectedIndex = 1
     $cbGeminiRole.SelectedIndex = 1
     $cbPhase.SelectedIndex = 2
     $script:FormDirty = $true
-    $txtStatus.Text = "Preset: Implementation Mode (Gemini implement + Cursor review)"
+    $txtStatus.Text = "Preset: Implementation Mode ($s2 implement + $s1 review)"
     Check-Safety
 })
 
 $btnPresetReview.add_Click({
+    $s1 = Get-Seat1Client
+    $s2 = Get-Seat2Client
     $cbCursorRole.SelectedIndex = 1
     $cbGeminiRole.SelectedIndex = 0
     $cbPhase.SelectedIndex = 3
     $script:FormDirty = $true
-    $txtStatus.Text = "Preset: Review Mode (Cursor review + Gemini review)"
+    $txtStatus.Text = "Preset: Review Mode ($s1 review + $s2 review)"
     Check-Safety
     Show-ReviewDiffViewer
 })
 
 $btnPresetTest.add_Click({
+    $s1 = Get-Seat1Client
+    $s2 = Get-Seat2Client
     $cbCursorRole.SelectedIndex = 1
     $cbGeminiRole.SelectedIndex = 0
     $cbPhase.SelectedIndex = 4
     $script:FormDirty = $true
-    $txtStatus.Text = "Preset: Test Mode (Cursor review + Gemini review, phase test)"
+    $txtStatus.Text = "Preset: Test Mode ($s1 review + $s2 review, phase test)"
     Check-Safety
 })
 
 $btnPresetInventory.add_Click({
+    $s1 = Get-Seat1Client
+    $s2 = Get-Seat2Client
     $cbCursorRole.SelectedIndex = 3
     $cbGeminiRole.SelectedIndex = 3
     $cbPhase.SelectedIndex = 3
     $script:FormDirty = $true
-    $txtStatus.Text = "Preset: Inventory Mode (Cursor inventory + Gemini inventory)"
+    $txtStatus.Text = "Preset: Inventory Mode ($s1 inventory + $s2 inventory)"
     Check-Safety
 })
 
 $btnPresetPlan.add_Click({
+    $s1 = Get-Seat1Client
+    $s2 = Get-Seat2Client
     $cbCursorRole.SelectedIndex = 4
     $cbGeminiRole.SelectedIndex = 5
     $cbPhase.SelectedIndex = 1
     $script:FormDirty = $true
-    $txtStatus.Text = "Preset: Planning Mode (Cursor plan + Gemini idle)"
+    $txtStatus.Text = "Preset: Planning Mode ($s1 plan + $s2 idle)"
     Check-Safety
 })
 
@@ -2150,33 +2442,36 @@ $btnPresetIdle.add_Click({
 $btnCopyCursorKickoff.add_Click({
     try {
         Save-BlackboardContent
-        $kPrompt = Get-KickoffPromptForAgent -agentName "Agent 1" -role $cbCursorRole.Text
+        $s1 = Get-Seat1Client
+        $kPrompt = Get-KickoffPromptForAgent -agentName $s1 -role $cbCursorRole.Text -seatId "seat1"
         Safe-SetClipboard $kPrompt
-        $txtStatus.Text = "📋 Copied Agent 1 Kickoff Prompt (" + $cbCursorRole.Text + ") to clipboard."
+        $txtStatus.Text = "📋 Copied $s1 Kickoff Prompt (" + $cbCursorRole.Text + ") to clipboard."
     } catch { $txtStatus.Text = "Error copying prompt: $_" }
 })
 
 $btnCopyGeminiKickoff.add_Click({
     try {
         Save-BlackboardContent
-        $kPrompt = Get-KickoffPromptForAgent -agentName "Agent 2" -role $cbGeminiRole.Text
+        $s2 = Get-Seat2Client
+        $kPrompt = Get-KickoffPromptForAgent -agentName $s2 -role $cbGeminiRole.Text -seatId "seat2"
         Safe-SetClipboard $kPrompt
-        $txtStatus.Text = "📋 Copied Agent 2 Kickoff Prompt (" + $cbGeminiRole.Text + ") to clipboard."
+        $txtStatus.Text = "📋 Copied $s2 Kickoff Prompt (" + $cbGeminiRole.Text + ") to clipboard."
     } catch { $txtStatus.Text = "Error copying prompt: $_" }
 })
 
 $btnSendCursorKickoff.add_Click({
     try {
         Save-BlackboardContent
-        $kPrompt = Get-KickoffPromptForAgent -agentName "Agent 1" -role $cbCursorRole.Text
+        $s1 = Get-Seat1Client
+        $kPrompt = Get-KickoffPromptForAgent -agentName $s1 -role $cbCursorRole.Text -seatId "seat1"
         Safe-SetClipboard $kPrompt
         $doNew = [bool]($chkNewChatKickoff -and $chkNewChatKickoff.IsChecked)
-        if (Send-CursorChatPaste -newChat $doNew) {
+        if (Send-AgentChatPaste -clientName $s1 -newChat $doNew) {
             Complete-KickoffNewChatOneShot -didNew $doNew
             $chatNote = if ($doNew) { " (New Chat, then off)" } else { "" }
-            $txtStatus.Text = "🚀 Sent Agent 1 Kickoff Prompt to active IDE window$chatNote."
+            $txtStatus.Text = "🚀 Sent $s1 Kickoff Prompt to active IDE window$chatNote."
         } else {
-            $txtStatus.Text = "📋 Copied Agent 1 Kickoff to clipboard (IDE window not found). Focus Agent 1 and paste."
+            $txtStatus.Text = "📋 Copied $s1 Kickoff to clipboard (IDE window not found). Focus $s1 and paste."
         }
     } catch { $txtStatus.Text = "Error sending prompt: $_" }
 })
@@ -2184,15 +2479,16 @@ $btnSendCursorKickoff.add_Click({
 $btnSendGeminiKickoff.add_Click({
     try {
         Save-BlackboardContent
-        $kPrompt = Get-KickoffPromptForAgent -agentName "Agent 2" -role $cbGeminiRole.Text
+        $s2 = Get-Seat2Client
+        $kPrompt = Get-KickoffPromptForAgent -agentName $s2 -role $cbGeminiRole.Text -seatId "seat2"
         Safe-SetClipboard $kPrompt
         $doNew = [bool]($chkNewChatKickoff -and $chkNewChatKickoff.IsChecked)
-        if (Send-GeminiChatPaste -newChat $doNew) {
+        if (Send-AgentChatPaste -clientName $s2 -newChat $doNew) {
             Complete-KickoffNewChatOneShot -didNew $doNew
             $chatNote = if ($doNew) { " (New Chat, then off)" } else { "" }
-            $txtStatus.Text = "🚀 Sent Agent 2 Kickoff Prompt to active IDE window$chatNote."
+            $txtStatus.Text = "🚀 Sent $s2 Kickoff Prompt to active IDE window$chatNote."
         } else {
-            $txtStatus.Text = "📋 Copied Agent 2 Kickoff to clipboard (IDE window not found). Focus Agent 2 and paste."
+            $txtStatus.Text = "📋 Copied $s2 Kickoff to clipboard (IDE window not found). Focus $s2 and paste."
         }
     } catch { $txtStatus.Text = "Error sending prompt: $_" }
 })
@@ -2200,43 +2496,47 @@ $btnSendGeminiKickoff.add_Click({
 $btnCopyBothKickoff.add_Click({
     try {
         Save-BlackboardContent
-        $pAgent1 = Get-KickoffPromptForAgent -agentName "Agent 1" -role $cbCursorRole.Text
-        $pAgent2 = Get-KickoffPromptForAgent -agentName "Agent 2" -role $cbGeminiRole.Text
-        $combined = "=== [AGENT 1 KICKOFF PROMPT] ===" + [Environment]::NewLine + $pAgent1 + [Environment]::NewLine + [Environment]::NewLine + "=== [AGENT 2 KICKOFF PROMPT] ===" + [Environment]::NewLine + $pAgent2
+        $s1 = Get-Seat1Client
+        $s2 = Get-Seat2Client
+        $pAgent1 = Get-KickoffPromptForAgent -agentName $s1 -role $cbCursorRole.Text -seatId "seat1"
+        $pAgent2 = Get-KickoffPromptForAgent -agentName $s2 -role $cbGeminiRole.Text -seatId "seat2"
+        $combined = "=== [$($s1.ToUpper()) KICKOFF PROMPT] ===" + [Environment]::NewLine + $pAgent1 + [Environment]::NewLine + [Environment]::NewLine + "=== [$($s2.ToUpper()) KICKOFF PROMPT] ===" + [Environment]::NewLine + $pAgent2
         Safe-SetClipboard $combined
-        $txtStatus.Text = "📋 Copied combined Kickoff prompts for both Agent 1 and Agent 2 to clipboard."
+        $txtStatus.Text = "📋 Copied combined Kickoff prompts for both $s1 and $s2 to clipboard."
     } catch { $txtStatus.Text = "Error copying prompts: $_" }
 })
 
 $btnSendBothKickoff.add_Click({
     try {
         Save-BlackboardContent
-        $pAgent1 = Get-KickoffPromptForAgent -agentName "Agent 1" -role $cbCursorRole.Text
-        $pAgent2 = Get-KickoffPromptForAgent -agentName "Agent 2" -role $cbGeminiRole.Text
+        $s1 = Get-Seat1Client
+        $s2 = Get-Seat2Client
+        $pAgent1 = Get-KickoffPromptForAgent -agentName $s1 -role $cbCursorRole.Text -seatId "seat1"
+        $pAgent2 = Get-KickoffPromptForAgent -agentName $s2 -role $cbGeminiRole.Text -seatId "seat2"
         $doNew = [bool]($chkNewChatKickoff -and $chkNewChatKickoff.IsChecked)
 
-        # 1. Focus & Send Agent 1
+        # 1. Focus & Send Seat 1
         Safe-SetClipboard $pAgent1
-        $cFocused = Send-CursorChatPaste -newChat $doNew
+        $cFocused = Send-AgentChatPaste -clientName $s1 -newChat $doNew
         Start-Sleep -Milliseconds 600
 
-        # 2. Focus & Send Agent 2
+        # 2. Focus & Send Seat 2
         Safe-SetClipboard $pAgent2
-        $gFocused = Send-GeminiChatPaste -newChat $doNew
+        $gFocused = Send-AgentChatPaste -clientName $s2 -newChat $doNew
 
         if ($cFocused -or $gFocused) {
             Complete-KickoffNewChatOneShot -didNew $doNew
         }
         if ($cFocused -and $gFocused) {
             $chatNote = if ($doNew) { " (New Chat one-shot, now off)" } else { "" }
-            $txtStatus.Text = "🚀 Successfully kicked off both Agent 1 and Agent 2!$chatNote"
+            $txtStatus.Text = "🚀 Successfully kicked off both $s1 and $s2!$chatNote"
         } elseif ($cFocused) {
-            $txtStatus.Text = "🚀 Kicked off Agent 1. (Agent 2 window not found - focus Agent 2 to paste prompt)."
+            $txtStatus.Text = "🚀 Kicked off $s1. ($s2 window not found - focus $s2 to paste prompt)."
         } elseif ($gFocused) {
             Safe-SetClipboard $pAgent1
-            $txtStatus.Text = "🚀 Kicked off Agent 2. Agent 1 prompt copied to clipboard. Focus Agent 1 to paste."
+            $txtStatus.Text = "🚀 Kicked off $s2. $s1 prompt copied to clipboard. Focus $s1 to paste."
         } else {
-            Safe-SetClipboard ("=== [AGENT 1 KICKOFF PROMPT] ===" + [Environment]::NewLine + $pAgent1 + [Environment]::NewLine + [Environment]::NewLine + "=== [AGENT 2 KICKOFF PROMPT] ===" + [Environment]::NewLine + $pAgent2)
+            Safe-SetClipboard ("=== [$($s1.ToUpper()) KICKOFF PROMPT] ===" + [Environment]::NewLine + $pAgent1 + [Environment]::NewLine + [Environment]::NewLine + "=== [$($s2.ToUpper()) KICKOFF PROMPT] ===" + [Environment]::NewLine + $pAgent2)
             $txtStatus.Text = "📋 Copied both kickoff prompts to clipboard (focus IDEs to paste)."
         }
     } catch { $txtStatus.Text = "Error during dual kickoff: $_" }
@@ -2328,43 +2628,45 @@ function Trigger-AgentReprompt {
 
     try {
         Save-BlackboardContent
-        $pAgent1 = Get-RepromptPromptForAgent -agentName "Agent 1" -role $cbCursorRole.Text
-        $pAgent2 = Get-RepromptPromptForAgent -agentName "Agent 2" -role $cbGeminiRole.Text
+        $s1 = Get-Seat1Client
+        $s2 = Get-Seat2Client
+        $pAgent1 = Get-RepromptPromptForAgent -agentName $s1 -role $cbCursorRole.Text -seatId "seat1"
+        $pAgent2 = Get-RepromptPromptForAgent -agentName $s2 -role $cbGeminiRole.Text -seatId "seat2"
         $cFocused = $false
         $gFocused = $false
 
-        if ($target -eq "Cursor" -or $target -eq "Both") {
+        if ($target -eq "Seat1" -or $target -eq "Cursor" -or $target -eq "Both") {
             Safe-SetClipboard $pAgent1
-            if (Send-CursorChatPaste -newChat $false) {
+            if (Send-AgentChatPaste -clientName $s1 -newChat $false) {
                 $cFocused = $true
             }
         }
         if ($target -eq "Both") {
             Start-Sleep -Milliseconds 600
         }
-        if ($target -eq "Gemini" -or $target -eq "Both") {
+        if ($target -eq "Seat2" -or $target -eq "Gemini" -or $target -eq "Both") {
             Safe-SetClipboard $pAgent2
-            if (Send-GeminiChatPaste -newChat $false) {
+            if (Send-AgentChatPaste -clientName $s2 -newChat $false) {
                 $gFocused = $true
             }
         }
 
         if ($cFocused -and $gFocused) {
-            $txtStatus.Text = "⚡ Re-prompted Agent 1 & Agent 2 (role-aware)."
+            $txtStatus.Text = "⚡ Re-prompted $s1 & $s2 (role-aware)."
         } elseif ($target -eq "Both" -and $cFocused) {
             Safe-SetClipboard $pAgent2
-            $txtStatus.Text = "⚡ Re-prompted Agent 1. Agent 2 prompt copied (Agent 2 not found)."
+            $txtStatus.Text = "⚡ Re-prompted $s1. $s2 prompt copied ($s2 not found)."
         } elseif ($target -eq "Both" -and $gFocused) {
             Safe-SetClipboard $pAgent1
-            $txtStatus.Text = "⚡ Re-prompted Agent 2. Agent 1 prompt copied (Agent 1 not found)."
+            $txtStatus.Text = "⚡ Re-prompted $s2. $s1 prompt copied ($s1 not found)."
         } elseif ($cFocused -or $gFocused) {
-            $who = if ($cFocused) { "Agent 1" } else { "Agent 2" }
+            $who = if ($cFocused) { $s1 } else { $s2 }
             $txtStatus.Text = "⚡ Re-prompted $who (role-aware)."
         } else {
-            if ($target -eq "Cursor") { Safe-SetClipboard $pAgent1 }
-            elseif ($target -eq "Gemini") { Safe-SetClipboard $pAgent2 }
+            if ($target -eq "Seat1" -or $target -eq "Cursor") { Safe-SetClipboard $pAgent1 }
+            elseif ($target -eq "Seat2" -or $target -eq "Gemini") { Safe-SetClipboard $pAgent2 }
             else {
-                Safe-SetClipboard ("=== [AGENT 1] ===" + [Environment]::NewLine + $pAgent1 + [Environment]::NewLine + [Environment]::NewLine + "=== [AGENT 2] ===" + [Environment]::NewLine + $pAgent2)
+                Safe-SetClipboard ("=== [$($s1.ToUpper())] ===" + [Environment]::NewLine + $pAgent1 + [Environment]::NewLine + [Environment]::NewLine + "=== [$($s2.ToUpper())] ===" + [Environment]::NewLine + $pAgent2)
             }
             $txtStatus.Text = "⚡ Copied role-aware re-prompt to clipboard (no IDE focused)."
         }
@@ -2544,7 +2846,12 @@ function Load-BlackboardIntoUI {
                     $txtIssueTitle.Text = ""
                 }
                 
-                if ($raw -match '\|\s*\*\*Cursor\*\*\s*\|\s*`([^`]+)`') {
+                $s1 = Get-Seat1Client
+                $s2 = Get-Seat2Client
+                $s1Esc = [regex]::Escape($s1)
+                $s2Esc = [regex]::Escape($s2)
+
+                if ($raw -match ('(?m)\|\s*\*\*(?:' + $s1Esc + '|Cursor|Agent\s*1)\*\*\s*\|\s*`([^`]+)`')) {
                     $r = $matches[1].Trim()
                     for ($i = 0; $i -lt $cbCursorRole.Items.Count; $i++) {
                         if ($cbCursorRole.Items[$i].Content -eq $r) {
@@ -2554,7 +2861,7 @@ function Load-BlackboardIntoUI {
                     }
                 }
                 
-                if ($raw -match '\|\s*\*\*Gemini \(Antigravity\)\*\*\s*\|\s*`([^`]+)`') {
+                if ($raw -match ('(?m)\|\s*\*\*(?:' + $s2Esc + '|Gemini(?:\s+\(Antigravity\))?|Agent\s*2)\*\*\s*\|\s*`([^`]+)`')) {
                     $r = $matches[1].Trim()
                     for ($i = 0; $i -lt $cbGeminiRole.Items.Count; $i++) {
                         if ($cbGeminiRole.Items[$i].Content -eq $r) {
@@ -2571,8 +2878,13 @@ function Load-BlackboardIntoUI {
             
             Sync-SignoffCheckboxes $raw
             
-            $newCursorPad = Get-LastMarkdownBody $raw '(?:###|##)\s+(?:Cursor|Agent\s*1)(?:\s+Scratchpad)?'
-            $newGeminiPad = Get-LastMarkdownBody $raw '(?:###|##)\s+(?:Gemini(?:\s+\(Antigravity\))?|Agent\s*2)(?:\s+Scratchpad)?'
+            $s1 = Get-Seat1Client
+            $s2 = Get-Seat2Client
+            $s1Esc = [regex]::Escape($s1)
+            $s2Esc = [regex]::Escape($s2)
+
+            $newCursorPad = Get-LastMarkdownBody $raw "(?:###|##)\s+(?:$s1Esc|Cursor|Agent\s*1)(?:\s+Scratchpad)?"
+            $newGeminiPad = Get-LastMarkdownBody $raw "(?:###|##)\s+(?:$s2Esc|Gemini(?:\s+\(Antigravity\))?|Agent\s*2)(?:\s+Scratchpad)?"
             Update-LastResponsePanes -cursorPad $newCursorPad -geminiPad $newGeminiPad
             
             if ($null -eq $script:LastCursorPad) {
@@ -2580,13 +2892,13 @@ function Load-BlackboardIntoUI {
                 $script:LastGeminiPad = $newGeminiPad
                 $script:ActiveTurnOverride = $null
             } else {
-                if ($newCursorPad -ne $script:LastCursorPad -and $newCursorPad -notmatch '(?i)^-\s*\((?:Cursor|Agent\s*1)\s+(?:updates?|scratchpad)' -and $newCursorPad.Trim()) {
+                if ($newCursorPad -ne $script:LastCursorPad -and $newCursorPad -notmatch "(?i)^-\s*\((?:$s1Esc|Cursor|Agent\s*1)\s+(?:updates?|scratchpad)" -and $newCursorPad.Trim()) {
                     $script:LastCursorPad = $newCursorPad
-                    $script:ActiveTurnOverride = "Agent 1 responded at " + (Get-Date -Format "HH:mm")
+                    $script:ActiveTurnOverride = "$s1 responded at " + (Get-Date -Format "HH:mm")
                 }
-                if ($newGeminiPad -ne $script:LastGeminiPad -and $newGeminiPad -notmatch '(?i)^-\s*\((?:Gemini|Agent\s*2)\s+(?:updates?|scratchpad)' -and $newGeminiPad.Trim()) {
+                if ($newGeminiPad -ne $script:LastGeminiPad -and $newGeminiPad -notmatch "(?i)^-\s*\((?:$s2Esc|Gemini|Agent\s*2)\s+(?:updates?|scratchpad)" -and $newGeminiPad.Trim()) {
                     $script:LastGeminiPad = $newGeminiPad
-                    $script:ActiveTurnOverride = "Agent 2 responded at " + (Get-Date -Format "HH:mm")
+                    $script:ActiveTurnOverride = "$s2 responded at " + (Get-Date -Format "HH:mm")
                 }
             }
             
