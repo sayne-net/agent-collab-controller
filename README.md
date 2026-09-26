@@ -124,6 +124,25 @@ For detailed protocol rules, see [docs/PROTOCOL.md](docs/PROTOCOL.md).
 
 ---
 
+## Contributing
+
+Contributions, feedback, and issue reports are welcome!
+
+1. **Issues**: Check existing issues or open a new one using the provided bug report or feature request templates.
+2. **Conventional Commits**: Format commit messages according to [Conventional Commits](https://www.conventionalcommits.org/) (e.g. `feat(ui): ...`, `fix(scripts): ...`, `docs: ...`).
+3. **Local Testing & Syntax Validation**: Before submitting a PR, verify all PowerShell scripts pass syntax checks:
+   ```powershell
+   Get-ChildItem -Path scripts/*.ps1 -Recurse | ForEach-Object {
+       $errs = $null
+       $null = [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$errs)
+       if ($errs) { throw "$($_.Name) has syntax errors" }
+   }
+   ```
+4. **Pull Requests**: Open a pull request against `main`. Ensure all CI syntax checks pass and fill out the PR checklist.
+
+---
+
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
+
