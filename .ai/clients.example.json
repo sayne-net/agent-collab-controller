@@ -3,6 +3,7 @@
   "seat1": "Agent 1",
   "seat2": "Agent 2",
   "boardPath": "",
+  "tooltips": true,
   "profiles": {
     "Agent 1": {
       "process": "",

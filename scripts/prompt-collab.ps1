@@ -78,13 +78,13 @@ if (Test-Path $BlackboardPath) {
     if ($raw -match '\|\s*\*\*(?:Agent\s*1|Cursor)\*\*\s*\|\s*`([^`]+)`') { $currentAgent1 = $matches[1] }
     if ($raw -match '\|\s*\*\*(?:Agent\s*2|Gemini(?:\s+\(Antigravity\))?)\*\*\s*\|\s*`([^`]+)`') { $currentAgent2 = $matches[1] }
 
-    if ($raw -match '\|\s*\*\*(?:Human|Steven)\s*(?:\(Lead\))?\*\*\s*\|\s*`[^`]*`\s*\|\s*Active\s*\|\s*(\[[ xX]\])') { $signHuman = $matches[1] }
+    if ($raw -match '(?m)\|\s*\*\*([^*]+)\*\*\s*\|\s*`lead`\s*\|\s*Active\s*\|\s*(\[[ xX]\])') { $signHuman = $matches[2] }
     if ($raw -match '\|\s*\*\*(?:Agent\s*1|Cursor)\*\*\s*\|\s*`[^`]*`\s*\|\s*Active\s*\|\s*(\[[ xX]\])') { $signAgent1 = $matches[1] }
     if ($raw -match '\|\s*\*\*(?:Agent\s*2|Gemini(?:\s+\(Antigravity\))?)\*\*\s*\|\s*`[^`]*`\s*\|\s*Active\s*\|\s*(\[[ xX]\])') { $signAgent2 = $matches[1] }
 
     if ($raw -match '(?ms)^##\s+Current Objective\s*&\s*Prompt\s*\r?\n(.*?)(?=\r?\n\s*---\s*\r?\n\s*##|\Z)') { $currentPrompt = $matches[1].Trim() }
     if ($raw -match '(?ms)^##\s+Alignment\s*&\s*Agreed Decisions\s*\r?\n(.*?)(?=\r?\n\s*---\s*\r?\n\s*##|\Z)') { $currentAlign = $matches[1].Trim() }
-    if ($raw -match '(?ms)^(?:###|##)\s+(?:Human|Steven)(?:\s+\(Lead\))?\s*\r?\n(.*?)(?=\r?\n\s*(?:###|##)|\Z)') { $currentHuman = $matches[1].Trim() }
+    if ($raw -match '(?ms)^(?:###|##)\s+(?:Human(?:\s+\(Lead\))?|[^\r\n]+?\s+\(Lead\)|Lead)\s*\r?\n(.*?)(?=\r?\n\s*(?:###|##)|\Z)') { $currentHuman = $matches[1].Trim() }
     if ($raw -match '(?ms)^(?:###|##)\s+(?:Agent\s*1|Cursor)(?:\s+Scratchpad)?\s*\r?\n(.*?)(?=\r?\n\s*(?:###|##)\s+(?:Agent\s*2|Gemini)|\Z)') { $currentAgent1Pad = $matches[1].Trim() }
     if ($raw -match '(?ms)^(?:###|##)\s+(?:Agent\s*2|Gemini(?:\s+\(Antigravity\))?)(?:\s+Scratchpad)?\s*\r?\n(.*?)\Z') { $currentAgent2Pad = $matches[1].Trim() }
 }

@@ -294,10 +294,11 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                 <Button Name="btnPromoteAlign" Content="🚀 Promote Align" ToolTip="Promote agreed decisions directly to status and notes" Background="#313244" Foreground="#A6E3A1"/>
             </StackPanel>
 
-            <!-- Active Turn Badge, Relaunch & Update Buttons -->
+            <!-- Active Turn Badge, Relaunch, Update Buttons & Tooltip Toggle -->
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                <Button Name="btnUpdateController" Content="🔄 Update App" Background="#313244" Foreground="#89B4FA" Margin="0,0,4,0" Padding="8,3" ToolTip="Check online GitHub for newer controller version, pull, and relaunch" FontWeight="SemiBold"/>
-                <Button Name="btnRelaunch" Content="⏭️ Relaunch" Background="#313244" Foreground="#BAC2DE" Margin="0,0,8,0" Padding="8,3" ToolTip="Relaunch controller script immediately (reloads local code changes)"/>
+                <CheckBox Name="chkEnableTooltips" Content="💡 Tooltips" IsChecked="True" Foreground="#BAC2DE" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                <Button Name="btnUpdateController" Content="🔄 Update App" Background="#313244" Foreground="#89B4FA" Margin="0,0,4,0" Padding="8,3" FontWeight="SemiBold"/>
+                <Button Name="btnRelaunch" Content="⏭️ Relaunch" Background="#313244" Foreground="#BAC2DE" Margin="0,0,8,0" Padding="8,3"/>
                 <Border Name="badgeTurn" Background="#45475A" CornerRadius="12" Padding="10,3">
                     <TextBlock Name="txtActiveTurn" Text="Human (Lead)" FontWeight="Bold" FontSize="11" Foreground="#A6E3A1"/>
                 </Border>
@@ -399,7 +400,7 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                 <StackPanel Grid.Column="2" Margin="6,0,6,0">
                     <TextBlock Text="Project Sign-off" FontWeight="Bold" FontSize="11" Foreground="#F9E2AF" Margin="0,0,0,4"/>
                     <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                        <CheckBox Name="chkSignSteven" Content="Human" Margin="0,0,6,0"/>
+                        <CheckBox Name="chkSignHuman" Content="Human" Margin="0,0,6,0"/>
                         <CheckBox Name="chkSignCursor" Content="Agent 1" Margin="0,0,6,0"/>
                         <CheckBox Name="chkSignGemini" Content="Agent 2"/>
                     </StackPanel>
@@ -474,7 +475,7 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                         <TextBlock Text="👑 HUMAN STEERING NOTES" FontWeight="Bold" FontSize="11" Foreground="#F9E2AF" VerticalAlignment="Center"/>
                         <Button Grid.Column="1" Name="btnPromoteNotes" Content="📝 Promote to Prompt" Background="#313244" Foreground="#F9E2AF" Padding="6,2" FontSize="10" ToolTip="Draft a Prompt from these steering notes (requires confirmation before replacing Current Objective)"/>
                     </Grid>
-                    <TextBox Name="txtStevenNotes" Grid.Row="1" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
+                    <TextBox Name="txtHumanNotes" Grid.Row="1" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
                              MinHeight="64" VerticalAlignment="Stretch"
                              Text="- Active steering notes."/>
                 </Grid>
@@ -638,7 +639,7 @@ $rbStop                = $window.FindName("rbStop")
 $cbPhase               = $window.FindName("cbPhase")
 $cbCursorRole          = $window.FindName("cbCursorRole")
 $cbGeminiRole          = $window.FindName("cbGeminiRole")
-$chkSignSteven         = $window.FindName("chkSignSteven")
+$chkSignHuman          = $window.FindName("chkSignHuman")
 $chkSignCursor         = $window.FindName("chkSignCursor")
 $chkSignGemini         = $window.FindName("chkSignGemini")
 $txtIssueNum           = $window.FindName("txtIssueNum")
@@ -647,7 +648,9 @@ $btnFetchIssue         = $window.FindName("btnFetchIssue")
 $btnNewIssue           = $window.FindName("btnNewIssue")
 $txtPrompt             = $window.FindName("txtPrompt")
 $txtAlignment          = $window.FindName("txtAlignment")
-$txtStevenNotes        = $window.FindName("txtStevenNotes")
+$txtHumanNotes         = $window.FindName("txtHumanNotes")
+$chkEnableTooltips     = $window.FindName("chkEnableTooltips")
+$badgeTurn             = $window.FindName("badgeTurn")
 $rtbCursorLast         = $window.FindName("rtbCursorLast")
 $rtbGeminiLast         = $window.FindName("rtbGeminiLast")
 $cbPresets             = $window.FindName("cbPresets")
@@ -688,6 +691,7 @@ function Get-ClientConfiguration {
         seat1 = "Agent 1"
         seat2 = "Agent 2"
         boardPath = ""
+        tooltips = $true
         profiles = [PSCustomObject]@{
             "Agent 1" = [PSCustomObject]@{ process = ""; description = "Generic Seat 1 (Manual Clipboard Copy)" }
             "Agent 2" = [PSCustomObject]@{ process = ""; description = "Generic Seat 2 (Manual Clipboard Copy)" }
@@ -716,6 +720,85 @@ function Get-ClientConfiguration {
     return $defaultConfig
 }
 
+$script:MasterTooltips = @{
+    # Presets & Top Toolbar
+    "cbPresets"            = "Select a dual-agent workflow preset"
+    "btnApplyPreset"       = "Apply selected workflow preset roles and phase"
+    "btnPromoteAlign"      = "Promote agreed decisions directly to status and notes"
+    "chkEnableTooltips"    = "Toggle hover tooltips on/off across all controller controls"
+    "btnUpdateController"  = "Check GitHub for newer controller version, pull, and relaunch"
+    "btnRelaunch"          = "Relaunch controller script immediately (reloads local code changes)"
+    "badgeTurn"            = "Current active turn indicator"
+    "txtActiveTurn"        = "Current active participant who has the turn"
+
+    # Flow Control, Board Path & Phase
+    "rbGo"                 = "Normal execution — agents proceed with tasks in assigned roles"
+    "rbPause"              = "Pause execution — agents wait for Human Lead input or review"
+    "rbStop"               = "Emergency freeze — all agents cease work immediately"
+    "txtBoardPath"         = "Active blackboard file path (Click to copy to clipboard)"
+    "btnSwitchBoard"       = "Select a different target blackboard.md file"
+    "cbPhase"              = "Select current project workflow phase (advise, plan, implement, review)"
+
+    # Seat Profiles, Roles, Sign-offs & Issues
+    "cbSeat1Client"        = "Select AI client / IDE profile for Seat 1"
+    "cbSeat2Client"        = "Select AI client / IDE profile for Seat 2"
+    "cbCursorRole"         = "Select active role permissions for Seat 1"
+    "cbGeminiRole"         = "Select active role permissions for Seat 2"
+    "chkSignHuman"         = "Sign-off approval from Human Lead (required before closing project)"
+    "chkSignCursor"        = "Sign-off approval from Seat 1 (required before closing project)"
+    "chkSignGemini"        = "Sign-off approval from Seat 2 (required before closing project)"
+    "txtIssueNum"          = "Associated GitHub issue number (e.g. 24 or none)"
+    "btnFetchIssue"        = "Fetch issue title and metadata via gh CLI"
+    "btnNewIssue"          = "Create a new issue on GitHub via gh CLI"
+
+    # Prompt, Alignment & Steering Notes
+    "txtPrompt"            = "Enter primary task objective, requirements, and acceptance criteria"
+    "txtAlignment"         = "Key design rules, architectural constraints, and agreed decisions"
+    "txtHumanNotes"        = "Active steering notes and directives from the Human Lead"
+    "btnPromoteNotes"      = "Draft a Prompt from these steering notes (replaces Current Objective)"
+
+    # Response Panes
+    "rtbCursorLast"        = "Formatted view of Seat 1's latest scratchpad response"
+    "rtbGeminiLast"        = "Formatted view of Seat 2's latest scratchpad response"
+
+    # Kickoff & Reprompt Dispatch
+    "btnCopyCursorKickoff" = "Copy tailored Kickoff Prompt for Seat 1 to Clipboard"
+    "btnSendCursorKickoff" = "Focus Seat 1 window and paste Kickoff Prompt"
+    "btnCopyGeminiKickoff" = "Copy tailored Kickoff Prompt for Seat 2 to Clipboard"
+    "btnSendGeminiKickoff" = "Focus Seat 2 window and paste Kickoff Prompt"
+    "btnCopyBothKickoff"   = "Copy combined Kickoff prompts for both agents to Clipboard"
+    "btnSendBothKickoff"   = "Sequence and send Kickoff prompts to both Seat 1 and Seat 2"
+    "chkNewChatKickoff"    = "Optional one-shot: open a new chat tab in the target agent window on kickoff"
+    "btnRepromptCursor"    = "Focus Seat 1 window and trigger follow-up prompt"
+    "btnRepromptGemini"    = "Focus Seat 2 window and trigger follow-up prompt"
+    "btnRepromptBoth"      = "Re-prompt both agents"
+
+    # Bottom Toolbar Actions
+    "btnApply"             = "Write current form configuration to active blackboard.md on disk"
+    "btnReload"            = "Reload blackboard.md from disk into controller UI"
+    "btnCloseProject"      = "Audit git, archive session to .ai/history, and reset board to idle"
+    "btnResetNoSave"       = "Clear UI prompt and reset roles in UI without saving to disk"
+    "btnReset"             = "Snapshot session to .ai/history and reset board to idle"
+    "btnSaveState"         = "Save a named snapshot of current blackboard state"
+    "btnLoadState"         = "Load a previously saved snapshot"
+    "btnViewText"          = "Open live blackboard markdown text viewer window"
+    "btnViewDiff"          = "Open Review Diff viewer showing uncommitted working tree changes"
+    "btnOpenHistory"       = "Open .ai/history directory in File Explorer"
+    "txtStatus"            = "Controller status and activity log"
+    "txtLastSaved"         = "Timestamp of last save to disk"
+    "txtSafetyWarning"     = "Safety and mutual exclusion status indicator"
+}
+
+function Set-ControllerTooltips {
+    param([bool]$enabled)
+    foreach ($entry in $script:MasterTooltips.GetEnumerator()) {
+        $ctrl = $window.FindName($entry.Key)
+        if ($ctrl -and ($ctrl -is [System.Windows.FrameworkElement])) {
+            $ctrl.ToolTip = if ($enabled) { $entry.Value } else { $null }
+        }
+    }
+}
+
 function Save-ClientConfiguration {
     try {
         $s1 = Get-Seat1Client
@@ -725,12 +808,15 @@ function Save-ClientConfiguration {
         $cfg.seat1 = $s1
         $cfg.seat2 = $s2
         $cfg.boardPath = $script:BlackboardPath
+        $tooltipsVal = if ($chkEnableTooltips) { [bool]$chkEnableTooltips.IsChecked } elseif ($cfg -and $null -ne $cfg.tooltips) { [bool]$cfg.tooltips } else { $true }
+        $cfg.tooltips = $tooltipsVal
         $script:ClientConfig = $cfg
         $exportObj = [PSCustomObject]@{
             '$schema' = "https://json-schema.org/draft/2020-12/schema"
             seat1 = $s1
             seat2 = $s2
             boardPath = $script:BlackboardPath
+            tooltips = $tooltipsVal
             profiles = $cfg.profiles
         }
         $dir = Split-Path $script:ClientsConfigPath -Parent
@@ -889,6 +975,23 @@ if ($cbSeat2Client) {
 if ($window) {
     $window.add_Closing({
         Save-ClientConfiguration
+    })
+}
+
+if ($chkEnableTooltips) {
+    $initialTooltips = if ($script:ClientConfig -and $null -ne $script:ClientConfig.tooltips) { [bool]$script:ClientConfig.tooltips } else { $true }
+    $chkEnableTooltips.IsChecked = $initialTooltips
+    Set-ControllerTooltips -enabled $initialTooltips
+
+    $chkEnableTooltips.add_Checked({
+        Set-ControllerTooltips -enabled $true
+        Save-ClientConfiguration
+        $txtStatus.Text = "Tooltips enabled across controller."
+    })
+    $chkEnableTooltips.add_Unchecked({
+        Set-ControllerTooltips -enabled $false
+        Save-ClientConfiguration
+        $txtStatus.Text = "Tooltips disabled across controller."
     })
 }
 
@@ -1433,7 +1536,7 @@ if ($btnViewDiff) {
 
 if ($btnPromoteNotes) {
     $btnPromoteNotes.add_Click({
-        $rawNotes = $txtStevenNotes.Text.Trim()
+        $rawNotes = $txtHumanNotes.Text.Trim()
         if ([string]::IsNullOrWhiteSpace($rawNotes) -or $rawNotes -eq "- Active steering notes.") {
             [System.Windows.MessageBox]::Show("Human Notes are empty or default. Enter steering notes first.", "Promote Notes", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
             return
@@ -1474,14 +1577,14 @@ function Get-ActiveTurn {
         }
         return $script:ActiveTurnOverride
     }
-    $signSteven = $chkSignSteven.IsChecked
+    $signHuman = $chkSignHuman.IsChecked
     $signCursor = $chkSignCursor.IsChecked
     $signGemini = $chkSignGemini.IsChecked
-    if ($signSteven -and $signCursor -and $signGemini) {
+    if ($signHuman -and $signCursor -and $signGemini) {
         $badgeTurn.Background = [System.Windows.Media.Brushes]::DarkGreen
         return "✅ Complete - Ready to Close"
     }
-    if (-not $signSteven) {
+    if (-not $signHuman) {
         $badgeTurn.Background = [System.Windows.Media.Brushes]::SlateGray
         return "Human (Lead)"
     }
@@ -1509,7 +1612,7 @@ function Update-UiActiveTurn {
     }
     $txtActiveTurn.Text = Get-ActiveTurn
     if ($btnCloseProject) {
-        if ($chkSignSteven.IsChecked -and $chkSignCursor.IsChecked -and $chkSignGemini.IsChecked) {
+        if ($chkSignHuman.IsChecked -and $chkSignCursor.IsChecked -and $chkSignGemini.IsChecked) {
             $btnCloseProject.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#A6E3A1")
             $btnCloseProject.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#11111B")
         } else {
@@ -1543,15 +1646,15 @@ $cbPhase.add_SelectionChanged({ Mark-FormDirty })
 $rbGo.add_Checked({ Mark-FormDirty })
 $rbPause.add_Checked({ Mark-FormDirty })
 $rbStop.add_Checked({ Mark-FormDirty })
-$chkSignSteven.add_Checked({ Update-UiActiveTurn; Mark-FormDirty })
-$chkSignSteven.add_Unchecked({ Update-UiActiveTurn; Mark-FormDirty })
+$chkSignHuman.add_Checked({ Update-UiActiveTurn; Mark-FormDirty })
+$chkSignHuman.add_Unchecked({ Update-UiActiveTurn; Mark-FormDirty })
 $chkSignCursor.add_Checked({ Update-UiActiveTurn; Mark-FormDirty })
 $chkSignCursor.add_Unchecked({ Update-UiActiveTurn; Mark-FormDirty })
 $chkSignGemini.add_Checked({ Update-UiActiveTurn; Mark-FormDirty })
 $chkSignGemini.add_Unchecked({ Update-UiActiveTurn; Mark-FormDirty })
 $txtPrompt.add_TextChanged({ Mark-FormDirty })
 $txtAlignment.add_TextChanged({ Mark-FormDirty })
-$txtStevenNotes.add_TextChanged({ Mark-FormDirty })
+$txtHumanNotes.add_TextChanged({ Mark-FormDirty })
 if ($rtbCursorLast) {
     $rtbCursorLast.add_SizeChanged({
         if ($rtbCursorLast.Document -and $rtbCursorLast.ActualWidth -gt 48) {
@@ -2004,9 +2107,9 @@ function Sync-SignoffCheckboxes {
 
     $signPattern = "(?im)^\s*[-*]\s+(?:\*\*)?(?:(?:$s1Esc|$s2Esc|Cursor|Gemini|Agent\s*1|Agent\s*2)\s+)?sign-?off(?:\*\*)?[:\s].*?(\[x\]|yes|complete|approved)"
     
-    # 1. Human (Lead) / Steven: role table [x] or manual GUI check
-    if ($raw -match '(?m)\|\s*\*\*(?:Human|Steven)\s*(?:\(Lead\))?\*\*\s*\|\s*`[^`]*`\s*\|\s*Active\s*\|\s*\[x\]') {
-        $chkSignSteven.IsChecked = $true
+    # 1. Human (Lead): role table [x] or manual GUI check
+    if ($raw -match '(?m)\|\s*\*\*([^*]+)\*\*\s*\|\s*`lead`\s*\|\s*Active\s*\|\s*\[x\]') {
+        $chkSignHuman.IsChecked = $true
     }
     
     # 2. Seat 1: role table [x] OR last scratchpad sign-off confirmation
@@ -2043,7 +2146,7 @@ function Save-BlackboardContent {
     $issueRef = if ($issue) { "#$issue" } else { "none" }
     $timestamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
     
-    $stevenNotes = if ($txtStevenNotes.Text.Trim()) { $txtStevenNotes.Text } else { "- Active steering notes." }
+    $humanNotes = if ($txtHumanNotes.Text.Trim()) { $txtHumanNotes.Text } else { "- Active steering notes." }
     $humanLabel = "**Human (Lead)**"
     $agent1Label = "**$s1**"
     $agent2Label = "**$s2**"
@@ -2058,8 +2161,12 @@ function Save-BlackboardContent {
     if (Test-Path $script:BlackboardPath) {
         try {
             $existing = [System.IO.File]::ReadAllText($script:BlackboardPath, [System.Text.Encoding]::UTF8)
-            if ($existing -match '(?m)\|\s*\*\*Steven \(Lead\)\*\*') { $humanLabel = "**Steven (Lead)**" }
-            if ($existing -match '### Steven \(Lead\)') { $humanHeader = "### Steven (Lead)" }
+            if ($existing -match '(?m)\|\s*\*\*([^*]+?\s+\(Lead\))\*\*\s*\|\s*`lead`') {
+                $humanLabel = "**$($matches[1])**"
+            }
+            if ($existing -match '(?m)^(?:###|##)\s+([^\r\n]+?\s+\(Lead\))') {
+                $humanHeader = "### $($matches[1])"
+            }
 
             if (-not $clearScratchpads) {
                 # Preserve and migrate Seat 1 scratchpad notes under new client heading
@@ -2086,7 +2193,7 @@ function Save-BlackboardContent {
         } catch {}
     }
 
-    $signSteven = if ($chkSignSteven.IsChecked) { "[x]" } else { "[ ]" }
+    $signHuman = if ($chkSignHuman.IsChecked) { "[x]" } else { "[ ]" }
     $signCursor = if ($chkSignCursor.IsChecked -or $cPadSign) { "[x]" } else { "[ ]" }
     $signGemini = if ($chkSignGemini.IsChecked -or $gPadSign) { "[x]" } else { "[ ]" }
 
@@ -2106,7 +2213,7 @@ function Save-BlackboardContent {
         "",
         "| Participant | Active Role | Status | Sign-off (Complete) |",
         "|-------------|-------------|--------|---------------------|",
-        ("| " + $humanLabel + " | " + $q + "lead" + $q + " | Active | " + $signSteven + " |"),
+        ("| " + $humanLabel + " | " + $q + "lead" + $q + " | Active | " + $signHuman + " |"),
         ("| " + $agent1Label + " | " + $q + $cursorRole + $q + " | Active | " + $signCursor + " |"),
         ("| " + $agent2Label + " | " + $q + $geminiRole + $q + " | Active | " + $signGemini + " |"),
         "",
@@ -2130,7 +2237,7 @@ function Save-BlackboardContent {
         "## Working Notes & Scratchpads",
         "",
         $humanHeader,
-        $stevenNotes,
+        $humanNotes,
         "",
         $agent1Header,
         $cursorScratchpad,
@@ -2297,11 +2404,11 @@ function Complete-KickoffNewChatOneShot {
 function Clear-FormInMemory {
     $txtPrompt.Text = ""
     $txtAlignment.Text = ""
-    $txtStevenNotes.Text = "- Active steering notes."
+    $txtHumanNotes.Text = "- Active steering notes."
     $cbCursorRole.SelectedIndex = 5
     $cbGeminiRole.SelectedIndex = 5
     $cbPhase.SelectedIndex = 0
-    $chkSignSteven.IsChecked = $false
+    $chkSignHuman.IsChecked = $false
     $chkSignCursor.IsChecked = $false
     $chkSignGemini.IsChecked = $false
     $txtActiveTurn.Text = "Human (Lead)"
@@ -2318,10 +2425,10 @@ $btnApply.add_Click({
 })
 
 $btnCloseProject.add_Click({
-    $signSteven = $chkSignSteven.IsChecked
+    $signHuman = $chkSignHuman.IsChecked
     $signCursor = $chkSignCursor.IsChecked
     $signGemini = $chkSignGemini.IsChecked
-    $allSigned = ($signSteven -and $signCursor -and $signGemini)
+    $allSigned = ($signHuman -and $signCursor -and $signGemini)
     $phaseNow = Get-PhaseString
     if ($phaseNow -ne "test" -and $phaseNow -ne "closed") {
         $testWarn = [System.Windows.MessageBox]::Show(
@@ -2409,7 +2516,7 @@ $btnPromoteAlign.add_Click({
         $cbPhase.SelectedIndex = 2 # implement
         $cbCursorRole.SelectedIndex = 1 # review
         $cbGeminiRole.SelectedIndex = 1 # implement
-        $txtStevenNotes.Text = "- Active steering notes."
+        $txtHumanNotes.Text = "- Active steering notes."
         Save-BlackboardContent -clearScratchpads
         $txtStatus.Text = "Promoted agreed decisions to active implementation objective."
     }
@@ -2943,8 +3050,8 @@ function Load-BlackboardIntoUI {
                 $alignLoaded = Get-LastMarkdownBody $raw '##\s+Alignment\s*&\s*Agreed Decisions'
                 if ($alignLoaded -eq "---") { $alignLoaded = "" }
                 $txtAlignment.Text = $alignLoaded
-                $stevenLoaded = Get-LastMarkdownBody $raw '(?:###|##)\s+(?:Human|Steven)(?:\s+\(Lead\))?'
-                if ($stevenLoaded) { $txtStevenNotes.Text = $stevenLoaded }
+                $humanLoaded = Get-LastMarkdownBody $raw '(?:###|##)\s+(?:Human(?:\s+\(Lead\))?|[^\r\n]+?\s+\(Lead\)|Lead)'
+                if ($humanLoaded) { $txtHumanNotes.Text = $humanLoaded }
                 $script:FormDirty = $false
             }
             
