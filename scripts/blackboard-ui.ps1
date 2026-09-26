@@ -1,12 +1,12 @@
 # Agent Collab Controller (WPF UI)
-# Version 1.2.6
+# Version 1.2.7
 # Standalone dual-session controller for multi-agent collaboration with human-in-the-loop steering.
 
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
 
-$script:AppVersion = "v1.2.6"
+$script:AppVersion = "v1.2.7"
 $script:RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $script:ProjectName = (Split-Path $script:RepoRoot -Leaf)
 $script:GitHubRepo = $null
@@ -578,6 +578,7 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                 <Button Name="btnReset" Content="🔄 Reset (Auto-Save)" Background="#F38BA8" Foreground="#11111B" FontWeight="Bold" Margin="0,0,6,0" Padding="10,5" ToolTip="Archive the current board to .ai/history, then clear the form for the next task on this same file"/>
                 <Button Name="btnViewText" Content="📄 Blackboard Output" Background="#45475A" Foreground="#89B4FA" Margin="0,0,6,0" Padding="8,5" ToolTip="Open separate window showing live blackboard markdown text"/>
                 <Button Name="btnViewDiff" Content="🔍 Review Diff" Background="#45475A" Foreground="#A6E3A1" Margin="0,0,6,0" Padding="8,5" ToolTip="Open window showing git diff of uncommitted changes"/>
+                <Button Name="btnViewCompare" Content="⚖️ Compare Turns" Background="#45475A" Foreground="#89B4FA" Margin="0,0,6,0" Padding="8,5" ToolTip="Open side-by-side window comparing AI 1 and AI 2 scratchpads"/>
             </StackPanel>
 
             <!-- Right Controls: History Folder -->
@@ -798,6 +799,7 @@ $btnCloseProject        = $window.FindName("btnCloseProject")
 $btnReset              = $window.FindName("btnReset")
 $btnViewText           = $window.FindName("btnViewText")
 $btnViewDiff           = $window.FindName("btnViewDiff")
+$btnViewCompare        = $window.FindName("btnViewCompare")
 $btnPromoteNotes       = $window.FindName("btnPromoteNotes")
 $btnOpenHistory        = $window.FindName("btnOpenHistory")
 $txtSafetyWarning      = $window.FindName("txtSafetyWarning")
@@ -914,6 +916,7 @@ $script:MasterTooltips = @{
     "btnReset"             = "Archive the current board to .ai/history and clear the form for the next task on this same file"
     "btnViewText"          = "Open live blackboard markdown text viewer window"
     "btnViewDiff"          = "Open Review Diff viewer showing uncommitted working tree changes"
+    "btnViewCompare"       = "Open side-by-side pop-out window comparing AI 1 and AI 2 scratchpads"
     "btnOpenHistory"       = "Open .ai/history directory in File Explorer"
     "txtStatus"            = "Controller status and activity log"
     "txtLastSaved"         = "Timestamp of last save to disk"
@@ -1829,6 +1832,306 @@ function Show-ReviewDiffViewer {
 
 if ($btnViewDiff) {
     $btnViewDiff.add_Click({ Show-ReviewDiffViewer })
+}
+
+# Side-by-Side Scratchpad Compare Viewer Window (Modeless Pop-Out)
+$script:CompareViewerWindow = $null
+$script:CompareViewerRtb1 = $null
+$script:CompareViewerRtb2 = $null
+$script:CompareViewerStatus = $null
+$script:CompareViewerBtnPromote = $null
+$script:CompareViewerLastS1Text = ""
+$script:CompareViewerLastS2Text = ""
+$script:CompareViewerHeaderInfo = $null
+$script:CompareViewerSeat1Header = $null
+$script:CompareViewerSeat2Header = $null
+
+function Render-ScratchpadCompareDoc {
+    param([string]$text, [string]$seatTitle)
+    $doc = New-Object System.Windows.Documents.FlowDocument
+    $doc.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#11111B")
+    $doc.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#CDD6F4")
+    $doc.FontFamily = New-Object System.Windows.Media.FontFamily("Consolas, Segoe UI, monospace")
+    $doc.FontSize = 12
+    $doc.PagePadding = New-Object System.Windows.Thickness(10, 8, 10, 8)
+
+    $lines = $text -split "\r?\n"
+    foreach ($line in $lines) {
+        $p = New-Object System.Windows.Documents.Paragraph
+        $p.Margin = New-Object System.Windows.Thickness(0, 1, 0, 1)
+
+        $run = New-Object System.Windows.Documents.Run($line)
+        if ($line -match '(?i)^\s*[-*]?\s*`?[-*]?\s*`?\*\*(?:Agreed|Agree)\*\*') {
+            # Highlight agreement lines in mint green
+            $p.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#1E3A2F")
+            $run.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#A6E3A1")
+            $run.FontWeight = [System.Windows.FontWeights]::Bold
+        } elseif ($line -match '^###\s+') {
+            $run.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#89B4FA")
+            $run.FontWeight = [System.Windows.FontWeights]::Bold
+        } elseif ($line -match '^####\s+') {
+            $run.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F9E2AF")
+            $run.FontWeight = [System.Windows.FontWeights]::Bold
+        } elseif ($line -match '^\s*-\s+\*\*(?:advise|plan|implement|review|test)\*\*') {
+            $run.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#CBA6F7")
+            $run.FontWeight = [System.Windows.FontWeights]::SemiBold
+        }
+        $p.Inlines.Add($run)
+        $doc.Blocks.Add($p)
+    }
+    return $doc
+}
+
+function Update-CompareTurnsViewer {
+    if (-not $script:CompareViewerWindow -or -not $script:CompareViewerWindow.IsVisible) { return }
+    try {
+        $s1 = Get-Seat1Client
+        $s2 = Get-Seat2Client
+
+        if ($script:CompareViewerSeat1Header) { $script:CompareViewerSeat1Header.Text = "$s1 Scratchpad (Seat 1)" }
+        if ($script:CompareViewerSeat2Header) { $script:CompareViewerSeat2Header.Text = "$s2 Scratchpad (Seat 2)" }
+
+        $raw = if (Test-Path $script:BlackboardPath) { [System.IO.File]::ReadAllText($script:BlackboardPath, [System.Text.Encoding]::UTF8) } else { "" }
+        $s1Esc = [regex]::Escape($s1)
+        $s2Esc = [regex]::Escape($s2)
+        $pad1 = Get-LastMarkdownBody $raw "(?:###|##)\s+(?:$s1Esc|Cursor|Agent\s*1|AI\s*1)(?:\s+Scratchpad)?"
+        $pad2 = Get-LastMarkdownBody $raw "(?:###|##)\s+(?:$s2Esc|Gemini(?:\s+\(Antigravity\))?|Agent\s*2|AI\s*2)(?:\s+Scratchpad)?"
+
+        if ($pad1 -ne $script:CompareViewerLastS1Text -or -not $script:CompareViewerRtb1.Document) {
+            $script:CompareViewerLastS1Text = $pad1
+            $script:CompareViewerRtb1.Document = Render-ScratchpadCompareDoc -text $pad1 -seatTitle $s1
+        }
+        if ($pad2 -ne $script:CompareViewerLastS2Text -or -not $script:CompareViewerRtb2.Document) {
+            $script:CompareViewerLastS2Text = $pad2
+            $script:CompareViewerRtb2.Document = Render-ScratchpadCompareDoc -text $pad2 -seatTitle $s2
+        }
+
+        # Detect shared agreement items
+        $pattern = '(?im)^\s*[-*]?\s*`?[-*]?\s*`?\*\*(?:Agreed|Agree)\*\*:`?\s*(.+)$'
+        $m1 = [regex]::Matches($pad1, $pattern)
+        $m2 = [regex]::Matches($pad2, $pattern)
+        $items1 = @()
+        foreach ($m in $m1) { $val = $m.Groups[1].Value.Trim().TrimEnd('`').Trim(); if ($val) { $items1 += $val } }
+        $items2 = @()
+        foreach ($m in $m2) { $val = $m.Groups[1].Value.Trim().TrimEnd('`').Trim(); if ($val) { $items2 += $val } }
+
+        $matchedAgreed = @()
+        foreach ($it in $items1) {
+            $foundIn2 = ($items2 -contains $it) -or ($items2 | Where-Object { $_ -match [regex]::Escape($it) -or $it -match [regex]::Escape($_) })
+            if ($foundIn2 -and -not ($matchedAgreed -contains $it)) {
+                $matchedAgreed += $it
+            }
+        }
+        foreach ($it in $items2) {
+            $foundIn1 = ($items1 -contains $it) -or ($items1 | Where-Object { $_ -match [regex]::Escape($it) -or $it -match [regex]::Escape($_) })
+            if ($foundIn1 -and -not ($matchedAgreed -contains $it)) {
+                $matchedAgreed += $it
+            }
+        }
+
+        $nowStr = Get-Date -Format "HH:mm:ss"
+        if ($script:CompareViewerStatus) {
+            $l1 = ($pad1 -split "`n").Count
+            $l2 = ($pad2 -split "`n").Count
+            $script:CompareViewerStatus.Text = "Updated $nowStr | ${s1}: $l1 lines | ${s2}: $l2 lines | Shared consensus items: $($matchedAgreed.Count)"
+        }
+        if ($script:CompareViewerHeaderInfo) {
+            $script:CompareViewerHeaderInfo.Text = "$s1 vs $s2 | $nowStr"
+        }
+    } catch {
+        if ($script:CompareViewerStatus) {
+            $script:CompareViewerStatus.Text = "Error updating compare: $_"
+        }
+    }
+}
+
+function Show-CompareTurnsViewer {
+    if ($script:CompareViewerWindow -and $script:CompareViewerWindow.IsVisible) {
+        $script:CompareViewerWindow.Activate() | Out-Null
+        Update-CompareTurnsViewer
+        return
+    }
+
+    [xml]$compXaml = @"
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="⚖️ Scratchpad Compare Viewer (AI 1 vs AI 2)"
+        Height="760" Width="1060"
+        WindowStartupLocation="CenterScreen"
+        Background="#181825" Foreground="#CDD6F4"
+        FontFamily="Segoe UI">
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        
+        <!-- Header -->
+        <Border Grid.Row="0" Background="#1E1E2E" CornerRadius="6" Padding="10,6" Margin="0,0,0,8" BorderBrush="#313244" BorderThickness="1">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="⚖️ SCRATCHPAD COMPARE VIEWER" FontWeight="Bold" FontSize="12" Foreground="#89B4FA" VerticalAlignment="Center"/>
+                    <TextBlock Name="txtCompareHeaderInfo" Text="Side-by-Side AI Turns" FontSize="10" Foreground="#BAC2DE" Background="#313244" Padding="6,2" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                    <Button Name="btnComparePromote" Content="✅ Promote Agreed to Alignment" Background="#313244" Foreground="#A6E3A1" Padding="10,3" Margin="0,0,6,0" FontWeight="SemiBold" Cursor="Hand" ToolTip="Promote shared agreed points into Alignment &amp; Decisions"/>
+                    <Button Name="btnCompareCopy" Content="📋 Copy Both" Background="#313244" Foreground="#CDD6F4" Padding="10,3" Margin="0,0,6,0" FontWeight="SemiBold" Cursor="Hand"/>
+                    <Button Name="btnCompareRefresh" Content="🔄 Refresh" Background="#313244" Foreground="#89B4FA" Padding="10,3" FontWeight="SemiBold" Cursor="Hand"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Side-by-Side Body Grid -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="8"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Column 0: Seat 1 -->
+            <Border Grid.Column="0" Background="#11111B" CornerRadius="6" BorderBrush="#313244" BorderThickness="1" Padding="4">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <Border Grid.Row="0" Background="#181825" Padding="6,4" Margin="0,0,0,4" CornerRadius="4">
+                        <TextBlock Name="txtSeat1Header" Text="AI 1 Scratchpad" FontWeight="Bold" FontSize="11" Foreground="#89B4FA"/>
+                    </Border>
+                    <RichTextBox Name="rtbCompareSeat1" Grid.Row="1" IsReadOnly="True" IsTabStop="False" IsUndoEnabled="False"
+                                 VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                                 Background="#11111B" Foreground="#CDD6F4" BorderThickness="0" Padding="8,6"
+                                 FontFamily="Consolas, Courier New, monospace" FontSize="12"/>
+                </Grid>
+            </Border>
+
+            <!-- Column 1: GridSplitter -->
+            <GridSplitter Grid.Column="1" Width="4" HorizontalAlignment="Center" VerticalAlignment="Stretch" Background="#313244"/>
+
+            <!-- Column 2: Seat 2 -->
+            <Border Grid.Column="2" Background="#11111B" CornerRadius="6" BorderBrush="#313244" BorderThickness="1" Padding="4">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <Border Grid.Row="0" Background="#181825" Padding="6,4" Margin="0,0,0,4" CornerRadius="4">
+                        <TextBlock Name="txtSeat2Header" Text="AI 2 Scratchpad" FontWeight="Bold" FontSize="11" Foreground="#CBA6F7"/>
+                    </Border>
+                    <RichTextBox Name="rtbCompareSeat2" Grid.Row="1" IsReadOnly="True" IsTabStop="False" IsUndoEnabled="False"
+                                 VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                                 Background="#11111B" Foreground="#CDD6F4" BorderThickness="0" Padding="8,6"
+                                 FontFamily="Consolas, Courier New, monospace" FontSize="12"/>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- Footer -->
+        <Border Grid.Row="2" Background="#1E1E2E" CornerRadius="4" Padding="8,4" Margin="0,6,0,0" BorderBrush="#313244" BorderThickness="1">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Name="txtCompareStatus" Text="Ready." FontSize="11" Foreground="#BAC2DE" VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="1" Text="Modeless Split Viewer" FontSize="10" Foreground="#6C7086" VerticalAlignment="Center"/>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>
+"@
+
+    $reader = New-Object System.Xml.XmlNodeReader($compXaml)
+    $compWin = [System.Windows.Markup.XamlReader]::Load($reader)
+    $script:CompareViewerWindow = $compWin
+    $script:CompareViewerRtb1 = $compWin.FindName("rtbCompareSeat1")
+    $script:CompareViewerRtb2 = $compWin.FindName("rtbCompareSeat2")
+    $script:CompareViewerStatus = $compWin.FindName("txtCompareStatus")
+    $script:CompareViewerHeaderInfo = $compWin.FindName("txtCompareHeaderInfo")
+    $script:CompareViewerSeat1Header = $compWin.FindName("txtSeat1Header")
+    $script:CompareViewerSeat2Header = $compWin.FindName("txtSeat2Header")
+    $btnPromote = $compWin.FindName("btnComparePromote")
+    $btnCopy = $compWin.FindName("btnCompareCopy")
+    $btnRefresh = $compWin.FindName("btnCompareRefresh")
+
+    $btnRefresh.add_Click({ Update-CompareTurnsViewer })
+    $btnCopy.add_Click({
+        try {
+            $s1 = Get-Seat1Client
+            $s2 = Get-Seat2Client
+            $combined = "=== [$s1 SCRATCHPAD] ===" + [Environment]::NewLine + $script:CompareViewerLastS1Text + [Environment]::NewLine + [Environment]::NewLine + "=== [$s2 SCRATCHPAD] ===" + [Environment]::NewLine + $script:CompareViewerLastS2Text
+            Safe-SetClipboard $combined
+            if ($script:CompareViewerStatus) { $script:CompareViewerStatus.Text = "📋 Copied both scratchpads to clipboard." }
+        } catch {
+            if ($script:CompareViewerStatus) { $script:CompareViewerStatus.Text = "Copy failed: $_" }
+        }
+    })
+
+    $btnPromote.add_Click({
+        try {
+            $raw = if (Test-Path $script:BlackboardPath) { [System.IO.File]::ReadAllText($script:BlackboardPath, [System.Text.Encoding]::UTF8) } else { "" }
+            $s1 = Get-Seat1Client
+            $s2 = Get-Seat2Client
+            $s1Esc = [regex]::Escape($s1)
+            $s2Esc = [regex]::Escape($s2)
+            $pad1 = Get-LastMarkdownBody $raw "(?:###|##)\s+(?:$s1Esc|Cursor|Agent\s*1|AI\s*1)(?:\s+Scratchpad)?"
+            $pad2 = Get-LastMarkdownBody $raw "(?:###|##)\s+(?:$s2Esc|Gemini(?:\s+\(Antigravity\))?|Agent\s*2|AI\s*2)(?:\s+Scratchpad)?"
+
+            $pattern = '(?im)^\s*[-*]?\s*`?[-*]?\s*`?\*\*(?:Agreed|Agree)\*\*:`?\s*(.+)$'
+            $m1 = [regex]::Matches($pad1, $pattern)
+            $m2 = [regex]::Matches($pad2, $pattern)
+            $candidates = @()
+            foreach ($m in $m1) { $val = $m.Groups[1].Value.Trim().TrimEnd('`').Trim(); if ($val) { $candidates += $val } }
+            foreach ($m in $m2) { $val = $m.Groups[1].Value.Trim().TrimEnd('`').Trim(); if ($val -and -not ($candidates -contains $val)) { $candidates += $val } }
+
+            $newItems = @()
+            foreach ($item in $candidates) {
+                if (-not ($txtAlignment.Text -match [regex]::Escape($item))) {
+                    $newItems += $item
+                }
+            }
+
+            if ($newItems.Count -gt 0) {
+                $existing = $txtAlignment.Text.Trim()
+                $appendLines = ($newItems | ForEach-Object { "- **Agreed**: $_" }) -join [Environment]::NewLine
+                if ($existing) {
+                    $txtAlignment.Text = $existing + [Environment]::NewLine + $appendLines
+                } else {
+                    $txtAlignment.Text = $appendLines
+                }
+                Save-BlackboardContent
+                if ($script:CompareViewerStatus) { $script:CompareViewerStatus.Text = "✅ Promoted $($newItems.Count) agreed item(s) to Alignment & saved." }
+                $txtStatus.Text = "Promoted $($newItems.Count) agreed item(s) from Compare Viewer to Alignment."
+            } else {
+                if ($script:CompareViewerStatus) { $script:CompareViewerStatus.Text = "All agreed items already exist in Alignment." }
+            }
+        } catch {
+            if ($script:CompareViewerStatus) { $script:CompareViewerStatus.Text = "Promote error: $_" }
+        }
+    })
+
+    $compWin.add_Closed({
+        $script:CompareViewerWindow = $null
+        $script:CompareViewerRtb1 = $null
+        $script:CompareViewerRtb2 = $null
+        $script:CompareViewerStatus = $null
+        $script:CompareViewerHeaderInfo = $null
+        $script:CompareViewerSeat1Header = $null
+        $script:CompareViewerSeat2Header = $null
+    })
+
+    Update-CompareTurnsViewer
+    $compWin.Show()
+}
+
+if ($btnViewCompare) {
+    $btnViewCompare.add_Click({ Show-CompareTurnsViewer })
 }
 
 if ($btnPromoteNotes) {
@@ -3075,6 +3378,7 @@ function Trigger-AgentReprompt {
 function Trigger-CompareNotesReprompt {
     try {
         Save-BlackboardContent
+        Show-CompareTurnsViewer
         $s1 = Get-Seat1Client
         $s2 = Get-Seat2Client
         $compareDirective = "Read $script:BlackboardPath again. Compare notes with the other agent's scratchpad: identify agreements, highlight key differences, and synthesize recommendations without replacing the Objective or Alignment."
@@ -3345,18 +3649,26 @@ function Load-BlackboardIntoUI {
                 $script:FormDirty = $false
             } else {
                 if (-not $script:FormDirty) {
+                    $promptLoaded = Get-LastMarkdownBody $raw '##\s+Current Objective\s*&\s*Prompt'
+                    if ($promptLoaded -and $promptLoaded -ne $txtPrompt.Text) {
+                        $txtPrompt.Text = $promptLoaded
+                    }
                     $alignLoaded = Get-LastMarkdownBody $raw '##\s+Alignment\s*&\s*Agreed Decisions'
                     if ($alignLoaded -eq "---") { $alignLoaded = "" }
                     if ($alignLoaded -ne $txtAlignment.Text) {
                         $txtAlignment.Text = $alignLoaded
                     }
+                    $humanLoaded = Get-LastMarkdownBody $raw '(?:###|##)\s+(?:Human(?:\s+\(Lead\))?|[^\r\n]+?\s+\(Lead\)|Lead)'
+                    if ($humanLoaded -and $humanLoaded -ne $txtHumanNotes.Text) {
+                        $txtHumanNotes.Text = $humanLoaded
+                    }
                 }
             }
 
-            # Auto-Promote matching - **Agreed**: lines into Alignment & Decisions during advise/plan
+            # Auto-Promote matching - **Agreed**: / - **Agree**: lines into Alignment & Decisions during advise/plan
             $currentPhase = if ($cbPhase -and $cbPhase.SelectedItem) { [string]$cbPhase.SelectedItem.Content } else { "" }
             if ($currentPhase -match '^(?:advise|plan)' -and (-not $script:FormDirty)) {
-                $pattern = '(?im)^\s*[-*]?\s*`?[-*]?\s*`?\*\*Agreed\*\*:`?\s*(.+)$'
+                $pattern = '(?im)^\s*[-*]?\s*`?[-*]?\s*`?\*\*(?:Agreed|Agree)\*\*:`?\s*(.+)$'
                 $cMatches = [regex]::Matches($newCursorPad, $pattern)
                 $gMatches = [regex]::Matches($newGeminiPad, $pattern)
                 
@@ -3374,7 +3686,17 @@ function Load-BlackboardIntoUI {
                 
                 $newAgreedItems = @()
                 foreach ($item in $cAgreed) {
-                    if ($gAgreed -contains $item) {
+                    $found = ($gAgreed -contains $item) -or ($gAgreed | Where-Object { $_ -match [regex]::Escape($item) -or $item -match [regex]::Escape($_) })
+                    if ($found) {
+                        $alreadyInAlign = ($txtAlignment.Text -match [regex]::Escape($item))
+                        if (-not $alreadyInAlign -and -not ($newAgreedItems -contains $item)) {
+                            $newAgreedItems += $item
+                        }
+                    }
+                }
+                foreach ($item in $gAgreed) {
+                    $found = ($cAgreed -contains $item) -or ($cAgreed | Where-Object { $_ -match [regex]::Escape($item) -or $item -match [regex]::Escape($_) })
+                    if ($found) {
                         $alreadyInAlign = ($txtAlignment.Text -match [regex]::Escape($item))
                         if (-not $alreadyInAlign -and -not ($newAgreedItems -contains $item)) {
                             $newAgreedItems += $item
@@ -3403,6 +3725,9 @@ function Load-BlackboardIntoUI {
             Check-Safety
             Update-UiActiveTurn -keepOverride
             Update-BlackboardViewer
+            if ($script:CompareViewerWindow -and $script:CompareViewerWindow.IsVisible) {
+                Update-CompareTurnsViewer
+            }
         } catch {
             $txtStatus.Text = "Error loading blackboard: $_"
         } finally {
