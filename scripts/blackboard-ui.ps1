@@ -748,6 +748,7 @@ $script:MasterTooltips = @{
     "chkSignCursor"        = "Sign-off approval from Seat 1 (required before closing project)"
     "chkSignGemini"        = "Sign-off approval from Seat 2 (required before closing project)"
     "txtIssueNum"          = "Associated GitHub issue number (e.g. 24 or none)"
+    "txtIssueTitle"        = "Fetched title of the linked GitHub issue"
     "btnFetchIssue"        = "Fetch issue title and metadata via gh CLI"
     "btnNewIssue"          = "Create a new issue on GitHub via gh CLI"
 
@@ -775,7 +776,6 @@ $script:MasterTooltips = @{
 
     # Bottom Toolbar Actions
     "btnApply"             = "Write current form configuration to active blackboard.md on disk"
-    "btnReload"            = "Reload blackboard.md from disk into controller UI"
     "btnCloseProject"      = "Audit git, archive session to .ai/history, and reset board to idle"
     "btnResetNoSave"       = "Clear UI prompt and reset roles in UI without saving to disk"
     "btnReset"             = "Snapshot session to .ai/history and reset board to idle"
