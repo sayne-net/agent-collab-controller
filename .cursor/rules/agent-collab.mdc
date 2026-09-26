@@ -1,0 +1,19 @@
+---
+description: Dual-session agent collaboration protocol via .ai/blackboard.md
+globs: .ai/*
+alwaysApply: true
+---
+
+# Dual-Session Collaboration Rule
+
+You are collaborating on this repository using the dual-session blackboard controller.
+
+## Golden Rules
+- **Canonical Board**: Read and update `.ai/blackboard.md` only. Never edit template or archived files (`blackboard.example.md`, `.ai/history/*`, `.ai/saved/*`).
+- **Scratchpad Editing**: Use targeted replacement to append or update progress under your assigned scratchpad heading only. Never overwrite the entire file or another participant's section.
+- **Role Discipline**: Respect your active role in the blackboard table:
+  - `implement`: Land code, tests, docs. Only one agent may hold implement at any time.
+  - `review`: Read and audit working tree diffs, append review feedback.
+  - `advise`: Analysis only; forbidden from modifying tracked repo files.
+  - `idle`: Stand by; do not run modifying tools.
+- **Flow Control**: `🟢 GO` means continue in your assigned role—it does not promote you to `implement`.

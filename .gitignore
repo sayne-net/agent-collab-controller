@@ -1,0 +1,14 @@
+# Ephemeral live session tape (never commit live board)
+.ai/blackboard.md
+
+# Keep template and session archives
+!.ai/blackboard.example.md
+!.ai/history/
+!.ai/saved/
+
+# OS / Editor artifacts
+Thumbs.db
+Desktop.ini
+.DS_Store
+*.tmp
+*.temp
