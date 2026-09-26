@@ -1,12 +1,12 @@
 # Agent Collab Controller (WPF UI)
-# Version 1.1.0
+# Version 1.2.0
 # Standalone dual-session controller for multi-agent collaboration with human-in-the-loop steering.
 
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
 
-$script:AppVersion = "v1.1.0"
+$script:AppVersion = "v1.2.0"
 $script:RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $script:ProjectName = (Split-Path $script:RepoRoot -Leaf)
 $script:GitHubRepo = $null
@@ -278,14 +278,16 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
 
             <!-- Presets Group -->
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                <TextBlock Text="⚡ 1-Click Presets:" FontWeight="Bold" FontSize="11" Foreground="#BAC2DE" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                <Button Name="btnPresetDiscuss" Content="💬 Discuss" ToolTip="Cursor advise + Gemini advise (Phase: advise)" Margin="0,0,4,0"/>
-                <Button Name="btnPresetPlan" Content="📋 Plan" ToolTip="Cursor plan + Gemini idle (Phase: plan)" Margin="0,0,4,0"/>
-                <Button Name="btnPresetImplement" Content="🛠️ Implement" ToolTip="Gemini implement + Cursor review (Phase: implement)" Margin="0,0,4,0" Background="#45475A" Foreground="#89B4FA" FontWeight="SemiBold"/>
-                <Button Name="btnPresetReview" Content="🔍 Review" ToolTip="Cursor review + Gemini review (Phase: review)" Margin="0,0,4,0"/>
-                <Button Name="btnPresetTest" Content="🧪 Test" ToolTip="Cursor review + Gemini review (Phase: test). Sign-off after verification." Margin="0,0,4,0"/>
-                <Button Name="btnPresetInventory" Content="📦 Inventory" ToolTip="Cursor inventory + Gemini inventory (Phase: review)" Margin="0,0,4,0"/>
-                <Button Name="btnPresetIdle" Content="⏸️ All Idle" ToolTip="Reset all agents to idle" Margin="0,0,6,0"/>
+                <TextBlock Text="⚡ Presets:" FontWeight="Bold" FontSize="11" Foreground="#BAC2DE" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <ComboBox Name="cbPresets" Width="145" SelectedIndex="0" Margin="0,0,4,0" ToolTip="Select workflow preset">
+                    <ComboBoxItem Content="💬 Discuss" Tag="Discuss"/>
+                    <ComboBoxItem Content="📋 Plan" Tag="Plan"/>
+                    <ComboBoxItem Content="🛠️ Implement" Tag="Implement"/>
+                    <ComboBoxItem Content="🔍 Review" Tag="Review"/>
+                    <ComboBoxItem Content="🧪 Test" Tag="Test"/>
+                    <ComboBoxItem Content="📦 Inventory" Tag="Inventory"/>
+                </ComboBox>
+                <Button Name="btnApplyPreset" Content="⚡ Apply" ToolTip="Apply selected workflow preset" Margin="0,0,6,0" Background="#45475A" Foreground="#89B4FA" FontWeight="SemiBold"/>
                 <Button Name="btnPromoteAlign" Content="🚀 Promote Align" ToolTip="Promote agreed decisions directly to status and notes" Background="#313244" Foreground="#A6E3A1"/>
             </StackPanel>
 
@@ -321,6 +323,7 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                         <TextBlock Text="📋 Board: " FontSize="10" Foreground="#6C7086" VerticalAlignment="Center"/>
                         <TextBlock Name="txtBoardPath" Text="" FontSize="10" Foreground="#89B4FA" FontFamily="Consolas, monospace" VerticalAlignment="Center" ToolTip="Active Blackboard.md path (Click to copy)"/>
+                        <Button Name="btnSwitchBoard" Content="📂 Switch" FontSize="10" Padding="6,1" Margin="8,0,0,0" Background="#313244" Foreground="#BAC2DE" ToolTip="Select a different target blackboard.md file"/>
                     </StackPanel>
                 </Border>
 
@@ -605,6 +608,23 @@ if ($txtBoardPath) {
     })
 }
 
+$btnSwitchBoard        = $window.FindName("btnSwitchBoard")
+if ($btnSwitchBoard) {
+    $btnSwitchBoard.add_Click({
+        try {
+            $dlg = New-Object System.Windows.Forms.OpenFileDialog
+            $dlg.Title = "Select Target Blackboard Markdown File"
+            $dlg.InitialDirectory = if (Test-Path $script:AiDir) { $script:AiDir } else { $script:RepoRoot }
+            $dlg.Filter = "Blackboard File (*blackboard*.md)|*blackboard*.md|Markdown files (*.md)|*.md|All files (*.*)|*.*"
+            if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+                Set-ActiveBlackboardPath -targetPath $dlg.FileName
+            }
+        } catch {
+            $txtStatus.Text = "Error selecting board: $_"
+        }
+    })
+}
+
 $btnUpdateController   = $window.FindName("btnUpdateController")
 $btnRelaunch           = $window.FindName("btnRelaunch")
 $badgeTurn             = $window.FindName("badgeTurn")
@@ -627,13 +647,8 @@ $txtAlignment          = $window.FindName("txtAlignment")
 $txtStevenNotes        = $window.FindName("txtStevenNotes")
 $rtbCursorLast         = $window.FindName("rtbCursorLast")
 $rtbGeminiLast         = $window.FindName("rtbGeminiLast")
-$btnPresetDiscuss      = $window.FindName("btnPresetDiscuss")
-$btnPresetImplement    = $window.FindName("btnPresetImplement")
-$btnPresetReview       = $window.FindName("btnPresetReview")
-$btnPresetTest         = $window.FindName("btnPresetTest")
-$btnPresetInventory    = $window.FindName("btnPresetInventory")
-$btnPresetPlan         = $window.FindName("btnPresetPlan")
-$btnPresetIdle         = $window.FindName("btnPresetIdle")
+$cbPresets             = $window.FindName("cbPresets")
+$btnApplyPreset        = $window.FindName("btnApplyPreset")
 $btnPromoteAlign       = $window.FindName("btnPromoteAlign")
 $btnCopyCursorKickoff  = $window.FindName("btnCopyCursorKickoff")
 $btnSendCursorKickoff  = $window.FindName("btnSendCursorKickoff")
@@ -760,20 +775,92 @@ function Update-SeatClientLabels {
     }
 }
 
-$script:ClientConfig = Get-ClientConfiguration
-$profileNames = @($script:ClientConfig.profiles.PSObject.Properties | ForEach-Object { $_.Name })
-if ($profileNames.Count -eq 0) {
-    $profileNames = @("Cursor", "Antigravity", "Windsurf", "VS Code", "Terminal", "Agent 1", "Agent 2")
+function Populate-SeatClientDropdowns {
+    $script:ClientConfig = Get-ClientConfiguration
+    $profileNames = @($script:ClientConfig.profiles.PSObject.Properties | ForEach-Object { $_.Name })
+    if ($profileNames.Count -eq 0) {
+        $profileNames = @("Cursor", "Antigravity", "Windsurf", "VS Code", "Terminal", "Agent 1", "Agent 2")
+    }
+
+    if ($cbSeat1Client) {
+        $current1 = [string]$cbSeat1Client.SelectedItem
+        $cbSeat1Client.Items.Clear()
+        foreach ($p in $profileNames) {
+            [void]$cbSeat1Client.Items.Add($p)
+        }
+        $target1 = if ($current1 -and $cbSeat1Client.Items.Contains($current1)) { $current1 } elseif ($script:ClientConfig.seat1) { [string]$script:ClientConfig.seat1 } else { "Cursor" }
+        $idx1 = $cbSeat1Client.Items.IndexOf($target1)
+        if ($idx1 -ge 0) { $cbSeat1Client.SelectedIndex = $idx1 } else { $cbSeat1Client.SelectedIndex = 0 }
+    }
+
+    if ($cbSeat2Client) {
+        $current2 = [string]$cbSeat2Client.SelectedItem
+        $cbSeat2Client.Items.Clear()
+        foreach ($p in $profileNames) {
+            [void]$cbSeat2Client.Items.Add($p)
+        }
+        $target2 = if ($current2 -and $cbSeat2Client.Items.Contains($current2)) { $current2 } elseif ($script:ClientConfig.seat2) { [string]$script:ClientConfig.seat2 } else { "Antigravity" }
+        $idx2 = $cbSeat2Client.Items.IndexOf($target2)
+        if ($idx2 -ge 0) { $cbSeat2Client.SelectedIndex = $idx2 } else { $cbSeat2Client.SelectedIndex = 1 }
+    }
+
+    Update-SeatClientLabels
 }
 
-if ($cbSeat1Client) {
-    $cbSeat1Client.Items.Clear()
-    foreach ($p in $profileNames) {
-        [void]$cbSeat1Client.Items.Add($p)
+function Set-ActiveBlackboardPath {
+    param([string]$targetPath)
+    
+    if ([string]::IsNullOrWhiteSpace($targetPath)) { return }
+    if (-not (Test-Path $targetPath)) {
+        [System.Windows.MessageBox]::Show("Blackboard file not found: $targetPath", "Switch Blackboard", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
+        return
     }
-    $target1 = if ($script:ClientConfig.seat1) { [string]$script:ClientConfig.seat1 } else { "Cursor" }
-    $idx1 = $cbSeat1Client.Items.IndexOf($target1)
-    if ($idx1 -ge 0) { $cbSeat1Client.SelectedIndex = $idx1 } else { $cbSeat1Client.SelectedIndex = 0 }
+
+    try {
+        $resolved = (Resolve-Path $targetPath).Path
+        $parentDir = Split-Path $resolved -Parent
+        $isDotAi = ((Split-Path $parentDir -Leaf) -eq ".ai")
+        
+        $script:BlackboardPath = $resolved
+        if ($isDotAi) {
+            $script:AiDir = $parentDir
+            $script:RepoRoot = Split-Path $parentDir -Parent
+        } else {
+            $script:AiDir = Join-Path $parentDir ".ai"
+            $script:RepoRoot = $parentDir
+        }
+        $script:ProjectName = Split-Path $script:RepoRoot -Leaf
+        $script:HistoryDir = Join-Path $script:AiDir "history"
+        $script:SavedDir = Join-Path $script:AiDir "saved"
+        $script:ExamplePath = Join-Path $script:AiDir "blackboard.example.md"
+        $script:ClientsConfigPath = Join-Path $script:AiDir "clients.json"
+        $script:ClientsExamplePath = Join-Path $script:AiDir "clients.example.json"
+        $script:GitHubRepo = $null
+
+        foreach ($dir in @($script:AiDir, $script:HistoryDir, $script:SavedDir)) {
+            if (-not (Test-Path $dir)) {
+                New-Item -ItemType Directory -Force -Path $dir | Out-Null
+            }
+        }
+
+        Populate-SeatClientDropdowns
+
+        if ($txtBoardPath) {
+            $txtBoardPath.Text = $script:BlackboardPath
+        }
+        $window.Title = "Agent Collab Controller - " + $script:AppVersion + " [" + $script:ProjectName + "]"
+
+        $script:LastReadBlackboardText = ""
+        Load-BlackboardIntoUI
+        $txtStatus.Text = "Switched active board to: $script:BlackboardPath (Project: $script:ProjectName)"
+    } catch {
+        [System.Windows.MessageBox]::Show("Failed to switch blackboard: $($_.Exception.Message)", "Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
+    }
+}
+
+Populate-SeatClientDropdowns
+
+if ($cbSeat1Client) {
     $cbSeat1Client.add_SelectionChanged({
         Update-SeatClientLabels
         Save-ClientConfiguration
@@ -782,21 +869,12 @@ if ($cbSeat1Client) {
 }
 
 if ($cbSeat2Client) {
-    $cbSeat2Client.Items.Clear()
-    foreach ($p in $profileNames) {
-        [void]$cbSeat2Client.Items.Add($p)
-    }
-    $target2 = if ($script:ClientConfig.seat2) { [string]$script:ClientConfig.seat2 } else { "Antigravity" }
-    $idx2 = $cbSeat2Client.Items.IndexOf($target2)
-    if ($idx2 -ge 0) { $cbSeat2Client.SelectedIndex = $idx2 } else { $cbSeat2Client.SelectedIndex = 1 }
     $cbSeat2Client.add_SelectionChanged({
         Update-SeatClientLabels
         Save-ClientConfiguration
         Mark-FormDirty
     })
 }
-
-Update-SeatClientLabels
 
 # Live Blackboard Text Viewer Window with Color/Diff Highlighting
 $script:ViewerWindow = $null
@@ -1960,45 +2038,26 @@ function Save-BlackboardContent {
     $geminiScratchpad = "- ($s2 updates here)"
     $cPadSign = $false
     $gPadSign = $false
-    $signPattern = "(?im)^\s*[-*]\s+(?:\*\*)?(?:(?:$s1Esc|$s2Esc|Cursor|Gemini|Agent\s*1|Agent\s*2)\s+)?sign-?off(?:\*\*)?[:\s].*?(\[x\]|yes|complete|approved)"
+    $signPattern = "(?im)^\s*[-*]\s+(?:\*\*)?(?:(?:$s1Esc|$s2Esc|Cursor|Gemini|Antigravity|Agent\s*1|Agent\s*2)\s+)?sign-?off(?:\*\*)?[:\s].*?(\[x\]|yes|complete|approved)"
     if (Test-Path $script:BlackboardPath) {
         try {
             $existing = [System.IO.File]::ReadAllText($script:BlackboardPath, [System.Text.Encoding]::UTF8)
             if ($existing -match '(?m)\|\s*\*\*Steven \(Lead\)\*\*') { $humanLabel = "**Steven (Lead)**" }
-            if ($existing -match "(?m)\|\s*\*\*$s1Esc\*\*") { $agent1Label = "**$s1**" }
-            elseif ($existing -match '(?m)\|\s*\*\*Cursor\*\*') { $agent1Label = "**Cursor**" }
-            elseif ($existing -match '(?m)\|\s*\*\*Agent 1\*\*') { $agent1Label = "**Agent 1**" }
-
-            if ($existing -match "(?m)\|\s*\*\*$s2Esc\*\*") { $agent2Label = "**$s2**" }
-            elseif ($existing -match '(?m)\|\s*\*\*Gemini \(Antigravity\)\*\*') { $agent2Label = "**Gemini (Antigravity)**" }
-            elseif ($existing -match '(?m)\|\s*\*\*Agent 2\*\*') { $agent2Label = "**Agent 2**" }
-
             if ($existing -match '### Steven \(Lead\)') { $humanHeader = "### Steven (Lead)" }
-            if ($existing -match "### $s1Esc Scratchpad") { 
-                $agent1Header = "### $s1 Scratchpad"
-                $cursorScratchpad = "- ($s1 updates here)"
-            } elseif ($existing -match '### Cursor Scratchpad') { 
-                $agent1Header = "### Cursor Scratchpad"
-                $cursorScratchpad = "- (Cursor updates here)"
-            } elseif ($existing -match '### Agent 1 Scratchpad') {
-                $agent1Header = "### Agent 1 Scratchpad"
-                $cursorScratchpad = "- (Agent 1 updates here)"
-            }
-
-            if ($existing -match "### $s2Esc Scratchpad") { 
-                $agent2Header = "### $s2 Scratchpad"
-                $geminiScratchpad = "- ($s2 updates here)"
-            } elseif ($existing -match '### Gemini \(Antigravity\) Scratchpad') { 
-                $agent2Header = "### Gemini (Antigravity) Scratchpad"
-                $geminiScratchpad = "- (Gemini updates here)"
-            } elseif ($existing -match '### Agent 2 Scratchpad') {
-                $agent2Header = "### Agent 2 Scratchpad"
-                $geminiScratchpad = "- (Agent 2 updates here)"
-            }
 
             if (-not $clearScratchpads) {
-                $cPad = Get-LastMarkdownBody $existing "(?:###|##)\s+(?:$s1Esc|Cursor|Agent\s*1)(?:\s+Scratchpad)?"
-                $gPad = Get-LastMarkdownBody $existing "(?:###|##)\s+(?:$s2Esc|Gemini(?:\s+\(Antigravity\))?|Agent\s*2)(?:\s+Scratchpad)?"
+                # Preserve and migrate Seat 1 scratchpad notes under new client heading
+                $cPad = Get-LastMarkdownBody $existing "(?:###|##)\s+$s1Esc(?:\s+Scratchpad)?"
+                if (-not $cPad) { $cPad = Get-LastMarkdownBody $existing "(?:###|##)\s+Cursor(?:\s+Scratchpad)?" }
+                if (-not $cPad) { $cPad = Get-LastMarkdownBody $existing "(?:###|##)\s+Agent\s*1(?:\s+Scratchpad)?" }
+                if (-not $cPad) { $cPad = Get-LastMarkdownBody $existing "(?:###|##)\s+(?:Windsurf|VS\s*Code|Terminal)(?:\s+Scratchpad)?" }
+
+                # Preserve and migrate Seat 2 scratchpad notes under new client heading
+                $gPad = Get-LastMarkdownBody $existing "(?:###|##)\s+$s2Esc(?:\s+Scratchpad)?"
+                if (-not $gPad) { $gPad = Get-LastMarkdownBody $existing "(?:###|##)\s+Gemini(?:\s+\(Antigravity\))?(?:\s+Scratchpad)?" }
+                if (-not $gPad) { $gPad = Get-LastMarkdownBody $existing "(?:###|##)\s+Antigravity(?:\s+Scratchpad)?" }
+                if (-not $gPad) { $gPad = Get-LastMarkdownBody $existing "(?:###|##)\s+Agent\s*2(?:\s+Scratchpad)?" }
+
                 if ($cPad) { 
                     $cursorScratchpad = $cPad
                     $cPadSign = ($cPad -match $signPattern)
@@ -2179,44 +2238,22 @@ function Send-AgentChatPaste {
             return $true
         }
         "Windsurf" {
-            Safe-SendKeys "{ESC}"
-            Start-Sleep -Milliseconds 80
-            if ($newChat) {
-                Safe-SendKeys "^+p"
-                Start-Sleep -Milliseconds 400
-                Safe-SendKeys "Cascade: New Chat"
-                Start-Sleep -Milliseconds 220
-                Safe-SendKeys "{ENTER}"
-                Start-Sleep -Milliseconds 500
-            }
-            Safe-SendKeys "^l"
-            Start-Sleep -Milliseconds 250
-            Safe-SendKeys "^v{ENTER}"
-            return $true
+            # Keystroke automation unverified on this PC: window focused above, but blind keystrokes skipped for safety.
+            # Return $false to prompt manual clipboard paste.
+            return $false
         }
         "VS Code" {
-            if ($newChat) {
-                Safe-SendKeys "^+p"
-                Start-Sleep -Milliseconds 400
-                Safe-SendKeys "Chat: New Chat"
-                Start-Sleep -Milliseconds 220
-                Safe-SendKeys "{ENTER}"
-                Start-Sleep -Milliseconds 500
-            }
-            Safe-SendKeys "^+i"
-            Start-Sleep -Milliseconds 250
-            Safe-SendKeys "^v{ENTER}"
-            return $true
+            # Keystroke automation unverified on this PC: window focused above, but blind keystrokes skipped for safety.
+            # Return $false to prompt manual clipboard paste.
+            return $false
         }
         "Terminal" {
-            Start-Sleep -Milliseconds 150
-            Safe-SendKeys "^v{ENTER}"
-            return $true
+            # Terminal / Shell: Blind keystroke injection forbidden for command safety.
+            # Return $false to prompt manual clipboard paste.
+            return $false
         }
         default {
-            Start-Sleep -Milliseconds 150
-            Safe-SendKeys "^v{ENTER}"
-            return $true
+            return $false
         }
     }
 }
@@ -2362,81 +2399,64 @@ $btnPromoteAlign.add_Click({
     }
 })
 
-# 1-Click Workflow Preset Handlers
-$btnPresetDiscuss.add_Click({
+# Workflow Preset Handler
+function Apply-SelectedWorkflowPreset {
     $s1 = Get-Seat1Client
     $s2 = Get-Seat2Client
-    $cbCursorRole.SelectedIndex = 2
-    $cbGeminiRole.SelectedIndex = 2
-    $cbPhase.SelectedIndex = 0
-    $script:FormDirty = $true
-    $txtStatus.Text = "Preset: Discussion Mode ($s1 advise + $s2 advise)"
-    Check-Safety
-})
+    $item = $cbPresets.SelectedItem
+    $preset = if ($item -and $item.Tag) { [string]$item.Tag } elseif ($item) { [string]$item.Content } else { "Discuss" }
 
-$btnPresetImplement.add_Click({
-    $s1 = Get-Seat1Client
-    $s2 = Get-Seat2Client
-    $cbCursorRole.SelectedIndex = 1
-    $cbGeminiRole.SelectedIndex = 1
-    $cbPhase.SelectedIndex = 2
-    $script:FormDirty = $true
-    $txtStatus.Text = "Preset: Implementation Mode ($s2 implement + $s1 review)"
+    switch -Regex ($preset) {
+        "Discuss" {
+            $cbCursorRole.SelectedIndex = 2 # advise
+            $cbGeminiRole.SelectedIndex = 2 # advise
+            $cbPhase.SelectedIndex = 0      # advise
+            $script:FormDirty = $true
+            $txtStatus.Text = "Preset applied: Discussion Mode ($s1 advise + $s2 advise)"
+        }
+        "Plan" {
+            $cbCursorRole.SelectedIndex = 4 # plan
+            $cbGeminiRole.SelectedIndex = 5 # idle
+            $cbPhase.SelectedIndex = 1      # plan
+            $script:FormDirty = $true
+            $txtStatus.Text = "Preset applied: Planning Mode ($s1 plan + $s2 idle)"
+        }
+        "Implement" {
+            $cbCursorRole.SelectedIndex = 1 # review
+            $cbGeminiRole.SelectedIndex = 1 # implement
+            $cbPhase.SelectedIndex = 2      # implement
+            $script:FormDirty = $true
+            $txtStatus.Text = "Preset applied: Implementation Mode ($s2 implement + $s1 review)"
+        }
+        "Review" {
+            $cbCursorRole.SelectedIndex = 1 # review
+            $cbGeminiRole.SelectedIndex = 0 # review
+            $cbPhase.SelectedIndex = 3      # review
+            $script:FormDirty = $true
+            $txtStatus.Text = "Preset applied: Review Mode ($s1 review + $s2 review)"
+            Show-ReviewDiffViewer
+        }
+        "Test" {
+            $cbCursorRole.SelectedIndex = 1 # review
+            $cbGeminiRole.SelectedIndex = 0 # review
+            $cbPhase.SelectedIndex = 4      # test
+            $script:FormDirty = $true
+            $txtStatus.Text = "Preset applied: Test Mode ($s1 review + $s2 review, phase test)"
+        }
+        "Inventory" {
+            $cbCursorRole.SelectedIndex = 3 # inventory
+            $cbGeminiRole.SelectedIndex = 3 # inventory
+            $cbPhase.SelectedIndex = 3      # review
+            $script:FormDirty = $true
+            $txtStatus.Text = "Preset applied: Inventory Mode ($s1 inventory + $s2 inventory)"
+        }
+    }
     Check-Safety
-})
+}
 
-$btnPresetReview.add_Click({
-    $s1 = Get-Seat1Client
-    $s2 = Get-Seat2Client
-    $cbCursorRole.SelectedIndex = 1
-    $cbGeminiRole.SelectedIndex = 0
-    $cbPhase.SelectedIndex = 3
-    $script:FormDirty = $true
-    $txtStatus.Text = "Preset: Review Mode ($s1 review + $s2 review)"
-    Check-Safety
-    Show-ReviewDiffViewer
-})
-
-$btnPresetTest.add_Click({
-    $s1 = Get-Seat1Client
-    $s2 = Get-Seat2Client
-    $cbCursorRole.SelectedIndex = 1
-    $cbGeminiRole.SelectedIndex = 0
-    $cbPhase.SelectedIndex = 4
-    $script:FormDirty = $true
-    $txtStatus.Text = "Preset: Test Mode ($s1 review + $s2 review, phase test)"
-    Check-Safety
-})
-
-$btnPresetInventory.add_Click({
-    $s1 = Get-Seat1Client
-    $s2 = Get-Seat2Client
-    $cbCursorRole.SelectedIndex = 3
-    $cbGeminiRole.SelectedIndex = 3
-    $cbPhase.SelectedIndex = 3
-    $script:FormDirty = $true
-    $txtStatus.Text = "Preset: Inventory Mode ($s1 inventory + $s2 inventory)"
-    Check-Safety
-})
-
-$btnPresetPlan.add_Click({
-    $s1 = Get-Seat1Client
-    $s2 = Get-Seat2Client
-    $cbCursorRole.SelectedIndex = 4
-    $cbGeminiRole.SelectedIndex = 5
-    $cbPhase.SelectedIndex = 1
-    $script:FormDirty = $true
-    $txtStatus.Text = "Preset: Planning Mode ($s1 plan + $s2 idle)"
-    Check-Safety
-})
-
-$btnPresetIdle.add_Click({
-    $cbCursorRole.SelectedIndex = 5
-    $cbGeminiRole.SelectedIndex = 5
-    $script:FormDirty = $true
-    $txtStatus.Text = "Preset: All Agents Idle"
-    Check-Safety
-})
+if ($btnApplyPreset) {
+    $btnApplyPreset.add_Click({ Apply-SelectedWorkflowPreset })
+}
 
 # Kickoff Prompt Button Handlers
 $btnCopyCursorKickoff.add_Click({
