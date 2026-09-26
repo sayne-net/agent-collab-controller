@@ -15,11 +15,11 @@ We take the security of our tools and your local development environment serious
 
 Please **do not report security vulnerabilities through public GitHub issues**.
 
-To report a vulnerability or security concern, please contact the project maintainer directly:
+Please report security vulnerabilities through [GitHub Private Vulnerability Reporting](https://github.com/sayne-net/agent-collab-controller/security/advisories/new).
+
+Alternatively, you may contact the maintainer directly:
 - **Email**: `sasayne@yahoo.com`
 - **GitHub Profile**: [@sasayne](https://github.com/sasayne)
-
-*(Note: If and when this repository is published publicly, GitHub Private Vulnerability Reporting will also be enabled under the Security Advisories tab.)*
 
 ### What to Include
 
