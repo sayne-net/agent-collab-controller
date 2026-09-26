@@ -73,10 +73,11 @@ Ensure your `.gitignore` contains:
 2. **Assign Roles**:
    - Set **AI 1** (e.g. Cursor) to `implement`.
    - Set **AI 2** (e.g. Gemini Antigravity) to `review`.
-3. **Copy & Paste Kickoff**: Click **📋 Copy AI 1** (or **🚀 Send AI 1**) to paste the generated prompt directly into your agent's chat window.
+3. **Copy & Paste Kickoff**: Select your target in the Kickoff dropdown (Seat 1, Seat 2, or Both) and click **📋 Copy Prompt** (or **🚀 Send Prompt**) to paste the generated prompt directly into your agent's chat window.
 4. **Watch & Steer**:
    - The implementing agent writes code, updates progress in its scratchpad, and commits changes.
    - The reviewing agent tests and audits the diff.
+   - Use **⚖️ Compare Notes** on the Re-prompt row at any time to dispatch a comparison directive to both agents, synthesizing consensus into your scratchpads without clearing Objective or Alignment.
    - Review working tree changes instantly via the **🔍 Review Diff** button:
 
    ![Built-in Git Review Diff Viewer](docs/images/controller-diff-viewer.png)
@@ -110,7 +111,7 @@ Place the included agent instruction files in your repository so your agents aut
 
 ### Option B: Zero Setup (Self-Contained Kickoff Prompts)
 Even without pre-configuring agent rules or skills, the controller works out of the box:
-1. In the controller UI, assign roles and click **📋 Copy AI 1** or **📋 Copy AI 2** (or use **🚀 Send AI 1 / 2** to auto-focus and paste).
+1. In the controller UI, assign roles, select your target in the Kickoff dropdown, and click **📋 Copy Prompt** (or **🚀 Send Prompt** to auto-focus and paste).
 2. The generated kickoff prompt injects all required protocol context:
    - Specific identity (`AI 1` or `AI 2`)
    - Assigned role permissions and hard-stop safety constraints

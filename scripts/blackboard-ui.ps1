@@ -1,12 +1,12 @@
-﻿# Agent Collab Controller (WPF UI)
-# Version 1.2.4
+# Agent Collab Controller (WPF UI)
+# Version 1.2.5
 # Standalone dual-session controller for multi-agent collaboration with human-in-the-loop steering.
 
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
 
-$script:AppVersion = "v1.2.4"
+$script:AppVersion = "v1.2.5"
 $script:RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $script:ProjectName = (Split-Path $script:RepoRoot -Leaf)
 $script:GitHubRepo = $null
@@ -537,16 +537,17 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
-                <!-- Row 0 Left: Kickoff Buttons -->
+                <!-- Row 0 Left: Kickoff Controls -->
                 <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
                     <TextBlock Text="🚀 Kickoff:" FontWeight="Bold" FontSize="11" Foreground="#A6E3A1" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                    <Button Name="btnCopyCursorKickoff" Content="📋 Copy AI 1" Background="#313244" Margin="0,0,4,0" ToolTip="Copy tailored Kickoff Prompt for AI 1 to Clipboard"/>
-                    <Button Name="btnSendCursorKickoff" Content="🚀 Send AI 1" Background="#45475A" Foreground="#89B4FA" Margin="0,0,6,0" ToolTip="Focus AI 1 window and paste Kickoff Prompt"/>
-                    <Button Name="btnCopyGeminiKickoff" Content="📋 Copy AI 2" Background="#313244" Margin="0,0,4,0" ToolTip="Copy tailored Kickoff Prompt for AI 2 to Clipboard"/>
-                    <Button Name="btnSendGeminiKickoff" Content="🚀 Send AI 2" Background="#45475A" Foreground="#A6E3A1" Margin="0,0,6,0" ToolTip="Focus AI 2 window and paste Kickoff Prompt"/>
-                    <Button Name="btnCopyBothKickoff" Content="📋 Copy Both" Background="#313244" Foreground="#BAC2DE" Margin="0,0,4,0" ToolTip="Copy combined Kickoff prompts for both agents to Clipboard"/>
-                    <Button Name="btnSendBothKickoff" Content="🚀 Send Both" Background="#89B4FA" Foreground="#11111B" FontWeight="Bold" Margin="0,0,4,0" ToolTip="Sequence and send Kickoff prompts to both AI 1 and AI 2"/>
-                    <CheckBox Name="chkNewChatKickoff" Content="New Chat" IsChecked="False" VerticalAlignment="Center" Margin="6,0,4,0" Foreground="#A6E3A1" ToolTip="Optional one-shot on Kickoff (default off at launch and Reset; armed on Close Project). Cursor palette Chat: New Chat; Antigravity Ctrl+Shift+I then Ctrl+Shift+L (never Ctrl+L / Ctrl+N). Unchecks after send. Re-prompt never opens a new chat."/>
+                    <ComboBox Name="cbKickoffTarget" Width="105" SelectedIndex="2" Margin="0,0,6,0" ToolTip="Select kickoff recipient target (Seat 1, Seat 2, or Both)">
+                        <ComboBoxItem Name="cbiKickoffSeat1" Content="AI 1" Tag="Seat1"/>
+                        <ComboBoxItem Name="cbiKickoffSeat2" Content="AI 2" Tag="Seat2"/>
+                        <ComboBoxItem Name="cbiKickoffBoth" Content="Both" Tag="Both"/>
+                    </ComboBox>
+                    <Button Name="btnCopyKickoffPrompt" Content="📋 Copy Prompt" Background="#313244" Margin="0,0,4,0" ToolTip="Copy tailored full Kickoff Prompt for selected target to Clipboard"/>
+                    <Button Name="btnSendKickoffPrompt" Content="🚀 Send Prompt" Background="#89B4FA" Foreground="#11111B" FontWeight="Bold" Margin="0,0,6,0" ToolTip="Sequence and send full Kickoff Prompt to selected target agent(s)"/>
+                    <CheckBox Name="chkNewChatKickoff" Content="New Chat" IsChecked="False" VerticalAlignment="Center" Margin="4,0,4,0" Foreground="#A6E3A1" ToolTip="Optional one-shot on Kickoff (default off at launch and Reset; armed on Close Project). Cursor palette Chat: New Chat; Antigravity Ctrl+Shift+I then Ctrl+Shift+L (never Ctrl+L / Ctrl+N). Unchecks after send. Re-prompt never opens a new chat."/>
                 </StackPanel>
 
                 <!-- Center Safety Warning -->
@@ -557,7 +558,8 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                     <TextBlock Text="⚡ Re-prompt Sync:" FontWeight="Bold" FontSize="11" Foreground="#F9E2AF" VerticalAlignment="Center" Margin="0,0,6,0"/>
                     <Button Name="btnRepromptCursor" Content="AI 1" Background="#313244" Margin="0,0,4,0" ToolTip="Focus AI 1 &amp; re-prompt"/>
                     <Button Name="btnRepromptGemini" Content="AI 2" Background="#313244" Margin="0,0,4,0" ToolTip="Focus AI 2 &amp; re-prompt"/>
-                    <Button Name="btnRepromptBoth" Content="⚡ Both" Background="#45475A" Foreground="#F9E2AF" ToolTip="Re-prompt both agents"/>
+                    <Button Name="btnRepromptBoth" Content="⚡ Both" Background="#45475A" Foreground="#F9E2AF" Margin="0,0,6,0" ToolTip="Re-prompt both agents"/>
+                    <Button Name="btnCompareNotes" Content="⚖️ Compare Notes" Background="#313244" Foreground="#89B4FA" FontWeight="SemiBold" ToolTip="Send a compare-notes re-prompt to both agents without replacing Objective or Alignment"/>
                 </StackPanel>
             </Grid>
         </Border>
@@ -783,16 +785,17 @@ $rtbCursorLast         = $window.FindName("rtbCursorLast")
 $rtbGeminiLast         = $window.FindName("rtbGeminiLast")
 $cbPresets             = $window.FindName("cbPresets")
 $btnApplyPreset        = $window.FindName("btnApplyPreset")
-$btnCopyCursorKickoff  = $window.FindName("btnCopyCursorKickoff")
-$btnSendCursorKickoff  = $window.FindName("btnSendCursorKickoff")
-$btnCopyGeminiKickoff  = $window.FindName("btnCopyGeminiKickoff")
-$btnSendGeminiKickoff  = $window.FindName("btnSendGeminiKickoff")
-$btnCopyBothKickoff    = $window.FindName("btnCopyBothKickoff")
-$btnSendBothKickoff    = $window.FindName("btnSendBothKickoff")
+$cbKickoffTarget       = $window.FindName("cbKickoffTarget")
+$cbiKickoffSeat1       = $window.FindName("cbiKickoffSeat1")
+$cbiKickoffSeat2       = $window.FindName("cbiKickoffSeat2")
+$cbiKickoffBoth        = $window.FindName("cbiKickoffBoth")
+$btnCopyKickoffPrompt  = $window.FindName("btnCopyKickoffPrompt")
+$btnSendKickoffPrompt  = $window.FindName("btnSendKickoffPrompt")
 $chkNewChatKickoff     = $window.FindName("chkNewChatKickoff")
 $btnRepromptCursor     = $window.FindName("btnRepromptCursor")
 $btnRepromptGemini     = $window.FindName("btnRepromptGemini")
 $btnRepromptBoth       = $window.FindName("btnRepromptBoth")
+$btnCompareNotes       = $window.FindName("btnCompareNotes")
 $btnApply              = $window.FindName("btnApply")
 $btnCloseProject        = $window.FindName("btnCloseProject")
 $btnResetNoSave        = $window.FindName("btnResetNoSave")
@@ -902,16 +905,14 @@ $script:MasterTooltips = @{
     "rtbGeminiLast"        = "Formatted view of Seat 2's latest scratchpad response"
 
     # Kickoff & Reprompt Dispatch
-    "btnCopyCursorKickoff" = "Copy tailored Kickoff Prompt for Seat 1 to Clipboard"
-    "btnSendCursorKickoff" = "Focus Seat 1 window and paste Kickoff Prompt"
-    "btnCopyGeminiKickoff" = "Copy tailored Kickoff Prompt for Seat 2 to Clipboard"
-    "btnSendGeminiKickoff" = "Focus Seat 2 window and paste Kickoff Prompt"
-    "btnCopyBothKickoff"   = "Copy combined Kickoff prompts for both agents to Clipboard"
-    "btnSendBothKickoff"   = "Sequence and send Kickoff prompts to both Seat 1 and Seat 2"
+    "cbKickoffTarget"      = "Select kickoff recipient target (Seat 1, Seat 2, or Both)"
+    "btnCopyKickoffPrompt" = "Copy tailored Kickoff Prompt for selected target to Clipboard"
+    "btnSendKickoffPrompt" = "Focus target window and paste tailored Kickoff Prompt"
     "chkNewChatKickoff"    = "Optional one-shot: open a new chat tab in the target agent window on kickoff"
     "btnRepromptCursor"    = "Focus Seat 1 window and trigger follow-up prompt"
     "btnRepromptGemini"    = "Focus Seat 2 window and trigger follow-up prompt"
     "btnRepromptBoth"      = "Re-prompt both agents"
+    "btnCompareNotes"      = "Send a compare-notes re-prompt to both agents without replacing Objective or Alignment"
 
     # Bottom Toolbar Actions
     "btnApply"             = "Write current form configuration to active blackboard.md on disk"
@@ -1016,6 +1017,23 @@ function Get-Seat2Client {
     return "AI 2"
 }
 
+function Update-KickoffButtonTooltips {
+    $s1 = Get-Seat1Client
+    $s2 = Get-Seat2Client
+    $targetName = "Both ($s1 & $s2)"
+    if ($cbKickoffTarget -and $cbKickoffTarget.SelectedItem) {
+        $tag = [string]$cbKickoffTarget.SelectedItem.Tag
+        if ($tag -eq "Seat1") { $targetName = $s1 }
+        elseif ($tag -eq "Seat2") { $targetName = $s2 }
+    }
+    if ($btnCopyKickoffPrompt) {
+        $btnCopyKickoffPrompt.ToolTip = "Copy tailored full Kickoff Prompt for $targetName to Clipboard"
+    }
+    if ($btnSendKickoffPrompt) {
+        $btnSendKickoffPrompt.ToolTip = "Focus $targetName window and paste tailored full Kickoff Prompt"
+    }
+}
+
 function Update-SeatClientLabels {
     $s1 = Get-Seat1Client
     $s2 = Get-Seat2Client
@@ -1026,10 +1044,9 @@ function Update-SeatClientLabels {
     if ($chkSignCursor) { $chkSignCursor.Content = $s1 }
     if ($chkSignGemini) { $chkSignGemini.Content = $s2 }
     
-    if ($btnCopyCursorKickoff) { $btnCopyCursorKickoff.Content = "📋 Copy $s1" }
-    if ($btnSendCursorKickoff) { $btnSendCursorKickoff.Content = "🚀 Send $s1" }
-    if ($btnCopyGeminiKickoff) { $btnCopyGeminiKickoff.Content = "📋 Copy $s2" }
-    if ($btnSendGeminiKickoff) { $btnSendGeminiKickoff.Content = "🚀 Send $s2" }
+    if ($cbiKickoffSeat1) { $cbiKickoffSeat1.Content = $s1 }
+    if ($cbiKickoffSeat2) { $cbiKickoffSeat2.Content = $s2 }
+    Update-KickoffButtonTooltips
     
     if ($btnRepromptCursor) { $btnRepromptCursor.Content = $s1 }
     if ($btnRepromptGemini) { $btnRepromptGemini.Content = $s2 }
@@ -2219,7 +2236,8 @@ function Get-RepromptPromptForAgent {
     param(
         [string]$agentName,
         [string]$role,
-        [string]$seatId = "seat1"
+        [string]$seatId = "seat1",
+        [string]$customDirective = ""
     )
     $normRole = Get-NormalizedRole $role
     $flow = Get-FlowControlString
@@ -2260,8 +2278,9 @@ Do not only reply in chat. Do not create AI_COLLAB.md, TASKS.md, or .geminirules
 "@
     }
 
+    $leadDirective = if ($customDirective) { $customDirective } else { "Read $boardPath again and respond to the latest notes from the other agent or the Human Lead." }
     return @"
-Read $boardPath again and respond to the latest notes from the other agent or the Human Lead.
+$leadDirective
 - Agent: $agentName
 - Assigned Role: $normRole. Stay in that role.
 - Project Phase: $phase
@@ -2861,109 +2880,109 @@ if ($btnApplyPreset) {
     $btnApplyPreset.add_Click({ Apply-SelectedWorkflowPreset })
 }
 
-# Kickoff Prompt Button Handlers
-$btnCopyCursorKickoff.add_Click({
+# Kickoff Prompt Target & Button Handlers
+function Invoke-CopyKickoffPrompt {
     try {
         Save-BlackboardContent
         $s1 = Get-Seat1Client
-        $kPrompt = Get-KickoffPromptForAgent -agentName $s1 -role $cbCursorRole.Text -seatId "seat1"
-        Safe-SetClipboard $kPrompt
-        $txtStatus.Text = "📋 Copied $s1 Kickoff Prompt (" + $cbCursorRole.Text + ") to clipboard."
-    } catch { $txtStatus.Text = "Error copying prompt: $_" }
-})
-
-$btnCopyGeminiKickoff.add_Click({
-    try {
-        Save-BlackboardContent
         $s2 = Get-Seat2Client
-        $kPrompt = Get-KickoffPromptForAgent -agentName $s2 -role $cbGeminiRole.Text -seatId "seat2"
-        Safe-SetClipboard $kPrompt
-        $txtStatus.Text = "📋 Copied $s2 Kickoff Prompt (" + $cbGeminiRole.Text + ") to clipboard."
-    } catch { $txtStatus.Text = "Error copying prompt: $_" }
-})
+        $target = if ($cbKickoffTarget -and $cbKickoffTarget.SelectedItem) {
+            $item = $cbKickoffTarget.SelectedItem
+            if ($item.Tag) { [string]$item.Tag } else { [string]$item.Content }
+        } else { "Both" }
 
-$btnSendCursorKickoff.add_Click({
+        switch -Regex ($target) {
+            "Seat1" {
+                $kPrompt = Get-KickoffPromptForAgent -agentName $s1 -role $cbCursorRole.Text -seatId "seat1"
+                Safe-SetClipboard $kPrompt
+                $txtStatus.Text = "📋 Copied $s1 Kickoff Prompt (" + $cbCursorRole.Text + ") to clipboard."
+            }
+            "Seat2" {
+                $kPrompt = Get-KickoffPromptForAgent -agentName $s2 -role $cbGeminiRole.Text -seatId "seat2"
+                Safe-SetClipboard $kPrompt
+                $txtStatus.Text = "📋 Copied $s2 Kickoff Prompt (" + $cbGeminiRole.Text + ") to clipboard."
+            }
+            default {
+                $pAgent1 = Get-KickoffPromptForAgent -agentName $s1 -role $cbCursorRole.Text -seatId "seat1"
+                $pAgent2 = Get-KickoffPromptForAgent -agentName $s2 -role $cbGeminiRole.Text -seatId "seat2"
+                $combined = "=== [$($s1.ToUpper()) KICKOFF PROMPT] ===" + [Environment]::NewLine + $pAgent1 + [Environment]::NewLine + [Environment]::NewLine + "=== [$($s2.ToUpper()) KICKOFF PROMPT] ===" + [Environment]::NewLine + $pAgent2
+                Safe-SetClipboard $combined
+                $txtStatus.Text = "📋 Copied combined Kickoff prompts for both $s1 and $s2 to clipboard."
+            }
+        }
+    } catch { $txtStatus.Text = "Error copying kickoff prompt: $_" }
+}
+
+function Invoke-SendKickoffPrompt {
     try {
         Save-BlackboardContent
         $s1 = Get-Seat1Client
-        $kPrompt = Get-KickoffPromptForAgent -agentName $s1 -role $cbCursorRole.Text -seatId "seat1"
-        Safe-SetClipboard $kPrompt
+        $s2 = Get-Seat2Client
         $doNew = [bool]($chkNewChatKickoff -and $chkNewChatKickoff.IsChecked)
-        if (Send-AgentChatPaste -clientName $s1 -newChat $doNew) {
-            Complete-KickoffNewChatOneShot -didNew $doNew
-            $chatNote = if ($doNew) { " (New Chat, then off)" } else { "" }
-            $txtStatus.Text = "🚀 Sent $s1 Kickoff Prompt to active IDE window$chatNote."
-        } else {
-            $txtStatus.Text = "📋 Copied $s1 Kickoff to clipboard (IDE window not found). Focus $s1 and paste."
+        $target = if ($cbKickoffTarget -and $cbKickoffTarget.SelectedItem) {
+            $item = $cbKickoffTarget.SelectedItem
+            if ($item.Tag) { [string]$item.Tag } else { [string]$item.Content }
+        } else { "Both" }
+
+        switch -Regex ($target) {
+            "Seat1" {
+                $pAgent1 = Get-KickoffPromptForAgent -agentName $s1 -role $cbCursorRole.Text -seatId "seat1"
+                Safe-SetClipboard $pAgent1
+                if (Send-AgentChatPaste -clientName $s1 -newChat $doNew) {
+                    Complete-KickoffNewChatOneShot -didNew $doNew
+                    $chatNote = if ($doNew) { " (New Chat, then off)" } else { "" }
+                    $txtStatus.Text = "🚀 Sent $s1 Kickoff Prompt to active IDE window$chatNote."
+                } else {
+                    $txtStatus.Text = "📋 Copied $s1 Kickoff to clipboard (IDE window not found). Focus $s1 and paste."
+                }
+            }
+            "Seat2" {
+                $pAgent2 = Get-KickoffPromptForAgent -agentName $s2 -role $cbGeminiRole.Text -seatId "seat2"
+                Safe-SetClipboard $pAgent2
+                if (Send-AgentChatPaste -clientName $s2 -newChat $doNew) {
+                    Complete-KickoffNewChatOneShot -didNew $doNew
+                    $chatNote = if ($doNew) { " (New Chat, then off)" } else { "" }
+                    $txtStatus.Text = "🚀 Sent $s2 Kickoff Prompt to active IDE window$chatNote."
+                } else {
+                    $txtStatus.Text = "📋 Copied $s2 Kickoff to clipboard (IDE window not found). Focus $s2 and paste."
+                }
+            }
+            default {
+                $pAgent1 = Get-KickoffPromptForAgent -agentName $s1 -role $cbCursorRole.Text -seatId "seat1"
+                $pAgent2 = Get-KickoffPromptForAgent -agentName $s2 -role $cbGeminiRole.Text -seatId "seat2"
+
+                # 1. Focus & Send Seat 1
+                Safe-SetClipboard $pAgent1
+                $cFocused = Send-AgentChatPaste -clientName $s1 -newChat $doNew
+                Start-Sleep -Milliseconds 600
+
+                # 2. Focus & Send Seat 2
+                Safe-SetClipboard $pAgent2
+                $gFocused = Send-AgentChatPaste -clientName $s2 -newChat $doNew
+
+                if ($cFocused -or $gFocused) {
+                    Complete-KickoffNewChatOneShot -didNew $doNew
+                }
+                if ($cFocused -and $gFocused) {
+                    $chatNote = if ($doNew) { " (New Chat one-shot, now off)" } else { "" }
+                    $txtStatus.Text = "🚀 Successfully kicked off both $s1 and $s2!$chatNote"
+                } elseif ($cFocused) {
+                    $txtStatus.Text = "🚀 Kicked off $s1. ($s2 window not found - focus $s2 to paste prompt)."
+                } elseif ($gFocused) {
+                    Safe-SetClipboard $pAgent1
+                    $txtStatus.Text = "🚀 Kicked off $s2. $s1 prompt copied to clipboard. Focus $s1 to paste."
+                } else {
+                    Safe-SetClipboard ("=== [$($s1.ToUpper()) KICKOFF PROMPT] ===" + [Environment]::NewLine + $pAgent1 + [Environment]::NewLine + [Environment]::NewLine + "=== [$($s2.ToUpper()) KICKOFF PROMPT] ===" + [Environment]::NewLine + $pAgent2)
+                    $txtStatus.Text = "📋 Copied both kickoff prompts to clipboard (focus IDEs to paste)."
+                }
+            }
         }
-    } catch { $txtStatus.Text = "Error sending prompt: $_" }
-})
+    } catch { $txtStatus.Text = "Error during kickoff: $_" }
+}
 
-$btnSendGeminiKickoff.add_Click({
-    try {
-        Save-BlackboardContent
-        $s2 = Get-Seat2Client
-        $kPrompt = Get-KickoffPromptForAgent -agentName $s2 -role $cbGeminiRole.Text -seatId "seat2"
-        Safe-SetClipboard $kPrompt
-        $doNew = [bool]($chkNewChatKickoff -and $chkNewChatKickoff.IsChecked)
-        if (Send-AgentChatPaste -clientName $s2 -newChat $doNew) {
-            Complete-KickoffNewChatOneShot -didNew $doNew
-            $chatNote = if ($doNew) { " (New Chat, then off)" } else { "" }
-            $txtStatus.Text = "🚀 Sent $s2 Kickoff Prompt to active IDE window$chatNote."
-        } else {
-            $txtStatus.Text = "📋 Copied $s2 Kickoff to clipboard (IDE window not found). Focus $s2 and paste."
-        }
-    } catch { $txtStatus.Text = "Error sending prompt: $_" }
-})
-
-$btnCopyBothKickoff.add_Click({
-    try {
-        Save-BlackboardContent
-        $s1 = Get-Seat1Client
-        $s2 = Get-Seat2Client
-        $pAgent1 = Get-KickoffPromptForAgent -agentName $s1 -role $cbCursorRole.Text -seatId "seat1"
-        $pAgent2 = Get-KickoffPromptForAgent -agentName $s2 -role $cbGeminiRole.Text -seatId "seat2"
-        $combined = "=== [$($s1.ToUpper()) KICKOFF PROMPT] ===" + [Environment]::NewLine + $pAgent1 + [Environment]::NewLine + [Environment]::NewLine + "=== [$($s2.ToUpper()) KICKOFF PROMPT] ===" + [Environment]::NewLine + $pAgent2
-        Safe-SetClipboard $combined
-        $txtStatus.Text = "📋 Copied combined Kickoff prompts for both $s1 and $s2 to clipboard."
-    } catch { $txtStatus.Text = "Error copying prompts: $_" }
-})
-
-$btnSendBothKickoff.add_Click({
-    try {
-        Save-BlackboardContent
-        $s1 = Get-Seat1Client
-        $s2 = Get-Seat2Client
-        $pAgent1 = Get-KickoffPromptForAgent -agentName $s1 -role $cbCursorRole.Text -seatId "seat1"
-        $pAgent2 = Get-KickoffPromptForAgent -agentName $s2 -role $cbGeminiRole.Text -seatId "seat2"
-        $doNew = [bool]($chkNewChatKickoff -and $chkNewChatKickoff.IsChecked)
-
-        # 1. Focus & Send Seat 1
-        Safe-SetClipboard $pAgent1
-        $cFocused = Send-AgentChatPaste -clientName $s1 -newChat $doNew
-        Start-Sleep -Milliseconds 600
-
-        # 2. Focus & Send Seat 2
-        Safe-SetClipboard $pAgent2
-        $gFocused = Send-AgentChatPaste -clientName $s2 -newChat $doNew
-
-        if ($cFocused -or $gFocused) {
-            Complete-KickoffNewChatOneShot -didNew $doNew
-        }
-        if ($cFocused -and $gFocused) {
-            $chatNote = if ($doNew) { " (New Chat one-shot, now off)" } else { "" }
-            $txtStatus.Text = "🚀 Successfully kicked off both $s1 and $s2!$chatNote"
-        } elseif ($cFocused) {
-            $txtStatus.Text = "🚀 Kicked off $s1. ($s2 window not found - focus $s2 to paste prompt)."
-        } elseif ($gFocused) {
-            Safe-SetClipboard $pAgent1
-            $txtStatus.Text = "🚀 Kicked off $s2. $s1 prompt copied to clipboard. Focus $s1 to paste."
-        } else {
-            Safe-SetClipboard ("=== [$($s1.ToUpper()) KICKOFF PROMPT] ===" + [Environment]::NewLine + $pAgent1 + [Environment]::NewLine + [Environment]::NewLine + "=== [$($s2.ToUpper()) KICKOFF PROMPT] ===" + [Environment]::NewLine + $pAgent2)
-            $txtStatus.Text = "📋 Copied both kickoff prompts to clipboard (focus IDEs to paste)."
-        }
-    } catch { $txtStatus.Text = "Error during dual kickoff: $_" }
-})
+if ($btnCopyKickoffPrompt) { $btnCopyKickoffPrompt.add_Click({ Invoke-CopyKickoffPrompt }) }
+if ($btnSendKickoffPrompt) { $btnSendKickoffPrompt.add_Click({ Invoke-SendKickoffPrompt }) }
+if ($cbKickoffTarget) { $cbKickoffTarget.add_SelectionChanged({ Update-KickoffButtonTooltips }) }
 
 $btnSaveState.add_Click({
     try {
@@ -3096,9 +3115,43 @@ function Trigger-AgentReprompt {
     } catch { $txtStatus.Text = "Error during re-prompt: $_" }
 }
 
+function Trigger-CompareNotesReprompt {
+    try {
+        Save-BlackboardContent
+        $s1 = Get-Seat1Client
+        $s2 = Get-Seat2Client
+        $compareDirective = "Read $script:BlackboardPath again. Compare notes with the other agent's scratchpad: identify agreements, highlight key differences, and synthesize recommendations without replacing the Objective or Alignment."
+        $pAgent1 = Get-RepromptPromptForAgent -agentName $s1 -role $cbCursorRole.Text -seatId "seat1" -customDirective $compareDirective
+        $pAgent2 = Get-RepromptPromptForAgent -agentName $s2 -role $cbGeminiRole.Text -seatId "seat2" -customDirective $compareDirective
+
+        Safe-SetClipboard $pAgent1
+        $cFocused = Send-AgentChatPaste -clientName $s1 -newChat $false
+        Start-Sleep -Milliseconds 600
+
+        Safe-SetClipboard $pAgent2
+        $gFocused = Send-AgentChatPaste -clientName $s2 -newChat $false
+
+        if ($cFocused -and $gFocused) {
+            $txtStatus.Text = "⚖️ Compare Notes prompt dispatched to $s1 & $s2."
+        } elseif ($cFocused) {
+            Safe-SetClipboard $pAgent2
+            $txtStatus.Text = "⚖️ Compare Notes sent to $s1. $s2 prompt copied ($s2 window not found)."
+        } elseif ($gFocused) {
+            Safe-SetClipboard $pAgent1
+            $txtStatus.Text = "⚖️ Compare Notes sent to $s2. $s1 prompt copied ($s1 window not found)."
+        } else {
+            Safe-SetClipboard ("=== [$($s1.ToUpper()) COMPARE NOTES] ===" + [Environment]::NewLine + $pAgent1 + [Environment]::NewLine + [Environment]::NewLine + "=== [$($s2.ToUpper()) COMPARE NOTES] ===" + [Environment]::NewLine + $pAgent2)
+            $txtStatus.Text = "⚖️ Copied Compare Notes prompts to clipboard (no IDE window focused)."
+        }
+    } catch { $txtStatus.Text = "Error dispatching Compare Notes: $_" }
+}
+
 $btnRepromptCursor.add_Click({ Trigger-AgentReprompt -target "Cursor" })
 $btnRepromptGemini.add_Click({ Trigger-AgentReprompt -target "Gemini" })
 $btnRepromptBoth.add_Click({ Trigger-AgentReprompt -target "Both" })
+if ($btnCompareNotes) {
+    $btnCompareNotes.add_Click({ Trigger-CompareNotesReprompt })
+}
 
 function Invoke-ControllerRelaunch {
     param([switch]$force)
@@ -3346,15 +3399,21 @@ function Load-BlackboardIntoUI {
             # Auto-Promote matching - **Agreed**: lines into Alignment & Decisions during advise/plan
             $currentPhase = if ($cbPhase -and $cbPhase.SelectedItem) { [string]$cbPhase.SelectedItem.Content } else { "" }
             if ($currentPhase -match '^(?:advise|plan)' -and (-not $script:FormDirty)) {
-                $pattern = '(?im)^\s*[-*]\s*\*\*Agreed\*\*:\s*(.+)$'
+                $pattern = '(?im)^\s*[-*]?\s*`?[-*]?\s*`?\*\*Agreed\*\*:`?\s*(.+)$'
                 $cMatches = [regex]::Matches($newCursorPad, $pattern)
                 $gMatches = [regex]::Matches($newGeminiPad, $pattern)
                 
                 $cAgreed = @()
-                foreach ($m in $cMatches) { $cAgreed += $m.Groups[1].Value.Trim() }
+                foreach ($m in $cMatches) {
+                    $val = $m.Groups[1].Value.Trim().TrimEnd('`').Trim()
+                    if ($val) { $cAgreed += $val }
+                }
                 
                 $gAgreed = @()
-                foreach ($m in $gMatches) { $gAgreed += $m.Groups[1].Value.Trim() }
+                foreach ($m in $gMatches) {
+                    $val = $m.Groups[1].Value.Trim().TrimEnd('`').Trim()
+                    if ($val) { $gAgreed += $val }
+                }
                 
                 $newAgreedItems = @()
                 foreach ($item in $cAgreed) {
