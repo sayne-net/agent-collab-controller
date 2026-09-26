@@ -43,14 +43,20 @@ Most multi-agent frameworks run autonomous loops that quickly diverge, race each
 
 ## The Blackboard Lifecycle
 
-1. **Kickoff**: Human Lead launches the WPF Controller (`scripts\blackboard-ui.bat`), enters the objective, selects roles (e.g. AI 1: `implement`, AI 2: `review`), and clicks **Copy Kickoff** (or **Send**).
-2. **Execution**:
-   - The implementing agent writes code, updates progress in its scratchpad, and commits changes locally.
-   - The reviewing agent inspects the working tree diff (via the controller's built-in Review Diff viewer) and appends feedback.
-3. **Verification & Sign-off**:
-   - Once all tests pass and requirements are verified, each agent marks their sign-off cell `[x]`.
-   - When all 3 participants (Human + AI 1 + AI 2) have signed off, the **Close Project** button activates.
-4. **Close Project**:
-   - Automatically archives the current blackboard session into `.ai/history/blackboard-<timestamp>.md`.
-   - Optionally closes the linked GitHub issue via `gh CLI`.
-   - Cleans the active blackboard and resets roles to `idle`.
+### Phase Progression Ladder
+
+The default project lifecycle follows a structured 5-phase ladder:
+`pitch` $\rightarrow$ `discuss` $\rightarrow$ `implement` $\rightarrow$ `test` $\rightarrow$ `closed`
+
+1. **Pitch**: Agents suggest additions, improvements, alternatives, and options to the objective without touching code. Human Lead chooses what graduates to discussion.
+2. **Discuss**: Agents debate trade-offs, answer architectural questions, and align on agreed decisions. Consensus lines auto-promote to Alignment.
+3. **Implement**: Exactly one agent writes code and documents changes while the other reviews.
+4. **Test**: Agents and Human Lead verify script, UI, and functionality, recording pass/fail evidence in scratchpads.
+5. **Closed**: All sign-offs complete; Human Lead uses the **Close Project** button to audit git, commit allowlisted changes, push, and archive.
+
+### Phase Sign-Off & Advancement
+
+- Each phase uses the three sign-off checkboxes (`Human`, `AI 1`, `AI 2`).
+- When all 3 participants mark sign-off complete (`[x]`) while Flow Control is `🟢 GO`, the controller clears the checkboxes and auto-advances to the next phase on the ladder.
+- Unchecking a box never moves backward. Auto-advance is blocked during `🟡 PAUSE` or `🔴 ALL STOP`.
+- Intermediate advances do not commit or push git; final shipping remains safely on the **Close Project** button.

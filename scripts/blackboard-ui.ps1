@@ -1,12 +1,12 @@
 # Agent Collab Controller (WPF UI)
-# Version 1.2.14
+# Version 1.2.15
 # Standalone dual-session controller for multi-agent collaboration with human-in-the-loop steering.
 
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
 
-$script:AppVersion = "v1.2.14"
+$script:AppVersion = "v1.2.15"
 $script:RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $script:ProjectName = (Split-Path $script:RepoRoot -Leaf)
 $script:ScriptFilePath = if ($PSCommandPath) { $PSCommandPath } else { Join-Path $PSScriptRoot "blackboard-ui.ps1" }
@@ -286,6 +286,7 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                 <TextBlock Text="⚡ Presets:" FontWeight="Bold" FontSize="11" Foreground="#BAC2DE" VerticalAlignment="Center" Margin="0,0,8,0"/>
                 <ComboBox Name="cbPresets" Width="145" SelectedIndex="0" Margin="0,0,4,0" ToolTip="Select workflow preset">
+                    <ComboBoxItem Content="💡 Pitch" Tag="Pitch"/>
                     <ComboBoxItem Content="💬 Discuss" Tag="Discuss"/>
                     <ComboBoxItem Content="📋 Plan" Tag="Plan"/>
                     <ComboBoxItem Content="🛠️ Implement" Tag="Implement"/>
@@ -340,7 +341,8 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                     <TextBlock Text="📍 Project Phase:" FontWeight="Bold" FontSize="12" Foreground="#BAC2DE" VerticalAlignment="Center" Margin="0,0,8,0"/>
                     <ComboBox Name="cbPhase" Width="180" SelectedIndex="0">
-                        <ComboBoxItem Content="advise (Discussion)"/>
+                        <ComboBoxItem Content="pitch (Proposals &amp; Ideas)"/>
+                        <ComboBoxItem Content="discuss (Discussion &amp; Debate)"/>
                         <ComboBoxItem Content="plan (Architecture &amp; Design)"/>
                         <ComboBoxItem Content="implement (Active Coding)"/>
                         <ComboBoxItem Content="review (Audit &amp; Verification)"/>
@@ -882,16 +884,16 @@ $script:MasterTooltips = @{
     "btnNewBoard"          = "Initialize a new blackboard in a project folder"
     "btnSwitchBoard"       = "Browse to select an existing blackboard.md file"
     "btnReloadBoard"       = "Force reload active blackboard from disk"
-    "cbPhase"              = "Select current project workflow phase (advise, plan, implement, review)"
+    "cbPhase"              = "Select current project workflow phase (pitch, discuss, plan, implement, review, test, closed)"
 
     # Seat Profiles, Roles, Sign-offs & Issues
     "cbSeat1Client"        = "Select AI client / IDE profile for Seat 1"
     "cbSeat2Client"        = "Select AI client / IDE profile for Seat 2"
     "cbCursorRole"         = "Select active role permissions for Seat 1"
     "cbGeminiRole"         = "Select active role permissions for Seat 2"
-    "chkSignHuman"         = "Sign-off approval from Human Lead (required before closing project)"
-    "chkSignCursor"        = "Sign-off approval from Seat 1 (required before closing project)"
-    "chkSignGemini"        = "Sign-off approval from Seat 2 (required before closing project)"
+    "chkSignHuman"         = "Phase sign-off approval from Human Lead (all 3 advance phase / close project)"
+    "chkSignCursor"        = "Phase sign-off approval from Seat 1 (all 3 advance phase / close project)"
+    "chkSignGemini"        = "Phase sign-off approval from Seat 2 (all 3 advance phase / close project)"
     "txtGitStatusSummary"  = "Read-only summary of active git branch and uncommitted changes"
     "txtIssueNum"          = "Associated GitHub issue number (e.g. 24 or none)"
     "txtIssueTitle"        = "Fetched title of the linked GitHub issue"
@@ -1651,6 +1653,23 @@ $script:DiffViewerStatus = $null
 function Update-ReviewDiffViewer {
     if (-not $script:DiffViewerWindow -or -not $script:DiffViewerWindow.IsVisible) { return }
     try {
+        $targetUpstream = (git -C $script:RepoRoot rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>$null)
+        if (-not $targetUpstream) {
+            if (git -C $script:RepoRoot rev-parse --verify origin/main 2>$null) {
+                $targetUpstream = "origin/main"
+            } elseif (git -C $script:RepoRoot rev-parse --verify origin/master 2>$null) {
+                $targetUpstream = "origin/master"
+            }
+        }
+
+        $commitsAhead = if ($targetUpstream) {
+            @(git -C $script:RepoRoot log --oneline "$targetUpstream..HEAD" 2>$null)
+        } else { @() }
+
+        $branchDiff = if ($targetUpstream -and $commitsAhead.Count -gt 0) {
+            @(git -C $script:RepoRoot diff "$targetUpstream..HEAD" 2>$null)
+        } else { @() }
+
         $diffRaw = @(git -C $script:RepoRoot diff HEAD 2>$null)
         $statusRaw = @(git -C $script:RepoRoot status --short 2>$null)
         
@@ -1661,6 +1680,7 @@ function Update-ReviewDiffViewer {
         $doc.FontSize = 12
         $doc.PagePadding = New-Object System.Windows.Thickness(10)
 
+        # 1. Git Status
         if ($statusRaw.Count -gt 0) {
             $pStat = New-Object System.Windows.Documents.Paragraph
             $pStat.Margin = New-Object System.Windows.Thickness(0, 0, 0, 8)
@@ -1672,15 +1692,60 @@ function Update-ReviewDiffViewer {
             $doc.Blocks.Add($pStat)
         }
 
-        if ($diffRaw.Count -eq 0 -and $statusRaw.Count -eq 0) {
+        # 2. Commits Ahead of Upstream
+        if ($commitsAhead.Count -gt 0) {
+            $pCommits = New-Object System.Windows.Documents.Paragraph
+            $pCommits.Margin = New-Object System.Windows.Thickness(0, 6, 0, 0)
+            $pCommits.Inlines.Add((New-Object System.Windows.Documents.Run("=== COMMITS ON BRANCH (Ahead of $($targetUpstream): $($commitsAhead.Count)) ===`n") -property @{ FontWeight = [System.Windows.FontWeights]::Bold; Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F9E2AF") }))
+            foreach ($c in $commitsAhead) {
+                $pCommits.Inlines.Add((New-Object System.Windows.Documents.Run("  • $c`n") -property @{ Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#89DCEB") }))
+            }
+            $doc.Blocks.Add($pCommits)
+        }
+
+        # 3. Clean check
+        if ($diffRaw.Count -eq 0 -and $statusRaw.Count -eq 0 -and $branchDiff.Count -eq 0) {
             $pClean = New-Object System.Windows.Documents.Paragraph
             $pClean.Margin = New-Object System.Windows.Thickness(0, 10, 0, 0)
-            $pClean.Inlines.Add((New-Object System.Windows.Documents.Run("Working tree clean. No uncommitted changes detected.") -property @{ Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#A6E3A1"); FontStyle = [System.Windows.FontStyles]::Italic }))
+            $pClean.Inlines.Add((New-Object System.Windows.Documents.Run("Working tree clean. No uncommitted changes or branch commits ahead of upstream detected.") -property @{ Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#A6E3A1"); FontStyle = [System.Windows.FontStyles]::Italic }))
             $doc.Blocks.Add($pClean)
-        } elseif ($diffRaw.Count -gt 0) {
+        }
+
+        # 4. Committed Diff (Upstream..HEAD)
+        if ($branchDiff.Count -gt 0) {
+            $pBranch = New-Object System.Windows.Documents.Paragraph
+            $pBranch.Margin = New-Object System.Windows.Thickness(0, 8, 0, 0)
+            $pBranch.Inlines.Add((New-Object System.Windows.Documents.Run("=== COMMITTED DIFF ($targetUpstream..HEAD) ===`n") -property @{ FontWeight = [System.Windows.FontWeights]::Bold; Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#89B4FA") }))
+            foreach ($line in $branchDiff) {
+                $brush = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#CDD6F4")
+                $weight = [System.Windows.FontWeights]::Normal
+                if ($line.StartsWith("diff --git") -or $line.StartsWith("index ")) {
+                    $brush = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#CBA6F7")
+                    $weight = [System.Windows.FontWeights]::Bold
+                } elseif ($line.StartsWith("--- ") -or $line.StartsWith("+++ ")) {
+                    $brush = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#FAB387")
+                    $weight = [System.Windows.FontWeights]::Bold
+                } elseif ($line.StartsWith("@@")) {
+                    $brush = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#89DCEB")
+                    $weight = [System.Windows.FontWeights]::SemiBold
+                } elseif ($line.StartsWith("+")) {
+                    $brush = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#A6E3A1")
+                } elseif ($line.StartsWith("-")) {
+                    $brush = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F38BA8")
+                }
+                $run = New-Object System.Windows.Documents.Run("$line`n")
+                $run.Foreground = $brush
+                $run.FontWeight = $weight
+                $pBranch.Inlines.Add($run)
+            }
+            $doc.Blocks.Add($pBranch)
+        }
+
+        # 5. Uncommitted Diff (HEAD vs Working Tree)
+        if ($diffRaw.Count -gt 0) {
             $pDiff = New-Object System.Windows.Documents.Paragraph
             $pDiff.Margin = New-Object System.Windows.Thickness(0, 8, 0, 0)
-            $pDiff.Inlines.Add((New-Object System.Windows.Documents.Run("=== GIT DIFF (HEAD) ===`n") -property @{ FontWeight = [System.Windows.FontWeights]::Bold; Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#89B4FA") }))
+            $pDiff.Inlines.Add((New-Object System.Windows.Documents.Run("=== UNCOMMITTED DIFF (Working Tree vs HEAD) ===`n") -property @{ FontWeight = [System.Windows.FontWeights]::Bold; Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#A6E3A1") }))
             foreach ($line in $diffRaw) {
                 $brush = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#CDD6F4")
                 $weight = [System.Windows.FontWeights]::Normal
@@ -1706,7 +1771,7 @@ function Update-ReviewDiffViewer {
             $doc.Blocks.Add($pDiff)
         }
 
-        # Render contents of untracked files
+        # 6. Render contents of untracked files
         $untrackedEntries = @($statusRaw | Where-Object { $_.StartsWith("??") })
         if ($untrackedEntries.Count -gt 0) {
             $pUntracked = New-Object System.Windows.Documents.Paragraph
@@ -1735,7 +1800,7 @@ function Update-ReviewDiffViewer {
 
         $script:DiffViewerRtbBox.Document = $doc
         if ($script:DiffViewerStatus) {
-            $script:DiffViewerStatus.Text = "Diff updated (" + (Get-Date -Format "HH:mm:ss") + "). Lines: " + $diffRaw.Count + " | Changed files: " + $statusRaw.Count
+            $script:DiffViewerStatus.Text = "Diff updated (" + (Get-Date -Format "HH:mm:ss") + "). Ahead: $($commitsAhead.Count) commit(s) | Uncommitted lines: " + $diffRaw.Count + " | Changed files: " + $statusRaw.Count
         }
     } catch {
         if ($script:DiffViewerStatus) {
@@ -1774,7 +1839,7 @@ function Show-ReviewDiffViewer {
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <TextBlock Text="🔍 REVIEW GIT DIFF (Working Tree vs HEAD)" FontWeight="Bold" FontSize="12" Foreground="#A6E3A1" VerticalAlignment="Center"/>
+                    <TextBlock Text="🔍 REVIEW GIT DIFF (Working Tree &amp; Branch Commits)" FontWeight="Bold" FontSize="12" Foreground="#A6E3A1" VerticalAlignment="Center"/>
                     <TextBlock Text="🔒 Read-Only" FontSize="10" Foreground="#BAC2DE" Background="#313244" Padding="6,2" Margin="8,0,0,0" VerticalAlignment="Center"/>
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal">
@@ -1800,7 +1865,7 @@ function Show-ReviewDiffViewer {
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <TextBlock Name="txtDiffStatus" Text="Ready." FontSize="11" Foreground="#BAC2DE" VerticalAlignment="Center"/>
-                <TextBlock Grid.Column="1" Text="git diff HEAD" FontSize="10" Foreground="#6C7086" VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="1" Text="git diff upstream..HEAD + working tree" FontSize="10" Foreground="#6C7086" VerticalAlignment="Center"/>
             </Grid>
         </Border>
     </Grid>
@@ -1819,25 +1884,50 @@ function Show-ReviewDiffViewer {
     $btnCopy.add_Click({
         try {
             $diffText = [System.Collections.Generic.List[string]]::new()
+            $targetUpstream = (git -C $script:RepoRoot rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>$null)
+            if (-not $targetUpstream) {
+                if (git -C $script:RepoRoot rev-parse --verify origin/main 2>$null) { $targetUpstream = "origin/main" }
+            }
+            if ($targetUpstream) {
+                $commits = @(git -C $script:RepoRoot log --oneline "$targetUpstream..HEAD" 2>$null)
+                if ($commits.Count -gt 0) {
+                    [void]$diffText.Add("=== COMMITS ON BRANCH (Ahead of $($targetUpstream): $($commits.Count)) ===")
+                    foreach ($c in $commits) { [void]$diffText.Add("  • $c") }
+                    [void]$diffText.Add("")
+                    $bDiff = @(git -C $script:RepoRoot diff "$targetUpstream..HEAD" 2>$null)
+                    if ($bDiff.Count -gt 0) {
+                        [void]$diffText.Add("=== COMMITTED DIFF ($targetUpstream..HEAD) ===")
+                        [void]$diffText.AddRange($bDiff)
+                        [void]$diffText.Add("")
+                    }
+                }
+            }
             $raw = @(git -C $script:RepoRoot diff HEAD 2>$null)
-            if ($raw.Count -gt 0) { [void]$diffText.AddRange($raw) }
+            if ($raw.Count -gt 0) {
+                [void]$diffText.Add("=== UNCOMMITTED DIFF (Working Tree vs HEAD) ===")
+                [void]$diffText.AddRange($raw)
+                [void]$diffText.Add("")
+            }
             $statusRaw = @(git -C $script:RepoRoot status --short 2>$null)
             $untrackedEntries = @($statusRaw | Where-Object { $_.StartsWith("??") })
-            foreach ($entry in $untrackedEntries) {
-                $relPath = $entry.Substring(2).Trim().Trim('"')
-                $fullPath = Join-Path $script:RepoRoot $relPath
-                if ((Test-Path $fullPath) -and -not (Test-Path $fullPath -PathType Container)) {
-                    [void]$diffText.Add("--- /dev/null")
-                    [void]$diffText.Add("+++ b/$relPath")
-                    $uLines = @(Get-Content -Path $fullPath -TotalCount 300 -ErrorAction SilentlyContinue)
-                    foreach ($ul in $uLines) { [void]$diffText.Add("+$ul") }
+            if ($untrackedEntries.Count -gt 0) {
+                [void]$diffText.Add("=== UNTRACKED FILES ===")
+                foreach ($entry in $untrackedEntries) {
+                    $relPath = $entry.Substring(2).Trim().Trim('"')
+                    $fullPath = Join-Path $script:RepoRoot $relPath
+                    if ((Test-Path $fullPath) -and -not (Test-Path $fullPath -PathType Container)) {
+                        [void]$diffText.Add("--- /dev/null")
+                        [void]$diffText.Add("+++ b/$relPath")
+                        $uLines = @(Get-Content -Path $fullPath -TotalCount 300 -ErrorAction SilentlyContinue)
+                        foreach ($ul in $uLines) { [void]$diffText.Add("+$ul") }
+                    }
                 }
             }
             if ($diffText.Count -gt 0) {
                 [System.Windows.Clipboard]::SetText(($diffText -join "`n"))
-                $script:DiffViewerStatus.Text = "Diff (including untracked files) copied to clipboard."
+                $script:DiffViewerStatus.Text = "Diff (including branch commits & untracked files) copied to clipboard."
             } else {
-                $script:DiffViewerStatus.Text = "Nothing to copy (working tree clean)."
+                $script:DiffViewerStatus.Text = "Nothing to copy (working tree clean and no commits ahead)."
             }
         } catch {
             $script:DiffViewerStatus.Text = "Copy failed: $_"
@@ -1850,8 +1940,8 @@ function Show-ReviewDiffViewer {
         $script:DiffViewerStatus = $null
     })
 
-    Update-ReviewDiffViewer
     $diffWin.Show()
+    Update-ReviewDiffViewer
 }
 
 if ($btnViewDiff) {
@@ -2225,16 +2315,81 @@ function Get-FlowControlString {
 function Get-PhaseString {
     $item = $cbPhase.SelectedItem
     if ($item) {
-        return ($item.Content -split " ")[0]
+        return ($item.Content -split " ")[0].ToLower()
     }
-    return "plan"
+    return "pitch"
+}
+
+function Set-Phase {
+    param([string]$targetPhase)
+    if ([string]::IsNullOrWhiteSpace($targetPhase)) { return }
+    $tgt = $targetPhase.Trim().ToLower()
+    for ($i = 0; $i -lt $cbPhase.Items.Count; $i++) {
+        $itemText = [string]$cbPhase.Items[$i].Content
+        $token = ($itemText -split " ")[0].ToLower()
+        if ($token -eq $tgt -or ($tgt -eq "advise" -and $token -eq "discuss") -or ($tgt -eq "discuss" -and $token -eq "advise")) {
+            $cbPhase.SelectedIndex = $i
+            return
+        }
+    }
+}
+
+function Get-NextPhase {
+    param([string]$currentPhase)
+    switch ($currentPhase.ToLower()) {
+        "pitch"     { return "discuss" }
+        "discuss"   { return "implement" }
+        "advise"    { return "implement" }
+        "plan"      { return "implement" }
+        "implement" { return "test" }
+        "review"    { return "test" }
+        "test"      { return "closed" }
+        default     { return "closed" }
+    }
+}
+
+function Check-PhaseAutoAdvance {
+    $flow = Get-FlowControlString
+    if ($flow -match "STOP|PAUSE") { return }
+
+    if (-not ($chkSignHuman.IsChecked -and $chkSignCursor.IsChecked -and $chkSignGemini.IsChecked)) {
+        return
+    }
+
+    $currentPhase = Get-PhaseString
+    if ($currentPhase -eq "closed") { return }
+
+    $nextPhase = Get-NextPhase $currentPhase
+    if ($nextPhase -eq $currentPhase) { return }
+
+    $script:SuppressFormDirty = $true
+    try {
+        $chkSignHuman.IsChecked = $false
+        $chkSignCursor.IsChecked = $false
+        $chkSignGemini.IsChecked = $false
+
+        $raw = if (Test-Path $script:BlackboardPath) { [System.IO.File]::ReadAllText($script:BlackboardPath, [System.Text.Encoding]::UTF8) } else { "" }
+        $s1 = Get-Seat1Client
+        $s2 = Get-Seat2Client
+        $s1Esc = [regex]::Escape($s1)
+        $s2Esc = [regex]::Escape($s2)
+        $script:CursorPadAtPhaseChange = Get-LastMarkdownBody $raw "(?:###|##)\s+(?:$s1Esc|Cursor|Agent\s*1)(?:\s+Scratchpad)?"
+        $script:GeminiPadAtPhaseChange = Get-LastMarkdownBody $raw "(?:###|##)\s+(?:$s2Esc|Gemini(?:\s+\(Antigravity\))?|Agent\s*2)(?:\s+Scratchpad)?"
+
+        Set-Phase $nextPhase
+        $txtStatus.Text = "Phase auto-advanced: $currentPhase -> $nextPhase (all 3 sign-offs complete)."
+        Save-BlackboardContent
+        Update-UiActiveTurn -keepOverride
+    } finally {
+        $script:SuppressFormDirty = $false
+    }
 }
 
 function Get-ActiveTurn {
     $s1 = Get-Seat1Client
     $s2 = Get-Seat2Client
 
-    # 1. All 3 signed off -> Ready to close
+    # 1. All 3 signed off -> In closed phase: Ready to close / archive
     $signHuman = $chkSignHuman.IsChecked
     $signCursor = $chkSignCursor.IsChecked
     $signGemini = $chkSignGemini.IsChecked
@@ -2354,11 +2509,11 @@ $cbPhase.add_SelectionChanged({ Mark-FormDirty })
 $rbGo.add_Checked({ Update-UiActiveTurn; Mark-FormDirty })
 $rbPause.add_Checked({ Update-UiActiveTurn; Mark-FormDirty })
 $rbStop.add_Checked({ Update-UiActiveTurn; Mark-FormDirty })
-$chkSignHuman.add_Checked({ Update-UiActiveTurn; Mark-FormDirty })
+$chkSignHuman.add_Checked({ Check-PhaseAutoAdvance; Update-UiActiveTurn; Mark-FormDirty })
 $chkSignHuman.add_Unchecked({ Update-UiActiveTurn; Mark-FormDirty })
-$chkSignCursor.add_Checked({ Update-UiActiveTurn; Mark-FormDirty })
+$chkSignCursor.add_Checked({ Check-PhaseAutoAdvance; Update-UiActiveTurn; Mark-FormDirty })
 $chkSignCursor.add_Unchecked({ Update-UiActiveTurn; Mark-FormDirty })
-$chkSignGemini.add_Checked({ Update-UiActiveTurn; Mark-FormDirty })
+$chkSignGemini.add_Checked({ Check-PhaseAutoAdvance; Update-UiActiveTurn; Mark-FormDirty })
 $chkSignGemini.add_Unchecked({ Update-UiActiveTurn; Mark-FormDirty })
 $txtPrompt.add_TextChanged({ Mark-FormDirty })
 $txtAlignment.add_TextChanged({ Mark-FormDirty })
@@ -2518,11 +2673,15 @@ function Invoke-CloseProjectGitShip {
 function Get-RoleGuidance {
     param([string]$role)
     $boardPath = $script:BlackboardPath
-    if ((Get-PhaseString) -eq "closed") {
+    $phase = Get-PhaseString
+    if ($phase -eq "closed") {
         return "This project/objective is CLOSED. All sign-offs complete. Hold IDLE. Do not modify files or execute tasks unless a new objective is assigned."
     }
-    if ((Get-PhaseString) -eq "test") {
+    if ($phase -eq "test") {
         return "Project phase is TEST. Verify the program/script/UI already landed. Exercise the live controller or script under test (do not relaunch a second blackboard-ui unless asked). Record pass/fail in your scratchpad. FORBIDDEN: new features. After a recorded pass (or N/A with why), set your Agent Roles Sign-off [x] and scratchpad Sign-off: [x]. GO does not mean implement."
+    }
+    if ($phase -eq "pitch") {
+        return "Project phase is PITCH. Suggest additions, improvements, updates, fixes, or alternatives to whatever is listed in the current objective. Human has the final say on what moves on to discussion. FORBIDDEN: editing tracked files, git operations. Propose options with trade-offs in your scratchpad. End your note with your proposals and phase sign-off when aligned."
     }
     switch (Get-NormalizedRole $role) {
         "implement" { "You hold IMPLEMENT. Review objective and Alignment in '$boardPath', then land the change. Append progress under your scratchpad heading only. Do not edit the other agent's scratchpad or the Human Lead's notes." }
@@ -2567,7 +2726,7 @@ Sign-off: after you record test evidence, set your Agent Roles Sign-off [x] and 
     }
     return @"
 
-Do not mark Sign-off complete yet. For programs/scripts, sign off only after the test phase with recorded verification.
+Phase Sign-off: when your work for the '$phase' phase is complete and aligned, set your Agent Roles Sign-off [x] and scratchpad Sign-off: [x] to advance to the next phase.
 "@
 }
 
@@ -2750,7 +2909,9 @@ Do not only reply in chat. Do not create AI_COLLAB.md, TASKS.md, or .geminirules
 
     $leadDirective = if ($customDirective) {
         $customDirective
-    } elseif ($normRole -eq "advise" -or $phase -eq "advise") {
+    } elseif ($phase -eq "pitch") {
+        "Read $boardPath again. Pitch suggestions, improvements, updates, or alternative approaches to the current objective in your scratchpad. Human Lead decides what graduates to discussion."
+    } elseif ($normRole -eq "advise" -or $phase -eq "advise" -or $phase -eq "discuss") {
         "Read $boardPath again and respond to the latest notes from the other agent or the Human Lead. End your note with `- **Agreed**: <decision>` sentences, or a single `- **Agree**` if the other agent's scratchpad is already right, so consensus auto-promotes to Alignment."
     } else {
         "Read $boardPath again and respond to the latest notes from the other agent or the Human Lead."
@@ -2900,19 +3061,21 @@ function Sync-SignoffCheckboxes {
         $chkSignHuman.IsChecked = $true
     }
     
-    # 2. Seat 1: role table [x] OR last scratchpad sign-off confirmation
+    # 2. Seat 1: role table [x] OR last scratchpad sign-off confirmation in current phase
     $cTable = ($raw -match ('(?m)\|\s*\*\*(?:' + $s1Esc + '|Cursor|Agent\s*1)\*\*\s*\|\s*`[^`]*`\s*\|\s*Active\s*\|\s*\[x\]'))
     $cPad = Get-LastMarkdownBody $raw "(?:###|##)\s+(?:$s1Esc|Cursor|Agent\s*1)(?:\s+Scratchpad)?"
     $cPadSign = ($cPad -match $signPattern)
-    if ($cTable -or $cPadSign) {
+    $cPadIsNew = ($null -eq $script:CursorPadAtPhaseChange -or $cPad -ne $script:CursorPadAtPhaseChange)
+    if ($cTable -or ($cPadSign -and $cPadIsNew)) {
         $chkSignCursor.IsChecked = $true
     }
     
-    # 3. Seat 2: role table [x] OR last scratchpad sign-off confirmation
+    # 3. Seat 2: role table [x] OR last scratchpad sign-off confirmation in current phase
     $gTable = ($raw -match ('(?m)\|\s*\*\*(?:' + $s2Esc + '|Gemini(?:\s+\(Antigravity\))?|Agent\s*2)\*\*\s*\|\s*`[^`]*`\s*\|\s*Active\s*\|\s*\[x\]'))
     $gPad = Get-LastMarkdownBody $raw "(?:###|##)\s+(?:$s2Esc|Gemini(?:\s+\(Antigravity\))?|Agent\s*2)(?:\s+Scratchpad)?"
     $gPadSign = ($gPad -match $signPattern)
-    if ($gTable -or $gPadSign) {
+    $gPadIsNew = ($null -eq $script:GeminiPadAtPhaseChange -or $gPad -ne $script:GeminiPadAtPhaseChange)
+    if ($gTable -or ($gPadSign -and $gPadIsNew)) {
         $chkSignGemini.IsChecked = $true
     }
 }
@@ -2943,9 +3106,6 @@ function Save-BlackboardContent {
     $agent2Header = "### $s2 Scratchpad"
     $cursorScratchpad = "- ($s1 updates here)"
     $geminiScratchpad = "- ($s2 updates here)"
-    $cPadSign = $false
-    $gPadSign = $false
-    $signPattern = "(?im)^\s*[-*]\s+(?:\*\*)?(?:(?:$s1Esc|$s2Esc|Cursor|Gemini|Antigravity|Agent\s*1|Agent\s*2)\s+)?sign-?off(?:\*\*)?[:\s].*?(\[x\]|yes|complete|approved)"
     if (Test-Path $script:BlackboardPath) {
         try {
             $existing = [System.IO.File]::ReadAllText($script:BlackboardPath, [System.Text.Encoding]::UTF8)
@@ -2971,19 +3131,17 @@ function Save-BlackboardContent {
 
                 if ($cPad) { 
                     $cursorScratchpad = $cPad
-                    $cPadSign = ($cPad -match $signPattern)
                 }
                 if ($gPad) { 
                     $geminiScratchpad = $gPad
-                    $gPadSign = ($gPad -match $signPattern)
                 }
             }
         } catch {}
     }
 
     $signHuman = if ($chkSignHuman.IsChecked) { "[x]" } else { "[ ]" }
-    $signCursor = if ($chkSignCursor.IsChecked -or $cPadSign) { "[x]" } else { "[ ]" }
-    $signGemini = if ($chkSignGemini.IsChecked -or $gPadSign) { "[x]" } else { "[ ]" }
+    $signCursor = if ($chkSignCursor.IsChecked) { "[x]" } else { "[ ]" }
+    $signGemini = if ($chkSignGemini.IsChecked) { "[x]" } else { "[ ]" }
 
     $q = [char]96
     $lines = @(
@@ -3195,7 +3353,7 @@ function Clear-FormInMemory {
     $txtHumanNotes.Text = "- Active steering notes."
     $cbCursorRole.SelectedIndex = 5
     $cbGeminiRole.SelectedIndex = 5
-    $cbPhase.SelectedIndex = 0
+    Set-Phase "pitch"
     $chkSignHuman.IsChecked = $false
     $chkSignCursor.IsChecked = $false
     $chkSignGemini.IsChecked = $false
@@ -3278,7 +3436,7 @@ $btnCloseProject.add_Click({
     Auto-ArchiveSnapshot -customLabel $slug
     Clear-FormInMemory
     if ($chkNewChatKickoff) { $chkNewChatKickoff.IsChecked = $true }
-    $cbPhase.SelectedIndex = 5 # closed
+    Set-Phase "closed"
     $rbGo.IsChecked = $true
     Save-BlackboardContent -clearScratchpads
     $txtStatus.Text = "Project closed & archived to .ai/history. Board reset to idle. New Chat armed for next project."
@@ -3300,46 +3458,53 @@ function Apply-SelectedWorkflowPreset {
     $preset = if ($item -and $item.Tag) { [string]$item.Tag } elseif ($item) { [string]$item.Content } else { "Discuss" }
 
     switch -Regex ($preset) {
+        "Pitch" {
+            $cbCursorRole.SelectedIndex = 2 # advise
+            $cbGeminiRole.SelectedIndex = 2 # advise
+            Set-Phase "pitch"
+            $script:FormDirty = $true
+            $txtStatus.Text = "Preset applied: Pitch Mode ($s1 advise + $s2 advise, phase pitch)"
+        }
         "Discuss" {
             $cbCursorRole.SelectedIndex = 2 # advise
             $cbGeminiRole.SelectedIndex = 2 # advise
-            $cbPhase.SelectedIndex = 0      # advise
+            Set-Phase "discuss"
             $script:FormDirty = $true
-            $txtStatus.Text = "Preset applied: Discussion Mode ($s1 advise + $s2 advise)"
+            $txtStatus.Text = "Preset applied: Discussion Mode ($s1 advise + $s2 advise, phase discuss)"
         }
         "Plan" {
             $cbCursorRole.SelectedIndex = 4 # plan
             $cbGeminiRole.SelectedIndex = 5 # idle
-            $cbPhase.SelectedIndex = 1      # plan
+            Set-Phase "plan"
             $script:FormDirty = $true
-            $txtStatus.Text = "Preset applied: Planning Mode ($s1 plan + $s2 idle)"
+            $txtStatus.Text = "Preset applied: Planning Mode ($s1 plan + $s2 idle, phase plan)"
         }
         "Implement" {
             $cbCursorRole.SelectedIndex = 1 # review
             $cbGeminiRole.SelectedIndex = 1 # implement
-            $cbPhase.SelectedIndex = 2      # implement
+            Set-Phase "implement"
             $script:FormDirty = $true
-            $txtStatus.Text = "Preset applied: Implementation Mode ($s2 implement + $s1 review)"
+            $txtStatus.Text = "Preset applied: Implementation Mode ($s2 implement + $s1 review, phase implement)"
         }
         "Review" {
             $cbCursorRole.SelectedIndex = 1 # review
             $cbGeminiRole.SelectedIndex = 0 # review
-            $cbPhase.SelectedIndex = 3      # review
+            Set-Phase "review"
             $script:FormDirty = $true
-            $txtStatus.Text = "Preset applied: Review Mode ($s1 review + $s2 review)"
+            $txtStatus.Text = "Preset applied: Review Mode ($s1 review + $s2 review, phase review)"
             Show-ReviewDiffViewer
         }
         "Test" {
             $cbCursorRole.SelectedIndex = 1 # review
             $cbGeminiRole.SelectedIndex = 0 # review
-            $cbPhase.SelectedIndex = 4      # test
+            Set-Phase "test"
             $script:FormDirty = $true
             $txtStatus.Text = "Preset applied: Test Mode ($s1 review + $s2 review, phase test)"
         }
         "Inventory" {
             $cbCursorRole.SelectedIndex = 3 # inventory
             $cbGeminiRole.SelectedIndex = 3 # inventory
-            $cbPhase.SelectedIndex = 3      # review
+            Set-Phase "review"
             $script:FormDirty = $true
             $txtStatus.Text = "Preset applied: Inventory Mode ($s1 inventory + $s2 inventory)"
         }
@@ -3783,12 +3948,7 @@ function Load-BlackboardIntoUI {
                 
                 if ($raw -match '>\s*\*\*Project Phase\*\*:\s*`([^`]+)`') {
                     $p = $matches[1].Trim()
-                    for ($i = 0; $i -lt $cbPhase.Items.Count; $i++) {
-                        if ($cbPhase.Items[$i].Content -like "$p*") {
-                            $cbPhase.SelectedIndex = $i
-                            break
-                        }
-                    }
+                    Set-Phase $p
                 }
                 
                 if ($raw -match '>\s*\*\*GitHub Issue\*\*:\s*#?(\d+)') {
@@ -3833,6 +3993,7 @@ function Load-BlackboardIntoUI {
             }
             
             Sync-SignoffCheckboxes $raw
+            Check-PhaseAutoAdvance
             
             $s1 = Get-Seat1Client
             $s2 = Get-Seat2Client
@@ -3899,7 +4060,7 @@ function Load-BlackboardIntoUI {
 
             # Auto-promote a - **Agreed**: sentence when the other scratchpad has - **Agree**, or when both sentences match.
             $currentPhase = if ($cbPhase -and $cbPhase.SelectedItem) { [string]$cbPhase.SelectedItem.Content } else { "" }
-            if ($currentPhase -match '^(?:advise|plan)' -and (-not $script:FormDirty)) {
+            if ($currentPhase -match '^(?:pitch|advise|discuss|plan)' -and (-not $script:FormDirty)) {
                 $sharedLines = @(Get-SharedAgreedLines $newCursorPad $newGeminiPad)
                 $newAgreedItems = @()
                 foreach ($item in $sharedLines) {
