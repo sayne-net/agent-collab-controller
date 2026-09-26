@@ -1,12 +1,12 @@
 # Agent Collab Controller (WPF UI)
-# Version 1.2.11
+# Version 1.2.12
 # Standalone dual-session controller for multi-agent collaboration with human-in-the-loop steering.
 
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
 
-$script:AppVersion = "v1.2.11"
+$script:AppVersion = "v1.2.12"
 $script:RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $script:ProjectName = (Split-Path $script:RepoRoot -Leaf)
 $script:ScriptFilePath = if ($PSCommandPath) { $PSCommandPath } else { Join-Path $PSScriptRoot "blackboard-ui.ps1" }
@@ -293,12 +293,12 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                     <ComboBoxItem Content="🧪 Test" Tag="Test"/>
                     <ComboBoxItem Content="📦 Inventory" Tag="Inventory"/>
                 </ComboBox>
-                <Button Name="btnApplyPreset" Content="⚡ Apply" ToolTip="Apply selected workflow preset" Margin="0,0,0,0" Background="#45475A" Foreground="#89B4FA" FontWeight="SemiBold"/>
             </StackPanel>
 
-            <!-- Active Turn Badge, Relaunch, Update Buttons & Tooltip Toggle -->
+            <!-- Active Turn Badge, Relaunch, Update Buttons & Tooltip/Audio Toggles -->
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                 <CheckBox Name="chkEnableTooltips" Content="💡 Tooltips" IsChecked="True" Foreground="#BAC2DE" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                <CheckBox Name="chkAudioCue" Content="🔔 Sound" IsChecked="False" Foreground="#BAC2DE" VerticalAlignment="Center" Margin="0,0,10,0" ToolTip="Play subtle audio chime when an agent responds or changes turn (default off)"/>
                 <Button Name="btnUpdateController" Content="🔄 Update App" Background="#313244" Foreground="#89B4FA" Margin="0,0,4,0" Padding="8,3" FontWeight="SemiBold"/>
                 <Button Name="btnRelaunch" Content="⏭️ Relaunch" Background="#313244" Foreground="#BAC2DE" Margin="0,0,8,0" Padding="8,3"/>
                 <Border Name="badgeTurn" Background="#45475A" CornerRadius="12" Padding="10,3">
@@ -413,6 +413,7 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                         <CheckBox Name="chkSignCursor" Content="AI 1" Margin="0,0,6,0"/>
                         <CheckBox Name="chkSignGemini" Content="AI 2"/>
                     </StackPanel>
+                    <TextBlock Name="txtGitStatusSummary" Text="Git: clean" FontSize="10" Foreground="#A6ADC8" Margin="0,3,0,0" ToolTip="Read-only git status for active repository"/>
                 </StackPanel>
 
                 <!-- GitHub Issue Tracker -->
@@ -781,11 +782,13 @@ $txtPrompt             = $window.FindName("txtPrompt")
 $txtAlignment          = $window.FindName("txtAlignment")
 $txtHumanNotes         = $window.FindName("txtHumanNotes")
 $chkEnableTooltips     = $window.FindName("chkEnableTooltips")
+$chkAudioCue           = $window.FindName("chkAudioCue")
 $badgeTurn             = $window.FindName("badgeTurn")
 $rtbCursorLast         = $window.FindName("rtbCursorLast")
 $rtbGeminiLast         = $window.FindName("rtbGeminiLast")
 $cbPresets             = $window.FindName("cbPresets")
 $btnApplyPreset        = $window.FindName("btnApplyPreset")
+$txtGitStatusSummary   = $window.FindName("txtGitStatusSummary")
 $cbKickoffTarget       = $window.FindName("cbKickoffTarget")
 $cbiKickoffSeat1       = $window.FindName("cbiKickoffSeat1")
 $cbiKickoffSeat2       = $window.FindName("cbiKickoffSeat2")
@@ -823,6 +826,7 @@ function Get-ClientConfiguration {
         recentBoards = @()
         boardSeats = [PSCustomObject]@{}
         tooltips = $true
+        audioCue = $false
         profiles = [PSCustomObject]@{
             "AI 1" = [PSCustomObject]@{ process = ""; description = "Generic Seat 1 (Manual Clipboard Copy)" }
             "AI 2" = [PSCustomObject]@{ process = ""; description = "Generic Seat 2 (Manual Clipboard Copy)" }
@@ -861,9 +865,9 @@ function Get-ClientConfiguration {
 
 $script:MasterTooltips = @{
     # Presets & Top Toolbar
-    "cbPresets"            = "Select a dual-agent workflow preset"
-    "btnApplyPreset"       = "Apply selected workflow preset roles and phase"
+    "cbPresets"            = "Select a dual-agent workflow preset (auto-applies roles and phase on change)"
     "chkEnableTooltips"    = "Toggle hover tooltips on/off across all controller controls"
+    "chkAudioCue"          = "Toggle audio chime on agent response / turn completion (default off)"
     "btnUpdateController"  = "Check GitHub for newer controller version, pull, and relaunch"
     "btnRelaunch"          = "Relaunch controller script immediately (reloads local code changes)"
     "badgeTurn"            = "Current active turn indicator"
@@ -888,6 +892,7 @@ $script:MasterTooltips = @{
     "chkSignHuman"         = "Sign-off approval from Human Lead (required before closing project)"
     "chkSignCursor"        = "Sign-off approval from Seat 1 (required before closing project)"
     "chkSignGemini"        = "Sign-off approval from Seat 2 (required before closing project)"
+    "txtGitStatusSummary"  = "Read-only summary of active git branch and uncommitted changes"
     "txtIssueNum"          = "Associated GitHub issue number (e.g. 24 or none)"
     "txtIssueTitle"        = "Fetched title of the linked GitHub issue"
     "btnFetchIssue"        = "Fetch issue title and metadata via gh CLI"
@@ -947,6 +952,8 @@ function Save-ClientConfiguration {
         $cfg.boardPath = $script:BlackboardPath
         $tooltipsVal = if ($chkEnableTooltips) { [bool]$chkEnableTooltips.IsChecked } elseif ($cfg -and $null -ne $cfg.tooltips) { [bool]$cfg.tooltips } else { $true }
         $cfg.tooltips = $tooltipsVal
+        $audioCueVal = if ($chkAudioCue) { [bool]$chkAudioCue.IsChecked } elseif ($cfg -and $null -ne $cfg.audioCue) { [bool]$cfg.audioCue } else { $false }
+        $cfg.audioCue = $audioCueVal
 
         if (-not $cfg.boardSeats) {
             $cfg | Add-Member -NotePropertyName "boardSeats" -NotePropertyValue ([PSCustomObject]@{}) -Force
@@ -1295,6 +1302,20 @@ if ($chkEnableTooltips) {
         Set-ControllerTooltips -enabled $false
         Save-ClientConfiguration
         $txtStatus.Text = "Tooltips disabled across controller."
+    })
+}
+
+if ($chkAudioCue) {
+    $initialAudio = if ($script:ClientConfig -and $null -ne $script:ClientConfig.audioCue) { [bool]$script:ClientConfig.audioCue } else { $false }
+    $chkAudioCue.IsChecked = $initialAudio
+
+    $chkAudioCue.add_Checked({
+        Save-ClientConfiguration
+        $txtStatus.Text = "Turn change audio chime enabled."
+    })
+    $chkAudioCue.add_Unchecked({
+        Save-ClientConfiguration
+        $txtStatus.Text = "Turn change audio chime disabled."
     })
 }
 
@@ -1959,6 +1980,29 @@ function Update-CompareTurnsViewer {
 
         $matchedAgreed = @(Get-SharedAgreedLines $pad1 $pad2)
 
+        # Extract and pin unique - **Agreed**: lines
+        $allAgreed = [System.Collections.Generic.List[string]]::new()
+        foreach ($p in @($pad1, $pad2)) {
+            if ($p) {
+                foreach ($line in ($p -split "\r?\n")) {
+                    if ($line -match '(?i)^\s*[-*]?\s*`?[-*]?\s*`?\*\*(?:Agreed|Agree)\*\*:\s*(.+)$') {
+                        $item = $Matches[1].Trim()
+                        if (-not $allAgreed.Contains($item)) {
+                            [void]$allAgreed.Add($item)
+                        }
+                    }
+                }
+            }
+        }
+        if ($script:CompareViewerPinnedPanel -and $script:CompareViewerPinnedAgreed) {
+            if ($allAgreed.Count -gt 0) {
+                $script:CompareViewerPinnedAgreed.Text = ($allAgreed | ForEach-Object { "- **Agreed**: $_" }) -join [Environment]::NewLine
+                $script:CompareViewerPinnedPanel.Visibility = [System.Windows.Visibility]::Visible
+            } else {
+                $script:CompareViewerPinnedPanel.Visibility = [System.Windows.Visibility]::Collapsed
+            }
+        }
+
         $nowStr = Get-Date -Format "HH:mm:ss"
         if ($script:CompareViewerStatus) {
             $l1 = ($pad1 -split "`n").Count
@@ -2009,6 +2053,14 @@ function Show-CompareTurnsViewer {
                     <Button Name="btnCompareCopy" Content="Copy Both" Background="#313244" Foreground="#CDD6F4" Padding="10,4" Margin="0,0,6,0" FontWeight="SemiBold" Cursor="Hand"/>
                     <Button Name="btnCompareRefresh" Content="Refresh" Background="#313244" Foreground="#89B4FA" Padding="10,4" FontWeight="SemiBold" Cursor="Hand"/>
                 </StackPanel>
+
+                <!-- Pinned Consensus Panel -->
+                <Border Name="pnlPinnedAgreed" Visibility="Collapsed" Background="#1E3A2F" BorderBrush="#A6E3A1" BorderThickness="1" CornerRadius="4" Padding="8,6" Margin="0,8,0,0">
+                    <StackPanel>
+                        <TextBlock Text="🤝 PINNED CONSENSUS (- **Agreed**:)" FontWeight="Bold" FontSize="11" Foreground="#A6E3A1" Margin="0,0,0,4"/>
+                        <TextBlock Name="txtPinnedAgreed" TextWrapping="Wrap" FontSize="12" Foreground="#CDD6F4" FontFamily="Consolas, Courier New, monospace"/>
+                    </StackPanel>
+                </Border>
             </StackPanel>
         </Border>
 
@@ -2082,6 +2134,8 @@ function Show-CompareTurnsViewer {
     $script:CompareViewerHeaderInfo = $compWin.FindName("txtCompareHeaderInfo")
     $script:CompareViewerSeat1Header = $compWin.FindName("txtSeat1Header")
     $script:CompareViewerSeat2Header = $compWin.FindName("txtSeat2Header")
+    $script:CompareViewerPinnedPanel = $compWin.FindName("pnlPinnedAgreed")
+    $script:CompareViewerPinnedAgreed = $compWin.FindName("txtPinnedAgreed")
     $btnPromote = $compWin.FindName("btnComparePromote")
     $btnCopy = $compWin.FindName("btnCompareCopy")
     $btnRefresh = $compWin.FindName("btnCompareRefresh")
@@ -2147,6 +2201,8 @@ function Show-CompareTurnsViewer {
         $script:CompareViewerHeaderInfo = $null
         $script:CompareViewerSeat1Header = $null
         $script:CompareViewerSeat2Header = $null
+        $script:CompareViewerPinnedPanel = $null
+        $script:CompareViewerPinnedAgreed = $null
     })
 
     Update-CompareTurnsViewer
@@ -2379,6 +2435,28 @@ function Get-CloseProjectGitAudit {
         Untracked = @($untracked)
         Allowed   = @($allowed)
         Blocked   = @($blocked)
+    }
+}
+
+function Update-GitStatusSummary {
+    if (-not $txtGitStatusSummary) { return }
+    try {
+        $branch = (git -C $script:RepoRoot branch --show-current 2>$null)
+        if (-not $branch) { $branch = "detached" }
+        $rawStatus = @(git -C $script:RepoRoot status --porcelain -uall 2>$null)
+        $dirty = @($rawStatus | Where-Object { $_ -and $_.Trim() -and ($_ -notmatch '(?i)(^|/)\.ai/') })
+        if ($dirty.Count -gt 0) {
+            $txtGitStatusSummary.Text = "Git: $branch ($($dirty.Count) changed)"
+            $txtGitStatusSummary.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F9E2AF")
+            $firstFiles = ($dirty | Select-Object -First 8) -join "`n"
+            $txtGitStatusSummary.ToolTip = "Branch: $branch`nUncommitted changes ($($dirty.Count)):`n$firstFiles"
+        } else {
+            $txtGitStatusSummary.Text = "Git: $branch (clean)"
+            $txtGitStatusSummary.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#A6E3A1")
+            $txtGitStatusSummary.ToolTip = "Branch: $branch`nWorking tree clean."
+        }
+    } catch {
+        $txtGitStatusSummary.Text = "Git: unavailable"
     }
 }
 
@@ -3280,6 +3358,13 @@ function Apply-SelectedWorkflowPreset {
         }
     }
     Check-Safety
+    Update-UiActiveTurn -keepOverride
+}
+
+if ($cbPresets) {
+    $cbPresets.add_SelectionChanged({
+        Apply-SelectedWorkflowPreset
+    })
 }
 
 if ($btnApplyPreset) {
@@ -3669,6 +3754,7 @@ $timer.add_Tick({
             }
         } catch {}
     }
+    Update-GitStatusSummary
     if (Test-Path $script:BlackboardPath) {
         try {
             $text = [System.IO.File]::ReadAllText($script:BlackboardPath, [System.Text.Encoding]::UTF8)
@@ -3765,13 +3851,25 @@ function Load-BlackboardIntoUI {
                 $script:LastGeminiPad = $newGeminiPad
                 $script:ActiveTurnOverride = $null
             } else {
+                $turnChanged = $false
                 if ($newCursorPad -ne $script:LastCursorPad -and $newCursorPad -notmatch "(?i)^-\s*\((?:$s1Esc|Cursor|Agent\s*1|AI\s*1)\s+(?:updates?|scratchpad)" -and $newCursorPad.Trim()) {
                     $script:LastCursorPad = $newCursorPad
                     $script:ActiveTurnOverride = "$s1 responded at " + (Get-Date -Format "HH:mm")
+                    $turnChanged = $true
                 }
                 if ($newGeminiPad -ne $script:LastGeminiPad -and $newGeminiPad -notmatch "(?i)^-\s*\((?:$s2Esc|Gemini|Agent\s*2|AI\s*2)\s+(?:updates?|scratchpad)" -and $newGeminiPad.Trim()) {
                     $script:LastGeminiPad = $newGeminiPad
                     $script:ActiveTurnOverride = "$s2 responded at " + (Get-Date -Format "HH:mm")
+                    $turnChanged = $true
+                }
+                if ($turnChanged) {
+                    if ($badgeTurn) {
+                        $badgeTurn.BorderBrush = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#A6E3A1")
+                        $badgeTurn.BorderThickness = New-Object System.Windows.Thickness(2)
+                    }
+                    if ($chkAudioCue -and $chkAudioCue.IsChecked) {
+                        try { [System.Media.SystemSounds]::Asterisk.Play() } catch {}
+                    }
                 }
             }
             
@@ -3839,6 +3937,7 @@ function Load-BlackboardIntoUI {
             if ($script:CompareViewerWindow -and $script:CompareViewerWindow.IsVisible) {
                 Update-CompareTurnsViewer
             }
+            Update-GitStatusSummary
         } catch {
             $txtStatus.Text = "Error loading blackboard: $_"
         } finally {
