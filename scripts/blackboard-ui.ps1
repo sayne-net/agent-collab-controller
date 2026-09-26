@@ -1,12 +1,12 @@
 # Agent Collab Controller (WPF UI)
-# Version 1.2.15
+# Version 1.2.16
 # Standalone dual-session controller for multi-agent collaboration with human-in-the-loop steering.
 
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
 
-$script:AppVersion = "v1.2.15"
+$script:AppVersion = "v1.2.16"
 $script:RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $script:ProjectName = (Split-Path $script:RepoRoot -Leaf)
 $script:ScriptFilePath = if ($PSCommandPath) { $PSCommandPath } else { Join-Path $PSScriptRoot "blackboard-ui.ps1" }
@@ -2389,22 +2389,23 @@ function Get-ActiveTurn {
     $s1 = Get-Seat1Client
     $s2 = Get-Seat2Client
 
-    # 1. All 3 signed off -> In closed phase: Ready to close / archive
     $signHuman = $chkSignHuman.IsChecked
     $signCursor = $chkSignCursor.IsChecked
     $signGemini = $chkSignGemini.IsChecked
-    if ($signHuman -and $signCursor -and $signGemini) {
-        $badgeTurn.Background = [System.Windows.Media.Brushes]::DarkGreen
-        $txtActiveTurn.Foreground = [System.Windows.Media.Brushes]::White
-        return "✅ Complete - Ready to Close"
-    }
 
-    # 2. Flow control paused or stopped -> Waiting on human
+    # 1. Flow control paused or stopped -> Waiting on human (even if boxes are checked)
     $flow = Get-FlowControlString
     if ($flow -match "STOP|PAUSE") {
         $badgeTurn.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F9E2AF")
         $txtActiveTurn.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#11111B")
         return "👤 Waiting on Human (Lead) [$flow]"
+    }
+
+    # 2. Closed phase with all 3 signed off -> Ready to close / archive
+    if ($signHuman -and $signCursor -and $signGemini -and (Get-PhaseString) -eq "closed") {
+        $badgeTurn.Background = [System.Windows.Media.Brushes]::DarkGreen
+        $txtActiveTurn.Foreground = [System.Windows.Media.Brushes]::White
+        return "✅ Complete - Ready to Close"
     }
 
     # 3. Active Turn Override (Agent responded)
@@ -2466,7 +2467,7 @@ function Update-UiActiveTurn {
     }
     $txtActiveTurn.Text = Get-ActiveTurn
     if ($btnCloseProject) {
-        if ($chkSignHuman.IsChecked -and $chkSignCursor.IsChecked -and $chkSignGemini.IsChecked) {
+        if ((Get-PhaseString) -eq "closed" -and $chkSignHuman.IsChecked -and $chkSignCursor.IsChecked -and $chkSignGemini.IsChecked) {
             $btnCloseProject.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#A6E3A1")
             $btnCloseProject.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#11111B")
         } else {
@@ -2505,7 +2506,7 @@ function Mark-FormDirty {
 
 $cbCursorRole.add_SelectionChanged({ Check-Safety; Mark-FormDirty })
 $cbGeminiRole.add_SelectionChanged({ Check-Safety; Mark-FormDirty })
-$cbPhase.add_SelectionChanged({ Mark-FormDirty })
+$cbPhase.add_SelectionChanged({ Ensure-PitchSeatsAdvise; Mark-FormDirty })
 $rbGo.add_Checked({ Update-UiActiveTurn; Mark-FormDirty })
 $rbPause.add_Checked({ Update-UiActiveTurn; Mark-FormDirty })
 $rbStop.add_Checked({ Update-UiActiveTurn; Mark-FormDirty })
@@ -2703,7 +2704,18 @@ Hold IDLE. Do not modify files, execute tasks, or make commits unless the Human 
 
 "@
     }
+    $phase = Get-PhaseString
     $r = Get-NormalizedRole $role
+    if ($phase -eq "pitch") {
+        return @"
+STOP. Project phase is pitch. Both seats stay advise.
+FORBIDDEN: editing tracked repository files, git commit/push, live production/infrastructure changes.
+ALLOWED & REQUIRED: Edit '$boardPath' using your file editing tool under your scratchpad section only (append/update; do not wipe the Human Lead or the other agent).
+Flow Control GO means continue in this role — it does not promote you to implement.
+If your role is not implement, ignore the GitHub issue's implementation checklist.
+
+"@
+    }
     if ($r -eq "implement") { return "" }
     return @"
 STOP. Assigned role is $r, not implement.
@@ -3045,6 +3057,46 @@ function Update-LastResponsePanes {
     Set-LastResponseDocument $rtbGeminiLast $gText
 }
 
+function Get-LatestTopLevelBullet {
+    param([string]$pad)
+    if ([string]::IsNullOrEmpty($pad)) { return "" }
+    $lines = @($pad -split "`r?`n")
+    $start = -1
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match '^[-*]\s+\S') { $start = $i; break }
+    }
+    if ($start -lt 0) { return "" }
+    $end = $lines.Count
+    for ($i = $start + 1; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match '^[-*]\s+\S') { $end = $i; break }
+    }
+    return ($lines[$start..($end - 1)] -join "`n")
+}
+
+function Set-ComboToRole {
+    param($combo, [string]$role)
+    if (-not $combo) { return }
+    for ($i = 0; $i -lt $combo.Items.Count; $i++) {
+        if ([string]$combo.Items[$i].Content -eq $role) {
+            if ($combo.SelectedIndex -ne $i) { $combo.SelectedIndex = $i }
+            return
+        }
+    }
+}
+
+function Ensure-PitchSeatsAdvise {
+    if ((Get-PhaseString) -ne "pitch") { return }
+    Set-ComboToRole $cbCursorRole "advise"
+    Set-ComboToRole $cbGeminiRole "advise"
+}
+
+function Test-LatestBulletSignedOff {
+    param([string]$pad)
+    $latest = Get-LatestTopLevelBullet $pad
+    if ([string]::IsNullOrEmpty($latest)) { return $false }
+    return [regex]::IsMatch($latest, '(?im)sign-?off(?:\*\*)?\s*:\s*\[x\]')
+}
+
 function Sync-SignoffCheckboxes {
     param([string]$raw)
     if ([string]::IsNullOrEmpty($raw)) { return }
@@ -3054,26 +3106,24 @@ function Sync-SignoffCheckboxes {
     $s1Esc = [regex]::Escape($s1)
     $s2Esc = [regex]::Escape($s2)
 
-    $signPattern = "(?im)^\s*[-*]\s+(?:\*\*)?(?:(?:$s1Esc|$s2Esc|Cursor|Gemini|Agent\s*1|Agent\s*2)\s+)?sign-?off(?:\*\*)?[:\s].*?(\[x\]|yes|complete|approved)"
-    
-    # 1. Human (Lead): role table [x] or manual GUI check
-    if ($raw -match '(?m)\|\s*\*\*([^*]+)\*\*\s*\|\s*`lead`\s*\|\s*Active\s*\|\s*\[x\]') {
-        $chkSignHuman.IsChecked = $true
-    }
-    
-    # 2. Seat 1: role table [x] OR last scratchpad sign-off confirmation in current phase
+    # 2. Seat 1: role table [x] OR Sign-off: [x] on the latest scratchpad note only
     $cTable = ($raw -match ('(?m)\|\s*\*\*(?:' + $s1Esc + '|Cursor|Agent\s*1)\*\*\s*\|\s*`[^`]*`\s*\|\s*Active\s*\|\s*\[x\]'))
     $cPad = Get-LastMarkdownBody $raw "(?:###|##)\s+(?:$s1Esc|Cursor|Agent\s*1)(?:\s+Scratchpad)?"
-    $cPadSign = ($cPad -match $signPattern)
+    $cPadSign = Test-LatestBulletSignedOff $cPad
     $cPadIsNew = ($null -eq $script:CursorPadAtPhaseChange -or $cPad -ne $script:CursorPadAtPhaseChange)
     if ($cTable -or ($cPadSign -and $cPadIsNew)) {
         $chkSignCursor.IsChecked = $true
     }
     
-    # 3. Seat 2: role table [x] OR last scratchpad sign-off confirmation in current phase
+    # 1. Human (Lead): role table [x]
+    if ($raw -match '(?m)\|\s*\*\*([^*]+)\*\*\s*\|\s*`lead`\s*\|\s*Active\s*\|\s*\[x\]') {
+        $chkSignHuman.IsChecked = $true
+    }
+
+    # 3. Seat 2: role table [x] OR Sign-off: [x] on the latest scratchpad note only
     $gTable = ($raw -match ('(?m)\|\s*\*\*(?:' + $s2Esc + '|Gemini(?:\s+\(Antigravity\))?|Agent\s*2)\*\*\s*\|\s*`[^`]*`\s*\|\s*Active\s*\|\s*\[x\]'))
     $gPad = Get-LastMarkdownBody $raw "(?:###|##)\s+(?:$s2Esc|Gemini(?:\s+\(Antigravity\))?|Agent\s*2)(?:\s+Scratchpad)?"
-    $gPadSign = ($gPad -match $signPattern)
+    $gPadSign = Test-LatestBulletSignedOff $gPad
     $gPadIsNew = ($null -eq $script:GeminiPadAtPhaseChange -or $gPad -ne $script:GeminiPadAtPhaseChange)
     if ($gTable -or ($gPadSign -and $gPadIsNew)) {
         $chkSignGemini.IsChecked = $true
@@ -3982,6 +4032,7 @@ function Load-BlackboardIntoUI {
                         }
                     }
                 }
+                if ((Get-PhaseString) -eq "pitch") { Ensure-PitchSeatsAdvise }
             }
             
             if ($script:DiskScriptIsNewer) {

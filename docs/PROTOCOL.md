@@ -48,7 +48,7 @@ Most multi-agent frameworks run autonomous loops that quickly diverge, race each
 The default project lifecycle follows a structured 5-phase ladder:
 `pitch` $\rightarrow$ `discuss` $\rightarrow$ `implement` $\rightarrow$ `test` $\rightarrow$ `closed`
 
-1. **Pitch**: Agents suggest additions, improvements, alternatives, and options to the objective without touching code. Human Lead chooses what graduates to discussion.
+1. **Pitch**: Agents suggest additions, improvements, alternatives, and options to the objective without touching code. Human Lead chooses what graduates to discussion. Both seats stay `advise`. Switching the phase to pitch sets both role dropdowns to advise, and the kickoff hard stop still forbids tracked edits if a seat was left on implement.
 2. **Discuss**: Agents debate trade-offs, answer architectural questions, and align on agreed decisions. Consensus lines auto-promote to Alignment.
 3. **Implement**: Exactly one agent writes code and documents changes while the other reviews.
 4. **Test**: Agents and Human Lead verify script, UI, and functionality, recording pass/fail evidence in scratchpads.
@@ -56,7 +56,7 @@ The default project lifecycle follows a structured 5-phase ladder:
 
 ### Phase Sign-Off & Advancement
 
-- Each phase uses the three sign-off checkboxes (`Human`, `AI 1`, `AI 2`).
+- Each phase uses the three sign-off checkboxes (`Human`, `AI 1`, `AI 2`). A scratchpad counts as signed off only when the latest top-level note says `Sign-off: [x]`. Older `[x]` lines in that pad do not carry into the next phase.
 - When all 3 participants mark sign-off complete (`[x]`) while Flow Control is `🟢 GO`, the controller clears the checkboxes and auto-advances to the next phase on the ladder.
 - Unchecking a box never moves backward. Auto-advance is blocked during `🟡 PAUSE` or `🔴 ALL STOP`.
 - Intermediate advances do not commit or push git; final shipping remains safely on the **Close Project** button.
