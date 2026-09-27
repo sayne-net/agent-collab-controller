@@ -2464,20 +2464,37 @@ function Promote-SelectedBulletToAlignment {
             $sEsc = [regex]::Escape($seatName)
             $pad = Get-LastMarkdownBody $raw "(?:###|##)\s+(?:$sEsc|$seatName)(?:\s+Scratchpad)?"
             if ($pad) {
-                $matches = [regex]::Matches($pad, '(?im)^\s*[-*]\s*(?:\*\*(?:Proposal|Agreed|Agree|Option\s+[A-Z0-9]+)\*\*:?|[A-Z0-9]+:)\s*(.+)$')
+                $latestTurn = Get-LatestTopLevelBullet $pad
+                $searchBlock = if ($latestTurn) { $latestTurn } else { $pad }
+
+                # In the newest top-level turn, look for explicit proposal or agreed lines
+                $matches = [regex]::Matches($searchBlock, '(?im)^\s*[-*]\s*(?:\*\*(?:Proposal|Agreed|Option\s+[A-Z0-9]+)\*\*:?)\s*(.+)$')
                 if ($matches.Count -gt 0) {
-                    $candidate = $matches[$matches.Count - 1].Groups[1].Value.Trim()
+                    $candidate = $matches[0].Groups[1].Value.Trim()
+                    foreach ($m in $matches) {
+                        if ($m.Value -match '(?i)\*\*(?:Proposal|Agreed)\*\*') {
+                            $candidate = $m.Groups[1].Value.Trim()
+                            break
+                        }
+                    }
                 } else {
-                    $bulletMatches = [regex]::Matches($pad, '(?im)^\s*[-*]\s*(.+)$')
+                    # Or get the first non-header sub-bullet in the latest turn
+                    $bulletMatches = [regex]::Matches($searchBlock, '(?im)^\s+[-*]\s*(.+)$')
                     if ($bulletMatches.Count -gt 0) {
-                        $candidate = $bulletMatches[$bulletMatches.Count - 1].Groups[1].Value.Trim()
+                        $candidate = $bulletMatches[0].Groups[1].Value.Trim()
+                    } else {
+                        # Or the top bullet itself
+                        $topMatch = [regex]::Match($searchBlock, '(?im)^[-*]\s*(.+)$')
+                        if ($topMatch.Success) {
+                            $candidate = $topMatch.Groups[1].Value.Trim()
+                        }
                     }
                 }
             }
         }
 
         if ([string]::IsNullOrWhiteSpace($candidate)) {
-            [System.Windows.MessageBox]::Show("No text selected in $seatName response pane, and no proposal bullet was found to promote.", "Promote to Alignment", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
+            [System.Windows.MessageBox]::Show("No text selected in $seatName response pane, and no proposal bullet was found in the latest turn.", "Promote to Alignment", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
             return
         }
 
