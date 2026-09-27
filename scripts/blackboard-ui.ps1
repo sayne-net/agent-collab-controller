@@ -1,12 +1,12 @@
 # Agent Collab Controller (WPF UI)
-# Version 1.2.22
+# Version 1.2.23
 # Standalone dual-session controller for multi-agent collaboration with human-in-the-loop steering.
 
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
 
-$script:AppVersion = "v1.2.22"
+$script:AppVersion = "v1.2.23"
 $script:RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $script:ProjectName = (Split-Path $script:RepoRoot -Leaf)
 $script:ScriptFilePath = if ($PSCommandPath) { $PSCommandPath } else { Join-Path $PSScriptRoot "blackboard-ui.ps1" }
@@ -409,7 +409,8 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                     <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
                         <CheckBox Name="chkSignHuman" Content="Human" Margin="0,0,6,0"/>
                         <CheckBox Name="chkSignCursor" Content="AI 1" Margin="0,0,6,0"/>
-                        <CheckBox Name="chkSignGemini" Content="AI 2"/>
+                        <CheckBox Name="chkSignGemini" Content="AI 2" Margin="0,0,10,0"/>
+                        <CheckBox Name="chkAutoStep" Content="⚡ Auto Step" IsChecked="True" ToolTip="On: all three sign-offs advance one phase. Off: the phase stays."/>
                     </StackPanel>
                     <TextBlock Name="txtGitStatusSummary" Text="Git: clean" FontSize="10" Foreground="#A6ADC8" Margin="0,3,0,0" ToolTip="Read-only git status for active repository"/>
                 </StackPanel>
@@ -786,6 +787,7 @@ $cbGeminiRole          = $window.FindName("cbGeminiRole")
 $chkSignHuman          = $window.FindName("chkSignHuman")
 $chkSignCursor         = $window.FindName("chkSignCursor")
 $chkSignGemini         = $window.FindName("chkSignGemini")
+$chkAutoStep           = $window.FindName("chkAutoStep")
 $txtIssueNum           = $window.FindName("txtIssueNum")
 $txtIssueTitle         = $window.FindName("txtIssueTitle")
 $btnFetchIssue         = $window.FindName("btnFetchIssue")
@@ -841,6 +843,7 @@ function Get-ClientConfiguration {
         boardSeats = [PSCustomObject]@{}
         tooltips = $true
         audioCue = $false
+        autoStep = $true
         profiles = [PSCustomObject]@{
             "AI 1" = [PSCustomObject]@{ process = ""; description = "Generic Seat 1 (Manual Clipboard Copy)" }
             "AI 2" = [PSCustomObject]@{ process = ""; description = "Generic Seat 2 (Manual Clipboard Copy)" }
@@ -906,6 +909,7 @@ $script:MasterTooltips = @{
     "chkSignHuman"         = "Phase sign-off approval from Human Lead (all 3 advance phase / close project)"
     "chkSignCursor"        = "Phase sign-off approval from Seat 1 (all 3 advance phase / close project)"
     "chkSignGemini"        = "Phase sign-off approval from Seat 2 (all 3 advance phase / close project)"
+    "chkAutoStep"          = "Auto step. On advances one phase when all three sign-offs are checked. Off leaves the phase where it is."
     "txtGitStatusSummary"  = "Read-only summary of active git branch and uncommitted changes"
     "txtIssueNum"          = "Associated GitHub issue number (e.g. 24 or none)"
     "txtIssueTitle"        = "Fetched title of the linked GitHub issue"
@@ -970,6 +974,8 @@ function Save-ClientConfiguration {
         $cfg.tooltips = $tooltipsVal
         $audioCueVal = if ($chkAudioCue) { [bool]$chkAudioCue.IsChecked } elseif ($cfg -and $null -ne $cfg.audioCue) { [bool]$cfg.audioCue } else { $false }
         $cfg.audioCue = $audioCueVal
+        $autoStepVal = if ($chkAutoStep) { [bool]$chkAutoStep.IsChecked } elseif ($cfg -and $null -ne $cfg.autoStep) { [bool]$cfg.autoStep } else { $true }
+        $cfg.autoStep = $autoStepVal
 
         if (-not $cfg.boardSeats) {
             $cfg | Add-Member -NotePropertyName "boardSeats" -NotePropertyValue ([PSCustomObject]@{}) -Force
@@ -1004,6 +1010,8 @@ function Save-ClientConfiguration {
             recentBoards = $recent
             boardSeats = $cfg.boardSeats
             tooltips = $tooltipsVal
+            audioCue = $audioCueVal
+            autoStep = $autoStepVal
             profiles = $cfg.profiles
         }
         $dir = Split-Path $script:ClientsConfigPath -Parent
@@ -1332,6 +1340,20 @@ if ($chkAudioCue) {
     $chkAudioCue.add_Unchecked({
         Save-ClientConfiguration
         $txtStatus.Text = "Turn change audio chime disabled."
+    })
+}
+
+if ($chkAutoStep) {
+    $initialAutoStep = if ($script:ClientConfig -and $null -ne $script:ClientConfig.autoStep) { [bool]$script:ClientConfig.autoStep } else { $true }
+    $chkAutoStep.IsChecked = $initialAutoStep
+    $chkAutoStep.add_Checked({
+        Save-ClientConfiguration
+        $txtStatus.Text = "Auto step on. All three sign-offs advance one phase."
+        Check-PhaseAutoAdvance
+    })
+    $chkAutoStep.add_Unchecked({
+        Save-ClientConfiguration
+        $txtStatus.Text = "Auto step off. The phase stays until you change it."
     })
 }
 
@@ -2435,6 +2457,7 @@ function Get-NextPhase {
 
 function Check-PhaseAutoAdvance {
     if ($script:SuppressPhaseAutoAdvance) { return }
+    if ($chkAutoStep -and -not $chkAutoStep.IsChecked) { return }
     $flow = Get-FlowControlString
     if ($flow -match "STOP|PAUSE") { return }
 
