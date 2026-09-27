@@ -1,12 +1,12 @@
 # Agent Collab Controller (WPF UI)
-# Version 1.2.27
+# Version 1.2.31
 # Standalone dual-session controller for multi-agent collaboration with human-in-the-loop steering.
 
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
 
-$script:AppVersion = "v1.2.27"
+$script:AppVersion = "v1.2.31"
 $script:RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $script:ProjectName = (Split-Path $script:RepoRoot -Leaf)
 $script:ScriptFilePath = if ($PSCommandPath) { $PSCommandPath } else { Join-Path $PSScriptRoot "blackboard-ui.ps1" }
@@ -303,6 +303,7 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                     <ComboBoxItem Content="implement (Active Coding)"/>
                     <ComboBoxItem Content="review (Audit &amp; Verification)"/>
                     <ComboBoxItem Content="test (Verify scripts/UI)"/>
+                    <ComboBoxItem Content="closing (Final sign-off)"/>
                     <ComboBoxItem Content="closed (Completed &amp; Closed)"/>
                 </ComboBox>
             </StackPanel>
@@ -868,7 +869,7 @@ function Get-ClientConfiguration {
             "Windsurf" = [PSCustomObject]@{ process = "Windsurf"; description = "Codeium Windsurf IDE" }
             "VS Code" = [PSCustomObject]@{ process = "Code"; description = "VS Code / GitHub Copilot" }
             "Terminal" = [PSCustomObject]@{ process = "WindowsTerminal"; description = "Windows Terminal (Claude Code, Aider, CLI)" }
-            "ChatGPT" = [PSCustomObject]@{ process = "ChatGPT"; description = "OpenAI ChatGPT Desktop / Web App" }
+            "Codex" = [PSCustomObject]@{ process = "ChatGPT"; description = "OpenAI Codex in the ChatGPT desktop app" }
         }
     }
 
@@ -880,9 +881,16 @@ function Get-ClientConfiguration {
             if (-not $obj.PSObject.Properties['tooltips']) { $obj | Add-Member -NotePropertyName "tooltips" -NotePropertyValue $true -Force }
             if (-not $obj.PSObject.Properties['audioCue']) { $obj | Add-Member -NotePropertyName "audioCue" -NotePropertyValue $false -Force }
             if (-not $obj.PSObject.Properties['autoStep']) { $obj | Add-Member -NotePropertyName "autoStep" -NotePropertyValue $true -Force }
-            if ($obj.profiles -and (-not $obj.profiles.PSObject.Properties['ChatGPT'])) {
-                $obj.profiles | Add-Member -NotePropertyName "ChatGPT" -NotePropertyValue ([PSCustomObject]@{ process = "ChatGPT"; description = "OpenAI ChatGPT Desktop / Web App" }) -Force
+            if ($obj.profiles) {
+                if (-not $obj.profiles.PSObject.Properties['Codex']) {
+                    $obj.profiles | Add-Member -NotePropertyName "Codex" -NotePropertyValue ([PSCustomObject]@{ process = "ChatGPT"; description = "OpenAI Codex in the ChatGPT desktop app" }) -Force
+                }
+                if ($obj.profiles.PSObject.Properties['ChatGPT']) {
+                    $obj.profiles.PSObject.Properties.Remove('ChatGPT')
+                }
             }
+            if ($obj.seat1 -eq "ChatGPT") { $obj.seat1 = "Codex" }
+            if ($obj.seat2 -eq "ChatGPT") { $obj.seat2 = "Codex" }
         }
     }
 
@@ -928,7 +936,7 @@ $script:MasterTooltips = @{
     "btnNewBoard"          = "Initialize a new blackboard in a project folder"
     "btnSwitchBoard"       = "Browse to select an existing blackboard.md file"
     "btnReloadBoard"       = "Force reload active blackboard from disk"
-    "cbPhase"              = "Select current project workflow phase (pitch, discuss, plan, implement, review, test, closed)"
+    "cbPhase"              = "Select current project workflow phase (pitch, discuss, plan, implement, review, test, closing, closed)"
 
     # Seat Profiles, Roles, Sign-offs & Issues
     "cbSeat1Client"        = "Select AI client / IDE profile for Seat 1"
@@ -1143,7 +1151,7 @@ function Populate-SeatClientDropdowns {
     $script:ClientConfig = Get-ClientConfiguration
     $profileNames = @($script:ClientConfig.profiles.PSObject.Properties | ForEach-Object { $_.Name })
     if ($profileNames.Count -eq 0) {
-        $profileNames = @("AI 1", "AI 2", "Cursor", "Antigravity", "Windsurf", "VS Code", "Terminal", "ChatGPT")
+        $profileNames = @("AI 1", "AI 2", "Cursor", "Antigravity", "Windsurf", "VS Code", "Terminal", "Codex")
     }
 
     $boardSeat1 = $null
@@ -1739,6 +1747,143 @@ $script:DiffViewerWindow = $null
 $script:DiffViewerRtbBox = $null
 $script:DiffViewerStatus = $null
 
+function Test-PngPath {
+    param([string]$path)
+    return [bool]($path -and ($path -match '(?i)\.png$'))
+}
+
+function Add-PngPreview {
+    param(
+        $paragraph,
+        [string]$fullPath,
+        [string]$label
+    )
+    $caption = New-Object System.Windows.Documents.Run("$label`n")
+    $caption.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#89B4FA")
+    $paragraph.Inlines.Add($caption)
+    if (-not (Test-Path -LiteralPath $fullPath)) {
+        $miss = New-Object System.Windows.Documents.Run("(PNG preview unavailable)`n")
+        $miss.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#6C7086")
+        $paragraph.Inlines.Add($miss)
+        return
+    }
+    try {
+        $bmp = New-Object System.Windows.Media.Imaging.BitmapImage
+        $bmp.BeginInit()
+        $bmp.CacheOption = [System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad
+        $bmp.CreateOptions = [System.Windows.Media.Imaging.BitmapCreateOptions]::IgnoreImageCache
+        $bmp.UriSource = New-Object System.Uri ((Resolve-Path -LiteralPath $fullPath).Path)
+        $bmp.DecodePixelWidth = 420
+        $bmp.EndInit()
+        $bmp.Freeze()
+        $img = New-Object System.Windows.Controls.Image
+        $img.Source = $bmp
+        $img.MaxWidth = 420
+        $img.Margin = New-Object System.Windows.Thickness(0, 4, 0, 8)
+        $paragraph.Inlines.Add((New-Object System.Windows.Documents.InlineUIContainer($img)))
+        $paragraph.Inlines.Add((New-Object System.Windows.Documents.Run("`n")))
+    } catch {
+        $fail = New-Object System.Windows.Documents.Run("(PNG preview failed)`n")
+        $fail.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F38BA8")
+        $paragraph.Inlines.Add($fail)
+    }
+}
+
+function Save-GitBlobToFile {
+    param(
+        [string]$spec,
+        [string]$dest
+    )
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = "git"
+    $psi.WorkingDirectory = [string]$script:RepoRoot
+    $psi.Arguments = "show --no-textconv `"$spec`""
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    $fs = [System.IO.File]::Open($dest, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write)
+    try {
+        $proc.StandardOutput.BaseStream.CopyTo($fs)
+    } finally {
+        $fs.Close()
+    }
+    [void]$proc.StandardError.ReadToEnd()
+    $proc.WaitForExit()
+    return ($proc.ExitCode -eq 0 -and (Test-Path -LiteralPath $dest) -and ((Get-Item -LiteralPath $dest).Length -gt 8))
+}
+
+function Add-BlobPngPreview {
+    param(
+        $paragraph,
+        [string]$spec,
+        [string]$label
+    )
+    $tmp = Join-Path $env:TEMP ("bb-png-" + [System.IO.Path]::GetRandomFileName() + ".png")
+    try {
+        if (Save-GitBlobToFile -spec $spec -dest $tmp) {
+            Add-PngPreview -paragraph $paragraph -fullPath $tmp -label $label
+        }
+    } finally {
+        if (Test-Path -LiteralPath $tmp) {
+            Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+function Add-CommittedPngPreview {
+    param(
+        $paragraph,
+        [string]$line,
+        [string]$upstream
+    )
+    if ($line -match 'Binary files a/(.+\.png) and /dev/null differ') {
+        $rel = $Matches[1].Trim().Trim('"')
+        if ($upstream) {
+            Add-BlobPngPreview -paragraph $paragraph -spec "${upstream}:${rel}" -label "PNG deleted (was at ${upstream}): $rel"
+        }
+        return
+    }
+    $oldRel = $null
+    $newRel = $null
+    if ($line -match 'Binary files /dev/null and b/(.+\.png) differ') {
+        $newRel = $Matches[1].Trim().Trim('"')
+    } elseif ($line -match 'Binary files a/(.+\.png) and b/(.+\.png) differ') {
+        $oldRel = $Matches[1].Trim().Trim('"')
+        $newRel = $Matches[2].Trim().Trim('"')
+    } else {
+        return
+    }
+    if ($oldRel -and $upstream) {
+        Add-BlobPngPreview -paragraph $paragraph -spec "${upstream}:${oldRel}" -label "PNG before (${upstream}): $oldRel"
+    }
+    if ($newRel) {
+        Add-BlobPngPreview -paragraph $paragraph -spec "HEAD:${newRel}" -label "PNG at HEAD: $newRel"
+    }
+}
+
+function Add-WorktreePngPreview {
+    param(
+        $paragraph,
+        [string]$line
+    )
+    if ($line -match 'Binary files a/(.+\.png) and /dev/null differ') {
+        $rel = $Matches[1].Trim().Trim('"')
+        Add-BlobPngPreview -paragraph $paragraph -spec "HEAD:${rel}" -label "PNG deleted (removed from the working tree; was at HEAD): $rel"
+        return
+    }
+    if ($line -match 'Binary files .+ and b/(.+\.png) differ') {
+        $rel = $Matches[1].Trim().Trim('"')
+        $fullPath = Join-Path $script:RepoRoot $rel
+        if (Test-Path -LiteralPath $fullPath) {
+            Add-PngPreview -paragraph $paragraph -fullPath $fullPath -label "PNG preview: $rel"
+        } else {
+            Add-BlobPngPreview -paragraph $paragraph -spec "HEAD:${rel}" -label "PNG deleted (removed from the working tree; was at HEAD): $rel"
+        }
+    }
+}
+
 function Update-ReviewDiffViewer {
     if (-not $script:DiffViewerWindow -or -not $script:DiffViewerWindow.IsVisible) { return }
     try {
@@ -1826,6 +1971,7 @@ function Update-ReviewDiffViewer {
                 $run.Foreground = $brush
                 $run.FontWeight = $weight
                 $pBranch.Inlines.Add($run)
+                Add-CommittedPngPreview -paragraph $pBranch -line $line -upstream $targetUpstream
             }
             $doc.Blocks.Add($pBranch)
         }
@@ -1856,6 +2002,7 @@ function Update-ReviewDiffViewer {
                 $run.Foreground = $brush
                 $run.FontWeight = $weight
                 $pDiff.Inlines.Add($run)
+                Add-WorktreePngPreview -paragraph $pDiff -line $line
             }
             $doc.Blocks.Add($pDiff)
         }
@@ -1871,6 +2018,10 @@ function Update-ReviewDiffViewer {
                 $fullPath = Join-Path $script:RepoRoot $relPath
                 if ((Test-Path $fullPath) -and -not (Test-Path $fullPath -PathType Container)) {
                     $pUntracked.Inlines.Add((New-Object System.Windows.Documents.Run("--- /dev/null`n+++ b/$relPath`n") -property @{ FontWeight = [System.Windows.FontWeights]::Bold; Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#CBA6F7") }))
+                    if (Test-PngPath $relPath) {
+                        Add-PngPreview -paragraph $pUntracked -fullPath $fullPath -label "PNG preview: $relPath"
+                        continue
+                    }
                     try {
                         $uLines = @(Get-Content -Path $fullPath -TotalCount 300 -ErrorAction SilentlyContinue)
                         foreach ($ul in $uLines) {
@@ -2005,6 +2156,10 @@ function Show-ReviewDiffViewer {
                     $relPath = $entry.Substring(2).Trim().Trim('"')
                     $fullPath = Join-Path $script:RepoRoot $relPath
                     if ((Test-Path $fullPath) -and -not (Test-Path $fullPath -PathType Container)) {
+                        if (Test-PngPath $relPath) {
+                            [void]$diffText.Add("PNG (shown in the diff viewer, not copied as text): $relPath")
+                            continue
+                        }
                         [void]$diffText.Add("--- /dev/null")
                         [void]$diffText.Add("+++ b/$relPath")
                         $uLines = @(Get-Content -Path $fullPath -TotalCount 300 -ErrorAction SilentlyContinue)
@@ -2479,6 +2634,23 @@ function Sync-PresetFromPhase {
     }
 }
 
+function Set-RolesForPhase {
+    param([string]$phaseName)
+    if (-not $cbCursorRole -or -not $cbGeminiRole) { return }
+    if ([string]::IsNullOrWhiteSpace($phaseName)) { return }
+    switch ($phaseName.Trim().ToLower()) {
+        "pitch"     { $cbCursorRole.SelectedIndex = 2; $cbGeminiRole.SelectedIndex = 2 }
+        "discuss"   { $cbCursorRole.SelectedIndex = 2; $cbGeminiRole.SelectedIndex = 2 }
+        "advise"    { $cbCursorRole.SelectedIndex = 2; $cbGeminiRole.SelectedIndex = 2 }
+        "plan"      { $cbCursorRole.SelectedIndex = 4; $cbGeminiRole.SelectedIndex = 5 }
+        "implement" { $cbCursorRole.SelectedIndex = 1; $cbGeminiRole.SelectedIndex = 1 }
+        "review"    { $cbCursorRole.SelectedIndex = 1; $cbGeminiRole.SelectedIndex = 0 }
+        "test"      { $cbCursorRole.SelectedIndex = 1; $cbGeminiRole.SelectedIndex = 0 }
+        "closing"   { $cbCursorRole.SelectedIndex = 5; $cbGeminiRole.SelectedIndex = 5 }
+        "closed"    { $cbCursorRole.SelectedIndex = 5; $cbGeminiRole.SelectedIndex = 5 }
+    }
+}
+
 function Set-Phase {
     param([string]$targetPhase)
     if ([string]::IsNullOrWhiteSpace($targetPhase)) { return }
@@ -2503,7 +2675,9 @@ function Get-NextPhase {
         "plan"      { return "implement" }
         "implement" { return "test" }
         "review"    { return "test" }
-        "test"      { return "closed" }
+        "test"      { return "closing" }
+        "closing"   { return "closing" }
+        "closed"    { return "closed" }
         default     { return "closed" }
     }
 }
@@ -2525,7 +2699,7 @@ function Check-PhaseAutoAdvance {
     }
 
     $currentPhase = Get-PhaseString
-    if ($currentPhase -eq "closed") { return }
+    if ($currentPhase -eq "closing" -or $currentPhase -eq "closed") { return }
 
     $nextPhase = Get-NextPhase $currentPhase
     if ($nextPhase -eq $currentPhase) { return }
@@ -2552,6 +2726,7 @@ function Check-PhaseAutoAdvance {
         Save-SignoffBaseline
 
         Set-Phase $nextPhase
+        Set-RolesForPhase $nextPhase
         $txtStatus.Text = "Phase auto-advanced: $currentPhase -> $nextPhase (all 3 sign-offs complete)."
         Save-BlackboardContent
         Update-UiActiveTurn -keepOverride
@@ -2620,7 +2795,8 @@ function Get-ActiveTurn {
     }
 
     # 2. Closed phase with all 3 signed off -> Ready to close / archive
-    if ($signHuman -and $signCursor -and $signGemini -and (Get-PhaseString) -eq "closed") {
+    $phaseNow = Get-PhaseString
+    if ($signHuman -and $signCursor -and $signGemini -and ($phaseNow -eq "closing" -or $phaseNow -eq "closed")) {
         $badgeTurn.Background = [System.Windows.Media.Brushes]::DarkGreen
         $txtActiveTurn.Foreground = [System.Windows.Media.Brushes]::White
         return "✅ Complete - Ready to Close"
@@ -2685,7 +2861,8 @@ function Update-UiActiveTurn {
     }
     $txtActiveTurn.Text = Get-ActiveTurn
     if ($btnCloseProject) {
-        if ((Get-PhaseString) -eq "closed" -and $chkSignHuman.IsChecked -and $chkSignCursor.IsChecked -and $chkSignGemini.IsChecked) {
+        $phaseForClose = Get-PhaseString
+        if (($phaseForClose -eq "closing" -or $phaseForClose -eq "closed") -and $chkSignHuman.IsChecked -and $chkSignCursor.IsChecked -and $chkSignGemini.IsChecked) {
             $btnCloseProject.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#A6E3A1")
             $btnCloseProject.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#11111B")
         } else {
@@ -2974,6 +3151,9 @@ function Get-RoleGuidance {
     if ($phase -eq "closed") {
         return "This project/objective is CLOSED. All sign-offs complete. Hold IDLE. Do not modify files or execute tasks unless a new objective is assigned."
     }
+    if ($phase -eq "closing") {
+        return "Project phase is CLOSING. Your role is idle. Do not edit tracked files or start new work. Your one action is the final sign-off: write Sign-off: [x] on your top scratchpad bullet and mark your Agent Roles row [x] so the Human Lead can press Close Project."
+    }
     if ($phase -eq "test") {
         return "Project phase is TEST. Verify the program/script/UI already landed. Exercise the live controller or script under test (do not relaunch a second blackboard-ui unless asked). Record pass/fail in your scratchpad. FORBIDDEN: new features. After a recorded pass (or N/A with why), set your Agent Roles Sign-off [x] and scratchpad Sign-off: [x]. GO does not mean implement."
     }
@@ -2997,6 +3177,13 @@ function Get-NonImplementHardStop {
         return @"
 NOTICE: Project phase is CLOSED. All sign-offs have been completed.
 Hold IDLE. Do not modify files, execute tasks, or make commits unless the Human Lead assigns a new active objective.
+
+"@
+    }
+    if ((Get-PhaseString) -eq "closing") {
+        return @"
+NOTICE: Project phase is CLOSING. Both seats are idle.
+Do not edit tracked files or start new work. Your one action is the final sign-off so the Human Lead can press Close Project.
 
 "@
     }
@@ -3633,7 +3820,7 @@ function Send-AgentChatPaste {
         elseif ($clientName -eq "Windsurf") { $procName = "Windsurf" }
         elseif ($clientName -eq "VS Code") { $procName = "Code" }
         elseif ($clientName -eq "Terminal") { $procName = "WindowsTerminal" }
-        elseif ($clientName -eq "ChatGPT") { $procName = "ChatGPT" }
+        elseif ($clientName -eq "Codex" -or $clientName -eq "ChatGPT") { $procName = "ChatGPT" }
     }
     
     if ([string]::IsNullOrWhiteSpace($procName)) {
@@ -3694,9 +3881,9 @@ function Send-AgentChatPaste {
             # Return $false to prompt manual clipboard paste.
             return $false
         }
-        "ChatGPT" {
+        "Codex" {
             # Electron window: the composer is not in the UI Automation tree.
-            # Click the lower-center input, then paste. Codex runs inside this window (no top-level hwnd).
+            # Click the lower-center input, then paste. The Codex process has no window; the app process is ChatGPT.
             if (-not [WinHelper]::ClickLowerComposer([WinHelper]::LastHwnd, 110, 50)) {
                 return $false
             }
@@ -3761,7 +3948,7 @@ $btnCloseProject.add_Click({
     $signGemini = $chkSignGemini.IsChecked
     $allSigned = ($signHuman -and $signCursor -and $signGemini)
     $phaseNow = Get-PhaseString
-    if ($phaseNow -ne "test" -and $phaseNow -ne "closed") {
+    if ($phaseNow -ne "test" -and $phaseNow -ne "closing" -and $phaseNow -ne "closed") {
         $testWarn = [System.Windows.MessageBox]::Show(
             "Project phase is '$phaseNow' (not test). For programs/scripts, sign-off should follow the test phase.`n`nClose anyway?",
             "Testing phase not reached",
