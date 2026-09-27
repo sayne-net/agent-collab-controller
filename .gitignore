@@ -17,3 +17,9 @@ Desktop.ini
 .DS_Store
 *.tmp
 *.temp
+
+# Local runtime data & caches
+data/
+*.db
+*.db-shm
+*.db-wal
