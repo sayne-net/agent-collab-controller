@@ -565,7 +565,7 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                     </ComboBox>
                     <Button Name="btnCopyKickoffPrompt" Content="📋 Copy Prompt" Background="#313244" Margin="0,0,4,0" ToolTip="Copy tailored full Kickoff Prompt for selected target to Clipboard"/>
                     <Button Name="btnSendKickoffPrompt" Content="🚀 Send Prompt" Background="#89B4FA" Foreground="#11111B" FontWeight="Bold" Margin="0,0,6,0" ToolTip="Sequence and send full Kickoff Prompt to selected target agent(s)"/>
-                    <CheckBox Name="chkNewChatKickoff" Content="New Chat" IsChecked="False" VerticalAlignment="Center" Margin="4,0,4,0" Foreground="#A6E3A1" ToolTip="Optional one-shot on Kickoff. Codex sends Ctrl+Alt+O and copies the prompt; verify the new chat before pasting. The one-shot stays armed until a send is confirmed. Cursor uses Chat: New Chat; Antigravity uses Ctrl+Shift+I then Ctrl+Shift+L. Re-prompt never opens a new chat."/>
+                    <CheckBox Name="chkNewChatKickoff" Content="New Chat" IsChecked="False" VerticalAlignment="Center" Margin="4,0,4,0" Foreground="#A6E3A1" ToolTip="Optional one-shot on Kickoff. Codex New Chat is manual: the kickoff is copied, not sent; open and verify a new Codex chat, then paste and submit. The one-shot stays armed. Cursor uses Chat: New Chat; Antigravity uses Ctrl+Shift+I then Ctrl+Shift+L. Re-prompt never opens a new chat."/>
                 </StackPanel>
 
                 <!-- Center Safety Warning -->
