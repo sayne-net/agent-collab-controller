@@ -37,6 +37,19 @@ Running multiple autonomous AI coding agents in parallel usually leads to one of
 
 ---
 
+## What's New in v1.2.23
+
+Since `v1.2.2`, the controller has evolved with major Human-in-the-Loop (HITL) lifecycle controls, safety latches, and multi-board navigation:
+
+- 🧗 **5-Phase Collaboration Ladder & Pitch Phase**: A structured project progression (`pitch` $\rightarrow$ `discuss` $\rightarrow$ `implement` $\rightarrow$ `test` $\rightarrow$ `closed`). In `pitch`, roles automatically lock to `advise`, enabling agents to pitch alternative approaches or brainstorm freely without any risk of premature file mutations.
+- ⚡ **Auto Step Switch & Latched Auto-Advance**: Positioned directly beside the three sign-off checkboxes (`Human`, `AI 1`, `AI 2`). When enabled (default: on), the controller automatically advances the project by one phase once all three participants mark their sign-off complete (`[x]`). Built-in latching guarantees that reloading the board never skips a phase, and sign-offs from an earlier phase never accidentally check boxes in a subsequent phase. When toggled off, phases only change manually.
+- ⚖️ **Modeless Scratchpad Compare & Highlight-Only Promote**: Open side-by-side scratchpad comparisons without blocking the main cockpit. Select any highlighted lines in either scratchpad to promote them directly into the **Alignment & Agreed Decisions** section with a single click (or promote shared consensus lines automatically).
+- 🗂️ **Recent Boards Switcher & Board Creator**: Easily switch between recently opened project blackboards or create a fresh board from template right from the controller UI.
+- 🔔 **Disk Drift Notice & Dynamic Turn Cues**: Live visual notification alerting you when the script or board on disk is newer than what is currently loaded in memory, plus smart turn badges and cues when waiting on human steering.
+- 🔍 **Enhanced Git Review Diff**: Audits the entire active working tree, including newly created and untracked files, directly inside the controller diff viewer.
+
+---
+
 ## Quickstart (5 Minutes)
 
 ### 1. Drop into Your Repository
