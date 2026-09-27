@@ -1,12 +1,12 @@
 # Agent Collab Controller (WPF UI)
-# Version 1.2.23
+# Version 1.2.24
 # Standalone dual-session controller for multi-agent collaboration with human-in-the-loop steering.
 
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
 
-$script:AppVersion = "v1.2.23"
+$script:AppVersion = "v1.2.24"
 $script:RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $script:ProjectName = (Split-Path $script:RepoRoot -Leaf)
 $script:ScriptFilePath = if ($PSCommandPath) { $PSCommandPath } else { Join-Path $PSScriptRoot "blackboard-ui.ps1" }
@@ -676,7 +676,23 @@ if ($btnNewBoard) {
                 if (-not (Test-Path $targetAiDir)) {
                     New-Item -ItemType Directory -Force -Path $targetAiDir | Out-Null
                 }
-                
+                foreach ($sub in @("history", "saved")) {
+                    $subPath = Join-Path $targetAiDir $sub
+                    if (-not (Test-Path $subPath)) {
+                        New-Item -ItemType Directory -Force -Path $subPath | Out-Null
+                    }
+                }
+                $targetGitignore = Join-Path $chosenFolder ".gitignore"
+                if (Test-Path $targetGitignore) {
+                    try {
+                        $giContent = [System.IO.File]::ReadAllText($targetGitignore, [System.Text.Encoding]::UTF8)
+                        if ($giContent -notmatch '\.ai/blackboard\.md') {
+                            $appendGi = "`n# Dual-Session Agent Blackboard (gitignored live session)`n.ai/blackboard.md`n.ai/blackboard.md.bak`n"
+                            [System.IO.File]::AppendAllText($targetGitignore, $appendGi, [System.Text.Encoding]::UTF8)
+                        }
+                    } catch {}
+                }
+
                 if (-not (Test-Path $targetBlackboard)) {
                     $templateSource = if (Test-Path $script:ExamplePath) {
                         $script:ExamplePath
@@ -855,12 +871,22 @@ function Get-ClientConfiguration {
         }
     }
 
+    $ensureConfig = {
+        param($obj)
+        if ($obj) {
+            if (-not $obj.PSObject.Properties['recentBoards']) { $obj | Add-Member -NotePropertyName "recentBoards" -NotePropertyValue @() -Force }
+            if (-not $obj.PSObject.Properties['boardSeats']) { $obj | Add-Member -NotePropertyName "boardSeats" -NotePropertyValue ([PSCustomObject]@{}) -Force }
+            if (-not $obj.PSObject.Properties['tooltips']) { $obj | Add-Member -NotePropertyName "tooltips" -NotePropertyValue $true -Force }
+            if (-not $obj.PSObject.Properties['audioCue']) { $obj | Add-Member -NotePropertyName "audioCue" -NotePropertyValue $false -Force }
+            if (-not $obj.PSObject.Properties['autoStep']) { $obj | Add-Member -NotePropertyName "autoStep" -NotePropertyValue $true -Force }
+        }
+    }
+
     if (Test-Path $script:ClientsConfigPath) {
         try {
             $json = Get-Content $script:ClientsConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
             if ($json -and $json.profiles) {
-                if (-not $json.recentBoards) { $json | Add-Member -NotePropertyName "recentBoards" -NotePropertyValue @() -Force }
-                if (-not $json.boardSeats) { $json | Add-Member -NotePropertyName "boardSeats" -NotePropertyValue ([PSCustomObject]@{}) -Force }
+                & $ensureConfig $json
                 return $json
             }
         } catch {}
@@ -870,8 +896,7 @@ function Get-ClientConfiguration {
         try {
             $json = Get-Content $script:ClientsExamplePath -Raw -Encoding UTF8 | ConvertFrom-Json
             if ($json -and $json.profiles) {
-                if (-not $json.recentBoards) { $json | Add-Member -NotePropertyName "recentBoards" -NotePropertyValue @() -Force }
-                if (-not $json.boardSeats) { $json | Add-Member -NotePropertyName "boardSeats" -NotePropertyValue ([PSCustomObject]@{}) -Force }
+                & $ensureConfig $json
                 return $json
             }
         } catch {}
@@ -967,19 +992,33 @@ function Save-ClientConfiguration {
         $s2 = Get-Seat2Client
         $cfg = $script:ClientConfig
         if (-not $cfg) { $cfg = Get-ClientConfiguration }
+
+        $propsToEnsure = @{
+            "seat1"        = $s1
+            "seat2"        = $s2
+            "boardPath"    = $script:BlackboardPath
+            "tooltips"     = $true
+            "audioCue"     = $false
+            "autoStep"     = $true
+            "recentBoards" = @()
+            "boardSeats"   = [PSCustomObject]@{}
+        }
+        foreach ($propName in $propsToEnsure.Keys) {
+            if (-not $cfg.PSObject.Properties[$propName]) {
+                $cfg | Add-Member -NotePropertyName $propName -NotePropertyValue $propsToEnsure[$propName] -Force
+            }
+        }
+
         $cfg.seat1 = $s1
         $cfg.seat2 = $s2
         $cfg.boardPath = $script:BlackboardPath
-        $tooltipsVal = if ($chkEnableTooltips) { [bool]$chkEnableTooltips.IsChecked } elseif ($cfg -and $null -ne $cfg.tooltips) { [bool]$cfg.tooltips } else { $true }
+        $tooltipsVal = if ($chkEnableTooltips) { [bool]$chkEnableTooltips.IsChecked } elseif ($null -ne $cfg.tooltips) { [bool]$cfg.tooltips } else { $true }
         $cfg.tooltips = $tooltipsVal
-        $audioCueVal = if ($chkAudioCue) { [bool]$chkAudioCue.IsChecked } elseif ($cfg -and $null -ne $cfg.audioCue) { [bool]$cfg.audioCue } else { $false }
+        $audioCueVal = if ($chkAudioCue) { [bool]$chkAudioCue.IsChecked } elseif ($null -ne $cfg.audioCue) { [bool]$cfg.audioCue } else { $false }
         $cfg.audioCue = $audioCueVal
-        $autoStepVal = if ($chkAutoStep) { [bool]$chkAutoStep.IsChecked } elseif ($cfg -and $null -ne $cfg.autoStep) { [bool]$cfg.autoStep } else { $true }
+        $autoStepVal = if ($chkAutoStep) { [bool]$chkAutoStep.IsChecked } elseif ($null -ne $cfg.autoStep) { [bool]$cfg.autoStep } else { $true }
         $cfg.autoStep = $autoStepVal
 
-        if (-not $cfg.boardSeats) {
-            $cfg | Add-Member -NotePropertyName "boardSeats" -NotePropertyValue ([PSCustomObject]@{}) -Force
-        }
         if ($script:BlackboardPath) {
             $resolvedPath = (Resolve-Path $script:BlackboardPath -ErrorAction SilentlyContinue).Path
             if ($resolvedPath) {
@@ -996,9 +1035,14 @@ function Save-ClientConfiguration {
             $recent = @($cfg.recentBoards | Where-Object { $_ -and (Test-Path $_) })
         }
         if ($script:BlackboardPath -and (Test-Path $script:BlackboardPath)) {
-            $resolvedActive = (Resolve-Path $script:BlackboardPath).Path
-            $recent = @($resolvedActive) + @($recent | Where-Object { (Resolve-Path $_).Path -ne $resolvedActive })
-            if ($recent.Count -gt 8) { $recent = $recent[0..7] }
+            $resolvedActive = (Resolve-Path $script:BlackboardPath -ErrorAction SilentlyContinue).Path
+            if ($resolvedActive) {
+                $recent = @($resolvedActive) + @($recent | Where-Object {
+                    $r = (Resolve-Path $_ -ErrorAction SilentlyContinue).Path
+                    $r -and ($r -ne $resolvedActive)
+                })
+                if ($recent.Count -gt 8) { $recent = $recent[0..7] }
+            }
         }
         $cfg.recentBoards = $recent
         $script:ClientConfig = $cfg
@@ -1018,7 +1062,10 @@ function Save-ClientConfiguration {
         if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
         $jsonStr = $exportObj | ConvertTo-Json -Depth 5
         [System.IO.File]::WriteAllText($script:ClientsConfigPath, $jsonStr, [System.Text.Encoding]::UTF8)
-    } catch {}
+    } catch {
+        if ($txtStatus) { $txtStatus.Text = "Config save error: $($_.Exception.Message)" }
+        Write-Warning "Save-ClientConfiguration failed: $_"
+    }
 }
 
 function Get-Seat1Client {
@@ -1177,8 +1224,8 @@ function Populate-RecentBoardsDropdown {
             $recent = @($cfg.recentBoards | Where-Object { $_ -and (Test-Path $_) })
         }
         if ($script:BlackboardPath -and (Test-Path $script:BlackboardPath)) {
-            $activeResolved = (Resolve-Path $script:BlackboardPath).Path
-            if (-not ($recent | Where-Object { (Resolve-Path $_).Path -eq $activeResolved })) {
+            $activeResolved = (Resolve-Path $script:BlackboardPath -ErrorAction SilentlyContinue).Path
+            if ($activeResolved -and -not ($recent | Where-Object { (Resolve-Path $_ -ErrorAction SilentlyContinue).Path -eq $activeResolved })) {
                 $recent = @($activeResolved) + $recent
             }
         }
@@ -1186,7 +1233,8 @@ function Populate-RecentBoardsDropdown {
         $selectedIdx = -1
         $currentIdx = 0
         foreach ($bPath in $recent) {
-            $rPath = (Resolve-Path $bPath).Path
+            $rPath = (Resolve-Path $bPath -ErrorAction SilentlyContinue).Path
+            if (-not $rPath) { continue }
             $pDir = Split-Path $rPath -Parent
             $isAi = ((Split-Path $pDir -Leaf) -eq ".ai")
             $projName = if ($isAi) { Split-Path (Split-Path $pDir -Parent) -Leaf } else { Split-Path $pDir -Leaf }
@@ -1199,7 +1247,8 @@ function Populate-RecentBoardsDropdown {
             $item.ToolTip = $rPath
             $cbRecentBoards.Items.Add($item) | Out-Null
 
-            if ($script:BlackboardPath -and ((Resolve-Path $script:BlackboardPath).Path -eq $rPath)) {
+            $activeBb = (Resolve-Path $script:BlackboardPath -ErrorAction SilentlyContinue).Path
+            if ($activeBb -and ($activeBb -eq $rPath)) {
                 $selectedIdx = $currentIdx
             }
             $currentIdx++
