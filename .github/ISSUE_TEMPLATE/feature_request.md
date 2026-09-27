@@ -1,6 +1,6 @@
 ---
 name: Feature Request
-about: Suggest an idea or enhancement for Agent Collab Controller
+about: Suggest an idea or enhancement for AI Collab Controller
 title: 'feat: '
 labels: ['enhancement']
 assignees: ''

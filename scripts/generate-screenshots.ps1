@@ -1,5 +1,5 @@
 # Generate-Screenshots.ps1
-# Generates high-resolution screenshots of the Agent Collab Controller and Review Diff modal.
+# Generates high-resolution screenshots of the AI Collab Controller and Review Diff modal.
 # Usage: pwsh -NoProfile -ExecutionPolicy Bypass .\scripts\generate-screenshots.ps1
 
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Drawing
@@ -101,7 +101,7 @@ $mainXaml = @"
                 </Grid.ColumnDefinitions>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                     <TextBlock Text="🎮" FontSize="13" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                    <TextBlock Text="Agent Collab Controller - v1.2.2" FontWeight="SemiBold" FontSize="12" Foreground="#BAC2DE" VerticalAlignment="Center"/>
+                    <TextBlock Text="AI Collab Controller - v1.2.2" FontWeight="SemiBold" FontSize="12" Foreground="#BAC2DE" VerticalAlignment="Center"/>
                 </StackPanel>
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                     <Border Width="11" Height="11" CornerRadius="6" Background="#A6E3A1" Margin="0,0,6,0" ToolTip="Minimize"/>
@@ -599,7 +599,7 @@ $closeXaml = @"
                 </Grid.ColumnDefinitions>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                     <TextBlock Text="🎮" FontSize="13" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                    <TextBlock Text="Agent Collab Controller - v1.2.2 [Session Verified - 3/3 Sign-offs Complete]" FontWeight="SemiBold" FontSize="12" Foreground="#BAC2DE" VerticalAlignment="Center"/>
+                    <TextBlock Text="AI Collab Controller - v1.2.2 [Session Verified - 3/3 Sign-offs Complete]" FontWeight="SemiBold" FontSize="12" Foreground="#BAC2DE" VerticalAlignment="Center"/>
                 </StackPanel>
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                     <Border Width="11" Height="11" CornerRadius="6" Background="#A6E3A1" Margin="0,0,6,0"/>

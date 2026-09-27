@@ -8,7 +8,7 @@ A lightweight, human-in-the-loop coordination protocol for pair-programming with
 
 Most multi-agent frameworks run autonomous loops that quickly diverge, race each other, or lose alignment with the developer. 
 
-**Agent Collab Controller** solves this with three principles:
+**AI Collab Controller** solves this with three principles:
 1. **Human Steering**: The human developer remains the Lead (`Human (Lead)`), defining objectives, alignment decisions, and approving phase transitions.
 2. **Mutual Exclusion (The Implement Lock)**: Only **one** agent may hold the `implement` role at any time. The other agent is placed in `review`, `advise`, or `idle`. This completely eliminates concurrent file write conflicts.
 3. **Ephemeral Scratchpad vs. Durable Memory**: Fast, scratch-pad coordination happens in a local, gitignored markdown file (`.ai/blackboard.md`). Permanent decisions and task tracking belong in GitHub Issues, commits, and project documentation.

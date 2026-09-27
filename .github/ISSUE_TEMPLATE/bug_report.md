@@ -1,6 +1,6 @@
 ---
 name: Bug Report
-about: Report a bug or issue with Agent Collab Controller
+about: Report a bug or issue with AI Collab Controller
 title: '[Bug]: '
 labels: ['bug']
 assignees: ''
