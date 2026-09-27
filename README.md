@@ -39,7 +39,7 @@ Running multiple autonomous AI coding agents in parallel usually leads to one of
 
 ## What's New in v1.2.32
 
-- **Codex New Chat**: The Codex seat opens a new local Codex chat with its kickoff prompt prefilled through the documented `codex://new` deep link. Codex does not submit the prompt automatically, so the user can review and press Enter. This avoids relying on the generic app window title as a new-chat confirmation signal.
+- **Codex New Chat**: The Codex seat sends the documented `Ctrl+Alt+O` new standalone chat shortcut and leaves its kickoff prompt copied for review. Since the desktop app does not expose a reliable new-chat confirmation to the controller, it does not paste into an unverified conversation or consume the one-shot option; verify the new chat, then paste and submit.
 
 ---
 

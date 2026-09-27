@@ -565,7 +565,7 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                     </ComboBox>
                     <Button Name="btnCopyKickoffPrompt" Content="📋 Copy Prompt" Background="#313244" Margin="0,0,4,0" ToolTip="Copy tailored full Kickoff Prompt for selected target to Clipboard"/>
                     <Button Name="btnSendKickoffPrompt" Content="🚀 Send Prompt" Background="#89B4FA" Foreground="#11111B" FontWeight="Bold" Margin="0,0,6,0" ToolTip="Sequence and send full Kickoff Prompt to selected target agent(s)"/>
-                    <CheckBox Name="chkNewChatKickoff" Content="New Chat" IsChecked="False" VerticalAlignment="Center" Margin="4,0,4,0" Foreground="#A6E3A1" ToolTip="Optional one-shot on Kickoff (default off at launch and Reset; armed on Close Project). Codex opens a new chat with its kickoff prompt ready to send; press Enter in Codex. Cursor uses its Chat: New Chat command; Antigravity uses Ctrl+Shift+I then Ctrl+Shift+L. Re-prompt never opens a new chat."/>
+                    <CheckBox Name="chkNewChatKickoff" Content="New Chat" IsChecked="False" VerticalAlignment="Center" Margin="4,0,4,0" Foreground="#A6E3A1" ToolTip="Optional one-shot on Kickoff. Codex sends Ctrl+Alt+O and copies the prompt; verify the new chat before pasting. The one-shot stays armed until a send is confirmed. Cursor uses Chat: New Chat; Antigravity uses Ctrl+Shift+I then Ctrl+Shift+L. Re-prompt never opens a new chat."/>
                 </StackPanel>
 
                 <!-- Center Safety Warning -->
@@ -3804,8 +3804,7 @@ function Safe-SendKeys([string]$keys) {
 function Send-AgentChatPaste {
     param(
         [string]$clientName,
-        [bool]$newChat = $false,
-        [string]$prompt = ""
+        [bool]$newChat = $false
     )
     
     $procName = ""
@@ -3886,16 +3885,11 @@ function Send-AgentChatPaste {
             # Electron window: the composer is not in the UI Automation tree.
             # Click the lower-center input, then paste. The Codex process has no window; the app process is ChatGPT.
             if ($newChat) {
-                # The documented Codex deep link opens a new local chat with the generated kickoff prefilled.
-                # It does not submit automatically, so report it as opened with prompt ready.
-                try {
-                    if ([string]::IsNullOrWhiteSpace($prompt)) { return $false }
-                    $encodedPrompt = [System.Uri]::EscapeDataString($prompt)
-                    Start-Process -FilePath ("codex://new?prompt=" + $encodedPrompt)
-                    return $true
-                } catch {
-                    return $false
-                }
+                # Ctrl+Alt+O is the documented Codex-only new standalone chat shortcut.
+                # The app's window title cannot confirm the chat, so do not paste or consume the one-shot.
+                Safe-SendKeys "^%o"
+                Start-Sleep -Milliseconds 500
+                return $false
             }
             if (-not [WinHelper]::ClickLowerComposer([WinHelper]::LastHwnd, 110, 50)) {
                 return $false
@@ -4163,23 +4157,23 @@ function Invoke-SendKickoffPrompt {
             "Seat1" {
                 $pAgent1 = Get-KickoffPromptForAgent -agentName $s1 -role $cbCursorRole.Text -seatId "seat1"
                 Safe-SetClipboard $pAgent1
-                if (Send-AgentChatPaste -clientName $s1 -newChat $doNew -prompt $pAgent1) {
+                if (Send-AgentChatPaste -clientName $s1 -newChat $doNew) {
                     Complete-KickoffNewChatOneShot -didNew $doNew
                     $chatNote = if ($doNew) { " (New Chat, then off)" } else { "" }
                     $txtStatus.Text = if ($doNew -and $s1 -eq "Codex") { "🚀 Opened a new Codex chat with the kickoff prompt ready to send." } else { "🚀 Sent $s1 Kickoff Prompt to active IDE window$chatNote." }
                 } else {
-                    $txtStatus.Text = if ($doNew) { "⚠️ No new $s1 chat was confirmed; kickoff was not sent and New Chat remains armed." } else { "📋 Copied $s1 Kickoff to clipboard (IDE window not found). Focus $s1 and paste." }
+                    $txtStatus.Text = if ($doNew -and $s1 -eq "Codex") { "⚠️ Sent Ctrl+Alt+O; kickoff is copied. Confirm the new chat, then paste and submit. New Chat remains armed." } elseif ($doNew) { "⚠️ No new $s1 chat was confirmed; kickoff was not sent and New Chat remains armed." } else { "📋 Copied $s1 Kickoff to clipboard (IDE window not found). Focus $s1 and paste." }
                 }
             }
             "Seat2" {
                 $pAgent2 = Get-KickoffPromptForAgent -agentName $s2 -role $cbGeminiRole.Text -seatId "seat2"
                 Safe-SetClipboard $pAgent2
-                if (Send-AgentChatPaste -clientName $s2 -newChat $doNew -prompt $pAgent2) {
+                if (Send-AgentChatPaste -clientName $s2 -newChat $doNew) {
                     Complete-KickoffNewChatOneShot -didNew $doNew
                     $chatNote = if ($doNew) { " (New Chat, then off)" } else { "" }
                     $txtStatus.Text = if ($doNew -and $s2 -eq "Codex") { "🚀 Opened a new Codex chat with the kickoff prompt ready to send." } else { "🚀 Sent $s2 Kickoff Prompt to active IDE window$chatNote." }
                 } else {
-                    $txtStatus.Text = if ($doNew) { "⚠️ No new $s2 chat was confirmed; kickoff was not sent and New Chat remains armed." } else { "📋 Copied $s2 Kickoff to clipboard (IDE window not found). Focus $s2 and paste." }
+                    $txtStatus.Text = if ($doNew -and $s2 -eq "Codex") { "⚠️ Sent Ctrl+Alt+O; kickoff is copied. Confirm the new chat, then paste and submit. New Chat remains armed." } elseif ($doNew) { "⚠️ No new $s2 chat was confirmed; kickoff was not sent and New Chat remains armed." } else { "📋 Copied $s2 Kickoff to clipboard (IDE window not found). Focus $s2 and paste." }
                 }
             }
             default {
@@ -4194,12 +4188,12 @@ function Invoke-SendKickoffPrompt {
 
                 # 1. Focus & Send Seat 1
                 Safe-SetClipboard $pAgent1
-                $cFocused = Send-AgentChatPaste -clientName $s1 -newChat $doNew -prompt $pAgent1
+                $cFocused = Send-AgentChatPaste -clientName $s1 -newChat $doNew
                 Start-Sleep -Milliseconds 600
 
                 # 2. Focus & Send Seat 2
                 Safe-SetClipboard $pAgent2
-                $gFocused = Send-AgentChatPaste -clientName $s2 -newChat $doNew -prompt $pAgent2
+                $gFocused = Send-AgentChatPaste -clientName $s2 -newChat $doNew
 
                 if ($cFocused -or $gFocused) {
                     Complete-KickoffNewChatOneShot -didNew $doNew
