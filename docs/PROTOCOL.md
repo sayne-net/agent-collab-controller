@@ -57,6 +57,6 @@ The default project lifecycle follows a structured 5-phase ladder:
 ### Phase Sign-Off & Advancement
 
 - Each phase uses the three sign-off checkboxes (`Human`, `AI 1`, `AI 2`). A scratchpad counts as signed off only when the latest top-level note says `Sign-off: [x]`. Older `[x]` lines in that pad do not carry into the next phase.
-- When all 3 participants mark sign-off complete (`[x]`) while Flow Control is `🟢 GO`, the controller clears the checkboxes and auto-advances one phase. The phase change from that advance does not release the gate. If the boxes are clear when the advance finishes, the next time all three are checked it may advance again. If the boxes are still checked, it waits until one is unchecked and checked again.
+- When all 3 participants mark sign-off complete (`[x]`) while Flow Control is `🟢 GO`, the controller clears the checkboxes, saves them unchecked, and auto-advances one phase. Loading the board does not auto-advance. A saved `[ ]` stays clear even if an older scratchpad note still says `Sign-off: [x]`.
 - Unchecking a box never moves backward. Auto-advance is blocked during `🟡 PAUSE` or `🔴 ALL STOP`.
 - Intermediate advances do not commit or push git; final shipping remains safely on the **Close Project** button.

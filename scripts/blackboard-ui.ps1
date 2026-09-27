@@ -1,12 +1,12 @@
 # Agent Collab Controller (WPF UI)
-# Version 1.2.20
+# Version 1.2.21
 # Standalone dual-session controller for multi-agent collaboration with human-in-the-loop steering.
 
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
 
-$script:AppVersion = "v1.2.20"
+$script:AppVersion = "v1.2.21"
 $script:RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $script:ProjectName = (Split-Path $script:RepoRoot -Leaf)
 $script:ScriptFilePath = if ($PSCommandPath) { $PSCommandPath } else { Join-Path $PSScriptRoot "blackboard-ui.ps1" }
@@ -2339,6 +2339,7 @@ $script:LastAutoAdvanceTime = [DateTime]::MinValue
 $script:PhaseAdvanceGateLatched = $false
 $script:PhaseAdvanceUncheckObserved = $false
 $script:SuppressAutoAdvanceLatchReset = $false
+$script:SuppressPhaseAutoAdvance = $false
 
 function Sync-PresetFromPhase {
     param([string]$phaseName)
@@ -2411,6 +2412,7 @@ function Get-NextPhase {
 }
 
 function Check-PhaseAutoAdvance {
+    if ($script:SuppressPhaseAutoAdvance) { return }
     $flow = Get-FlowControlString
     if ($flow -match "STOP|PAUSE") { return }
 
@@ -3301,28 +3303,38 @@ function Sync-SignoffCheckboxes {
     $s1Esc = [regex]::Escape($s1)
     $s2Esc = [regex]::Escape($s2)
 
-    # 2. Seat 1: role table [x] OR Sign-off: [x] on the latest scratchpad note only
-    $cTable = ($raw -match ('(?m)\|\s*\*\*(?:' + $s1Esc + '|Cursor|Agent\s*1)\*\*\s*\|\s*`[^`]*`\s*\|\s*Active\s*\|\s*\[x\]'))
+    # 2. Seat 1: a saved [ ] stays clear. A scratchpad Sign-off cannot put it back.
+    $cWho = $s1Esc + '|Cursor|Agent\s*1'
+    $cCleared = $raw -match ('(?m)\|\s*\*\*(?:' + $cWho + ')\*\*\s*\|\s*`[^`]*`\s*\|\s*Active\s*\|\s*\[\s\]')
+    $cTable = ($raw -match ('(?m)\|\s*\*\*(?:' + $cWho + ')\*\*\s*\|\s*`[^`]*`\s*\|\s*Active\s*\|\s*\[x\]'))
     $cPad = Get-LastMarkdownBody $raw "(?:###|##)\s+(?:$s1Esc|Cursor|Agent\s*1)(?:\s+Scratchpad)?"
     $cPadSign = Test-LatestBulletSignedOff $cPad
     $cPadNorm = if ($cPad) { ($cPad -replace '\r\n', "`n" -replace '\r', "`n").Trim() } else { "" }
     $cPadIsNew = ($null -eq $script:CursorPadAtPhaseChange -or $cPadNorm -ne $script:CursorPadAtPhaseChange)
-    if ($cTable -or ($cPadSign -and $cPadIsNew)) {
+    if ($cCleared) {
+        $chkSignCursor.IsChecked = $false
+    } elseif ($cTable -or ($cPadSign -and $cPadIsNew)) {
         $chkSignCursor.IsChecked = $true
     }
     
-    # 1. Human (Lead): role table [x]
-    if ($raw -match '(?m)\|\s*\*\*([^*]+)\*\*\s*\|\s*`lead`\s*\|\s*Active\s*\|\s*\[x\]') {
+    # 1. Human (Lead): role table is the saved box
+    if ($raw -match '(?m)\|\s*\*\*([^*]+)\*\*\s*\|\s*`lead`\s*\|\s*Active\s*\|\s*\[\s\]') {
+        $chkSignHuman.IsChecked = $false
+    } elseif ($raw -match '(?m)\|\s*\*\*([^*]+)\*\*\s*\|\s*`lead`\s*\|\s*Active\s*\|\s*\[x\]') {
         $chkSignHuman.IsChecked = $true
     }
 
-    # 3. Seat 2: role table [x] OR Sign-off: [x] on the latest scratchpad note only
-    $gTable = ($raw -match ('(?m)\|\s*\*\*(?:' + $s2Esc + '|Gemini(?:\s+\(Antigravity\))?|Agent\s*2)\*\*\s*\|\s*`[^`]*`\s*\|\s*Active\s*\|\s*\[x\]'))
+    # 3. Seat 2: a saved [ ] stays clear. A scratchpad Sign-off cannot put it back.
+    $gWho = $s2Esc + '|Gemini(?:\s+\(Antigravity\))?|Agent\s*2'
+    $gCleared = $raw -match ('(?m)\|\s*\*\*(?:' + $gWho + ')\*\*\s*\|\s*`[^`]*`\s*\|\s*Active\s*\|\s*\[\s\]')
+    $gTable = ($raw -match ('(?m)\|\s*\*\*(?:' + $gWho + ')\*\*\s*\|\s*`[^`]*`\s*\|\s*Active\s*\|\s*\[x\]'))
     $gPad = Get-LastMarkdownBody $raw "(?:###|##)\s+(?:$s2Esc|Gemini(?:\s+\(Antigravity\))?|Agent\s*2)(?:\s+Scratchpad)?"
     $gPadSign = Test-LatestBulletSignedOff $gPad
     $gPadNorm = if ($gPad) { ($gPad -replace '\r\n', "`n" -replace '\r', "`n").Trim() } else { "" }
     $gPadIsNew = ($null -eq $script:GeminiPadAtPhaseChange -or $gPadNorm -ne $script:GeminiPadAtPhaseChange)
-    if ($gTable -or ($gPadSign -and $gPadIsNew)) {
+    if ($gCleared) {
+        $chkSignGemini.IsChecked = $false
+    } elseif ($gTable -or ($gPadSign -and $gPadIsNew)) {
         $chkSignGemini.IsChecked = $true
     }
 }
@@ -4189,6 +4201,7 @@ function Load-BlackboardIntoUI {
     if (Test-Path $script:BlackboardPath) {
         $script:SuppressTurnReset = $true
         $script:SuppressFormDirty = $true
+        $script:SuppressPhaseAutoAdvance = $true
         try {
             $raw = [System.IO.File]::ReadAllText($script:BlackboardPath, [System.Text.Encoding]::UTF8)
             
@@ -4248,8 +4261,7 @@ function Load-BlackboardIntoUI {
             }
             
             Sync-SignoffCheckboxes $raw
-            Check-PhaseAutoAdvance
-            
+
             $s1 = Get-Seat1Client
             $s2 = Get-Seat2Client
             $s1Esc = [regex]::Escape($s1)
@@ -4358,6 +4370,7 @@ function Load-BlackboardIntoUI {
         } finally {
             $script:SuppressTurnReset = $false
             $script:SuppressFormDirty = $false
+            $script:SuppressPhaseAutoAdvance = $false
         }
     } else {
         Save-BlackboardContent
