@@ -1,12 +1,12 @@
 # Agent Collab Controller (WPF UI)
-# Version 1.2.18
+# Version 1.2.19
 # Standalone dual-session controller for multi-agent collaboration with human-in-the-loop steering.
 
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
 
-$script:AppVersion = "v1.2.18"
+$script:AppVersion = "v1.2.19"
 $script:RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $script:ProjectName = (Split-Path $script:RepoRoot -Leaf)
 $script:ScriptFilePath = if ($PSCommandPath) { $PSCommandPath } else { Join-Path $PSScriptRoot "blackboard-ui.ps1" }
@@ -1980,6 +1980,7 @@ function Get-AgreedSentences {
     $pattern = '(?im)^\s*[-*]?\s*`?(?:-\s*)?`?\*\*Agreed\*\*`?\s*:\s*(.+)$'
     foreach ($m in [regex]::Matches($pad, $pattern)) {
         $val = $m.Groups[1].Value.Trim().Trim('`').Trim()
+        if ($val -match '(?i)^\s*[*◦\-`"]*?\s*(?:Summary|Next)\b') { continue }
         if ($val -and ($out -notcontains $val)) { $out += $val }
     }
     return $out
@@ -2335,6 +2336,9 @@ function Get-PhaseString {
 
 $script:SuppressPresetSync = $false
 $script:LastAutoAdvanceTime = [DateTime]::MinValue
+$script:PhaseAdvanceGateLatched = $false
+$script:PhaseAdvanceUncheckObserved = $false
+$script:SuppressAutoAdvanceLatchReset = $false
 
 function Sync-PresetFromPhase {
     param([string]$phaseName)
@@ -2410,6 +2414,8 @@ function Check-PhaseAutoAdvance {
     $flow = Get-FlowControlString
     if ($flow -match "STOP|PAUSE") { return }
 
+    if ($script:PhaseAdvanceGateLatched) { return }
+
     if (-not ($chkSignHuman.IsChecked -and $chkSignCursor.IsChecked -and $chkSignGemini.IsChecked)) {
         return
     }
@@ -2425,6 +2431,9 @@ function Check-PhaseAutoAdvance {
     if ($nextPhase -eq $currentPhase) { return }
 
     $script:LastAutoAdvanceTime = [DateTime]::UtcNow
+    $script:PhaseAdvanceGateLatched = $true
+    $script:PhaseAdvanceUncheckObserved = $false
+    $script:SuppressAutoAdvanceLatchReset = $true
     $script:SuppressFormDirty = $true
     try {
         $chkSignHuman.IsChecked = $false
@@ -2436,14 +2445,17 @@ function Check-PhaseAutoAdvance {
         $s2 = Get-Seat2Client
         $s1Esc = [regex]::Escape($s1)
         $s2Esc = [regex]::Escape($s2)
-        $script:CursorPadAtPhaseChange = Get-LastMarkdownBody $raw "(?:###|##)\s+(?:$s1Esc|Cursor|Agent\s*1)(?:\s+Scratchpad)?"
-        $script:GeminiPadAtPhaseChange = Get-LastMarkdownBody $raw "(?:###|##)\s+(?:$s2Esc|Gemini(?:\s+\(Antigravity\))?|Agent\s*2)(?:\s+Scratchpad)?"
+        $cPad = Get-LastMarkdownBody $raw "(?:###|##)\s+(?:$s1Esc|Cursor|Agent\s*1)(?:\s+Scratchpad)?"
+        $gPad = Get-LastMarkdownBody $raw "(?:###|##)\s+(?:$s2Esc|Gemini(?:\s+\(Antigravity\))?|Agent\s*2)(?:\s+Scratchpad)?"
+        $script:CursorPadAtPhaseChange = if ($cPad) { ($cPad -replace '\r\n', "`n" -replace '\r', "`n").Trim() } else { "" }
+        $script:GeminiPadAtPhaseChange = if ($gPad) { ($gPad -replace '\r\n', "`n" -replace '\r', "`n").Trim() } else { "" }
 
         Set-Phase $nextPhase
         $txtStatus.Text = "Phase auto-advanced: $currentPhase -> $nextPhase (all 3 sign-offs complete)."
         Save-BlackboardContent
         Update-UiActiveTurn -keepOverride
     } finally {
+        $script:SuppressAutoAdvanceLatchReset = $false
         $script:SuppressFormDirty = $false
     }
 }
@@ -2455,51 +2467,14 @@ function Promote-SelectedBulletToAlignment {
     )
     try {
         $selectedText = if ($rtbSource -and $rtbSource.Selection) { $rtbSource.Selection.Text.Trim() } else { "" }
-        $candidate = ""
-
-        if ($selectedText) {
-            $candidate = $selectedText
-        } else {
-            $raw = if (Test-Path $script:BlackboardPath) { [System.IO.File]::ReadAllText($script:BlackboardPath, [System.Text.Encoding]::UTF8) } else { "" }
-            $sEsc = [regex]::Escape($seatName)
-            $pad = Get-LastMarkdownBody $raw "(?:###|##)\s+(?:$sEsc|$seatName)(?:\s+Scratchpad)?"
-            if ($pad) {
-                $latestTurn = Get-LatestTopLevelBullet $pad
-                $searchBlock = if ($latestTurn) { $latestTurn } else { $pad }
-
-                # In the newest top-level turn, look for explicit proposal or agreed lines
-                $matches = [regex]::Matches($searchBlock, '(?im)^\s*[-*]\s*(?:\*\*(?:Proposal|Agreed|Option\s+[A-Z0-9]+)\*\*:?)\s*(.+)$')
-                if ($matches.Count -gt 0) {
-                    $candidate = $matches[0].Groups[1].Value.Trim()
-                    foreach ($m in $matches) {
-                        if ($m.Value -match '(?i)\*\*(?:Proposal|Agreed)\*\*') {
-                            $candidate = $m.Groups[1].Value.Trim()
-                            break
-                        }
-                    }
-                } else {
-                    # Or get the first non-header sub-bullet in the latest turn
-                    $bulletMatches = [regex]::Matches($searchBlock, '(?im)^\s+[-*]\s*(.+)$')
-                    if ($bulletMatches.Count -gt 0) {
-                        $candidate = $bulletMatches[0].Groups[1].Value.Trim()
-                    } else {
-                        # Or the top bullet itself
-                        $topMatch = [regex]::Match($searchBlock, '(?im)^[-*]\s*(.+)$')
-                        if ($topMatch.Success) {
-                            $candidate = $topMatch.Groups[1].Value.Trim()
-                        }
-                    }
-                }
-            }
-        }
-
-        if ([string]::IsNullOrWhiteSpace($candidate)) {
-            [System.Windows.MessageBox]::Show("No text selected in $seatName response pane, and no proposal bullet was found in the latest turn.", "Promote to Alignment", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
+        if ([string]::IsNullOrWhiteSpace($selectedText)) {
+            if ($txtStatus) { $txtStatus.Text = "Please highlight text in the $seatName response pane to promote to Alignment." }
             return
         }
 
-        $clean = $candidate -replace '^(?:-\s*|\*\s*)', '' -replace '^`?-\s*\*\*Agreed\*\*`?\s*:\s*', ''
+        $clean = $selectedText -replace '^(?:-\s*|\*\s*)', '' -replace '^`?-\s*\*\*Agreed\*\*`?\s*:\s*', ''
         $clean = $clean.Trim()
+        if ([string]::IsNullOrWhiteSpace($clean)) { return }
         $lineToAdd = "- **Agreed**: $clean"
 
         if ($txtAlignment.Text -match [regex]::Escape($clean)) {
@@ -2516,7 +2491,7 @@ function Promote-SelectedBulletToAlignment {
 
         Mark-FormDirty
         Save-BlackboardContent
-        if ($txtStatus) { $txtStatus.Text = "Promoted proposal from $seatName into Alignment." }
+        if ($txtStatus) { $txtStatus.Text = "Promoted selected text from $seatName into Alignment." }
     } catch {
         if ($txtStatus) { $txtStatus.Text = "Promote error: $_" }
     }
@@ -2647,18 +2622,62 @@ $cbPhase.add_SelectionChanged({
     if (-not $script:SuppressPresetSync) {
         Sync-PresetFromPhase (Get-PhaseString)
     }
+    $script:PhaseAdvanceGateLatched = $false
+    $script:PhaseAdvanceUncheckObserved = $false
     Ensure-PitchSeatsAdvise
     Mark-FormDirty
 })
 $rbGo.add_Checked({ Update-UiActiveTurn; Mark-FormDirty })
 $rbPause.add_Checked({ Update-UiActiveTurn; Mark-FormDirty })
 $rbStop.add_Checked({ Update-UiActiveTurn; Mark-FormDirty })
-$chkSignHuman.add_Checked({ Check-PhaseAutoAdvance; Update-UiActiveTurn; Mark-FormDirty })
-$chkSignHuman.add_Unchecked({ Update-UiActiveTurn; Mark-FormDirty })
-$chkSignCursor.add_Checked({ Check-PhaseAutoAdvance; Update-UiActiveTurn; Mark-FormDirty })
-$chkSignCursor.add_Unchecked({ Update-UiActiveTurn; Mark-FormDirty })
-$chkSignGemini.add_Checked({ Check-PhaseAutoAdvance; Update-UiActiveTurn; Mark-FormDirty })
-$chkSignGemini.add_Unchecked({ Update-UiActiveTurn; Mark-FormDirty })
+$chkSignHuman.add_Checked({
+    if ($script:PhaseAdvanceGateLatched -and $script:PhaseAdvanceUncheckObserved) {
+        $script:PhaseAdvanceGateLatched = $false
+        $script:PhaseAdvanceUncheckObserved = $false
+    }
+    Check-PhaseAutoAdvance
+    Update-UiActiveTurn
+    Mark-FormDirty
+})
+$chkSignHuman.add_Unchecked({
+    if (-not $script:SuppressAutoAdvanceLatchReset) {
+        $script:PhaseAdvanceUncheckObserved = $true
+    }
+    Update-UiActiveTurn
+    Mark-FormDirty
+})
+$chkSignCursor.add_Checked({
+    if ($script:PhaseAdvanceGateLatched -and $script:PhaseAdvanceUncheckObserved) {
+        $script:PhaseAdvanceGateLatched = $false
+        $script:PhaseAdvanceUncheckObserved = $false
+    }
+    Check-PhaseAutoAdvance
+    Update-UiActiveTurn
+    Mark-FormDirty
+})
+$chkSignCursor.add_Unchecked({
+    if (-not $script:SuppressAutoAdvanceLatchReset) {
+        $script:PhaseAdvanceUncheckObserved = $true
+    }
+    Update-UiActiveTurn
+    Mark-FormDirty
+})
+$chkSignGemini.add_Checked({
+    if ($script:PhaseAdvanceGateLatched -and $script:PhaseAdvanceUncheckObserved) {
+        $script:PhaseAdvanceGateLatched = $false
+        $script:PhaseAdvanceUncheckObserved = $false
+    }
+    Check-PhaseAutoAdvance
+    Update-UiActiveTurn
+    Mark-FormDirty
+})
+$chkSignGemini.add_Unchecked({
+    if (-not $script:SuppressAutoAdvanceLatchReset) {
+        $script:PhaseAdvanceUncheckObserved = $true
+    }
+    Update-UiActiveTurn
+    Mark-FormDirty
+})
 $txtPrompt.add_TextChanged({ Mark-FormDirty })
 $txtAlignment.add_TextChanged({ Mark-FormDirty })
 $txtHumanNotes.add_TextChanged({ Mark-FormDirty })
@@ -3279,7 +3298,8 @@ function Sync-SignoffCheckboxes {
     $cTable = ($raw -match ('(?m)\|\s*\*\*(?:' + $s1Esc + '|Cursor|Agent\s*1)\*\*\s*\|\s*`[^`]*`\s*\|\s*Active\s*\|\s*\[x\]'))
     $cPad = Get-LastMarkdownBody $raw "(?:###|##)\s+(?:$s1Esc|Cursor|Agent\s*1)(?:\s+Scratchpad)?"
     $cPadSign = Test-LatestBulletSignedOff $cPad
-    $cPadIsNew = ($null -eq $script:CursorPadAtPhaseChange -or $cPad -ne $script:CursorPadAtPhaseChange)
+    $cPadNorm = if ($cPad) { ($cPad -replace '\r\n', "`n" -replace '\r', "`n").Trim() } else { "" }
+    $cPadIsNew = ($null -eq $script:CursorPadAtPhaseChange -or $cPadNorm -ne $script:CursorPadAtPhaseChange)
     if ($cTable -or ($cPadSign -and $cPadIsNew)) {
         $chkSignCursor.IsChecked = $true
     }
@@ -3293,7 +3313,8 @@ function Sync-SignoffCheckboxes {
     $gTable = ($raw -match ('(?m)\|\s*\*\*(?:' + $s2Esc + '|Gemini(?:\s+\(Antigravity\))?|Agent\s*2)\*\*\s*\|\s*`[^`]*`\s*\|\s*Active\s*\|\s*\[x\]'))
     $gPad = Get-LastMarkdownBody $raw "(?:###|##)\s+(?:$s2Esc|Gemini(?:\s+\(Antigravity\))?|Agent\s*2)(?:\s+Scratchpad)?"
     $gPadSign = Test-LatestBulletSignedOff $gPad
-    $gPadIsNew = ($null -eq $script:GeminiPadAtPhaseChange -or $gPad -ne $script:GeminiPadAtPhaseChange)
+    $gPadNorm = if ($gPad) { ($gPad -replace '\r\n', "`n" -replace '\r', "`n").Trim() } else { "" }
+    $gPadIsNew = ($null -eq $script:GeminiPadAtPhaseChange -or $gPadNorm -ne $script:GeminiPadAtPhaseChange)
     if ($gTable -or ($gPadSign -and $gPadIsNew)) {
         $chkSignGemini.IsChecked = $true
     }
@@ -4291,6 +4312,7 @@ function Load-BlackboardIntoUI {
                 $sharedLines = @(Get-SharedAgreedLines $newCursorPad $newGeminiPad)
                 $newAgreedItems = @()
                 foreach ($item in $sharedLines) {
+                    if ($item -match '(?i)^\s*[*◦\-`"]*?\s*(?:Summary|Next)\b') { continue }
                     $alreadyInAlign = ($txtAlignment.Text -match [regex]::Escape($item))
                     if (-not $alreadyInAlign -and -not ($newAgreedItems -contains $item)) {
                         $newAgreedItems += $item
