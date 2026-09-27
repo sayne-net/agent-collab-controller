@@ -1,4 +1,4 @@
-# Agent Collab Controller (WPF UI)
+# AI Collab Controller (WPF UI)
 # Version 1.2.36
 # Standalone dual-session controller for multi-agent collaboration with human-in-the-loop steering.
 
@@ -621,7 +621,7 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
 
 $reader = (New-Object System.Xml.XmlNodeReader $xaml)
 $window = [System.Windows.Markup.XamlReader]::Load($reader)
-$window.Title = "Agent Collab Controller - " + $script:AppVersion
+$window.Title = "AI Collab Controller - " + $script:AppVersion
 
 $txtBoardPath          = $window.FindName("txtBoardPath")
 if ($txtBoardPath) {
@@ -1319,7 +1319,7 @@ function Set-ActiveBlackboardPath {
             $txtBoardPath.Text = $script:BlackboardPath
             $txtBoardPath.ToolTip = "Active Blackboard.md path (Click to copy):`n$script:BlackboardPath"
         }
-        $window.Title = "Agent Collab Controller - " + $script:AppVersion + " [" + $script:ProjectName + "]"
+        $window.Title = "AI Collab Controller - " + $script:AppVersion + " [" + $script:ProjectName + "]"
 
         $script:FormDirty = $false
         $script:LastReadBlackboardText = ""
