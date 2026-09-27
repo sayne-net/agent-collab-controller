@@ -37,6 +37,26 @@ Running multiple autonomous AI coding agents in parallel usually leads to one of
 
 ---
 
+## What's New in v1.2.35
+
+- **No empty separators**: Objective and Alignment boxes drop a trailing `---`. A `---` is inserted only when non-empty text is appended, and a no-op leaves the box unchanged.
+- **Auto relaunch**: When `scripts/blackboard-ui.ps1` stays newer for a short settle and the form is clean, the open window relaunches itself.
+- **Unsigned test rollback**: With Auto Step on during `test`, a new AI scratchpad turn without `Sign-off: [x]` returns the phase to `implement`.
+
+---
+
+## What's New in v1.2.34
+
+- **Kickoff dry run**: A Dry run checkbox records the selected target and whether New Chat is armed. Send does not copy or dispatch the prompt. Refs [#3](https://github.com/sayne-net/agent-collab-controller/issues/3).
+
+---
+
+## What's New in v1.2.33
+
+- **Codex New Chat tooltip**: The hover text comes from the controller tooltip list, which now matches the manual fail-safe. Codex New Chat copies the kickoff and does not send it.
+
+---
+
 ## What's New in v1.2.32
 
 - **Codex New Chat**: No Codex-specific new-chat action is verified for the desktop app. The controller leaves the kickoff prompt copied, does not send it into an unverified conversation, and keeps the one-shot armed. Open a new Codex chat manually, verify it, then paste and submit.

@@ -1,12 +1,12 @@
 # Agent Collab Controller (WPF UI)
-# Version 1.2.32
+# Version 1.2.35
 # Standalone dual-session controller for multi-agent collaboration with human-in-the-loop steering.
 
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
 
-$script:AppVersion = "v1.2.32"
+$script:AppVersion = "v1.2.35"
 $script:RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $script:ProjectName = (Split-Path $script:RepoRoot -Leaf)
 $script:ScriptFilePath = if ($PSCommandPath) { $PSCommandPath } else { Join-Path $PSScriptRoot "blackboard-ui.ps1" }
@@ -566,6 +566,7 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                     <Button Name="btnCopyKickoffPrompt" Content="📋 Copy Prompt" Background="#313244" Margin="0,0,4,0" ToolTip="Copy tailored full Kickoff Prompt for selected target to Clipboard"/>
                     <Button Name="btnSendKickoffPrompt" Content="🚀 Send Prompt" Background="#89B4FA" Foreground="#11111B" FontWeight="Bold" Margin="0,0,6,0" ToolTip="Sequence and send full Kickoff Prompt to selected target agent(s)"/>
                     <CheckBox Name="chkNewChatKickoff" Content="New Chat" IsChecked="False" VerticalAlignment="Center" Margin="4,0,4,0" Foreground="#A6E3A1" ToolTip="Optional one-shot on Kickoff. Codex New Chat is manual: the kickoff is copied, not sent; open and verify a new Codex chat, then paste and submit. The one-shot stays armed. Cursor uses Chat: New Chat; Antigravity uses Ctrl+Shift+I then Ctrl+Shift+L. Re-prompt never opens a new chat."/>
+                    <CheckBox Name="chkDryRunKickoff" Content="Dry run" IsChecked="False" VerticalAlignment="Center" Margin="4,0,4,0" Foreground="#89B4FA" ToolTip="Record the selected kickoff target, New Chat state, and status. Do not copy or send the prompt."/>
                 </StackPanel>
 
                 <!-- Center Safety Warning -->
@@ -827,6 +828,7 @@ $cbiKickoffBoth        = $window.FindName("cbiKickoffBoth")
 $btnCopyKickoffPrompt  = $window.FindName("btnCopyKickoffPrompt")
 $btnSendKickoffPrompt  = $window.FindName("btnSendKickoffPrompt")
 $chkNewChatKickoff     = $window.FindName("chkNewChatKickoff")
+$chkDryRunKickoff      = $window.FindName("chkDryRunKickoff")
 $btnRepromptCursor     = $window.FindName("btnRepromptCursor")
 $btnRepromptGemini     = $window.FindName("btnRepromptGemini")
 $btnRepromptBoth       = $window.FindName("btnRepromptBoth")
@@ -923,7 +925,7 @@ $script:MasterTooltips = @{
     "chkEnableTooltips"    = "Toggle hover tooltips on/off across all controller controls"
     "chkAudioCue"          = "Toggle audio chime on agent response / turn completion (default off)"
     "btnUpdateController"  = "Check GitHub for newer controller version, pull, and relaunch"
-    "btnRelaunch"          = "Relaunch controller script immediately (reloads local code changes)"
+    "btnRelaunch"          = "Relaunch controller script immediately (reloads local code changes). A newer script also relaunches on its own after a short settle when the form is clean."
     "badgeTurn"            = "Current active turn indicator"
     "txtActiveTurn"        = "Current active participant who has the turn"
 
@@ -969,7 +971,8 @@ $script:MasterTooltips = @{
     "cbKickoffTarget"      = "Select kickoff recipient target (Seat 1, Seat 2, or Both)"
     "btnCopyKickoffPrompt" = "Copy tailored Kickoff Prompt for selected target to Clipboard"
     "btnSendKickoffPrompt" = "Focus target window and paste tailored Kickoff Prompt"
-    "chkNewChatKickoff"    = "Optional one-shot: open a new chat tab in the target agent window on kickoff"
+    "chkNewChatKickoff"    = "Optional one-shot on Kickoff. Codex New Chat is manual: the kickoff is copied, not sent; open and verify a new Codex chat, then paste and submit. The one-shot stays armed. Cursor uses Chat: New Chat; Antigravity uses Ctrl+Shift+I then Ctrl+Shift+L. Re-prompt never opens a new chat."
+    "chkDryRunKickoff"     = "Record the selected kickoff target, New Chat state, and status. Do not copy or send the prompt."
     "btnRepromptCursor"    = "Focus Seat 1 window and trigger follow-up prompt"
     "btnRepromptGemini"    = "Focus Seat 2 window and trigger follow-up prompt"
     "btnRepromptBoth"      = "Re-prompt both agents"
@@ -2493,13 +2496,10 @@ function Show-CompareTurnsViewer {
             }
 
             if ($newItems.Count -gt 0) {
-                $existing = $txtAlignment.Text.Trim()
                 $appendLines = ($newItems | ForEach-Object { "- **Agreed**: $_" }) -join [Environment]::NewLine
-                if ($existing) {
-                    $txtAlignment.Text = $existing + [Environment]::NewLine + $appendLines
-                } else {
-                    $txtAlignment.Text = $appendLines
-                }
+                $joined = Join-TextWithSeparator -existing $txtAlignment.Text -addition $appendLines
+                if ($joined -eq $txtAlignment.Text) { return }
+                $txtAlignment.Text = $joined
                 Save-BlackboardContent
                 if ($script:CompareViewerStatus) { $script:CompareViewerStatus.Text = "Promoted $($newItems.Count) shared line(s) to Alignment and saved." }
                 $txtStatus.Text = "Promoted $($newItems.Count) shared line(s) from Compare Viewer to Alignment."
@@ -2572,6 +2572,11 @@ $script:PhaseAdvanceUncheckObserved = $false
 $script:SuppressAutoAdvanceLatchReset = $false
 $script:SuppressPhaseAutoAdvance = $false
 $script:NewSignoffDuringLoad = $false
+$script:PendingUnsignedRollback = $false
+$script:NewerScriptSinceUtc = $null
+$script:NewerScriptWriteTime = [DateTime]::MinValue
+$script:AutoRelaunchStarted = $false
+$script:AutoRelaunchSettleSeconds = 8
 
 function Read-SignoffBaseline {
     if ($null -ne $script:CursorPadAtPhaseChange -or $null -ne $script:GeminiPadAtPhaseChange) { return }
@@ -2741,6 +2746,31 @@ function Check-PhaseAutoAdvance {
     }
 }
 
+function Invoke-UnsignedTestRollback {
+    if (-not $script:PendingUnsignedRollback) { return }
+    $script:PendingUnsignedRollback = $false
+    if ((Get-PhaseString) -ne "test") { return }
+    if ($chkAutoStep -and -not $chkAutoStep.IsChecked) { return }
+    $flow = Get-FlowControlString
+    if ($flow -match "STOP|PAUSE") { return }
+
+    $script:SuppressPhaseAutoAdvance = $true
+    $script:SuppressFormDirty = $true
+    try {
+        if ($chkSignHuman) { $chkSignHuman.IsChecked = $false }
+        if ($chkSignCursor) { $chkSignCursor.IsChecked = $false }
+        if ($chkSignGemini) { $chkSignGemini.IsChecked = $false }
+        Set-Phase "implement"
+        Set-RolesForPhase "implement"
+        if ($txtStatus) { $txtStatus.Text = "Auto step: an AI test turn has no Sign-off [x]. Phase returned to implement." }
+        Save-BlackboardContent
+        Update-UiActiveTurn -keepOverride
+    } finally {
+        $script:SuppressPhaseAutoAdvance = $false
+        $script:SuppressFormDirty = $false
+    }
+}
+
 function Promote-SelectedBulletToAlignment {
     param(
         [System.Windows.Controls.RichTextBox]$rtbSource,
@@ -2763,12 +2793,9 @@ function Promote-SelectedBulletToAlignment {
             return
         }
 
-        $existing = $txtAlignment.Text.Trim()
-        if ($existing) {
-            $txtAlignment.Text = $existing + [Environment]::NewLine + $lineToAdd
-        } else {
-            $txtAlignment.Text = $lineToAdd
-        }
+        $joined = Join-TextWithSeparator -existing $txtAlignment.Text -addition $lineToAdd
+        if ($joined -eq $txtAlignment.Text) { return }
+        $txtAlignment.Text = $joined
 
         Mark-FormDirty
         Save-BlackboardContent
@@ -3427,6 +3454,86 @@ $mandatoryBlock
 "@
 }
 
+function Remove-DanglingSeparators {
+    param([string]$text)
+    if ([string]::IsNullOrWhiteSpace($text)) { return "" }
+    $lines = @($text -split "`r?`n")
+    $end = $lines.Count
+    while ($end -gt 0) {
+        $trimmed = $lines[$end - 1].Trim()
+        if ($trimmed -eq "" -or $trimmed -eq "---") { $end-- } else { break }
+    }
+    if ($end -le 0) { return "" }
+    if ($end -eq 1) { return $lines[0].TrimEnd() }
+    return (($lines[0..($end - 1)] -join "`n").TrimEnd())
+}
+
+function Join-TextWithSeparator {
+    param([string]$existing, [string]$addition)
+    if ([string]::IsNullOrWhiteSpace($addition)) { return $existing }
+    $add = Remove-DanglingSeparators $addition
+    if ([string]::IsNullOrWhiteSpace($add)) { return $existing }
+    if ([string]::IsNullOrWhiteSpace($existing)) { return $add }
+    $base = Remove-DanglingSeparators $existing
+    if ([string]::IsNullOrWhiteSpace($base)) { return $add }
+    return ($base + [Environment]::NewLine + "---" + [Environment]::NewLine + $add)
+}
+
+function Get-LatestTurnText {
+    param([string]$pad)
+    if ([string]::IsNullOrWhiteSpace($pad)) { return "" }
+    $lines = @($pad -split "`r?`n")
+    $start = -1
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match '^\s*[-*]\s+\*\*') { $start = $i; break }
+    }
+    if ($start -lt 0) { return $pad.Trim() }
+    $end = $lines.Count
+    for ($j = $start + 1; $j -lt $lines.Count; $j++) {
+        if ($lines[$j] -match '^\s*[-*]\s+\*\*') { $end = $j; break }
+    }
+    if ($end -le $start) { return "" }
+    return (($lines[$start..($end - 1)] -join "`n").Trim())
+}
+
+function Test-LatestTurnSigned {
+    param([string]$pad)
+    $turn = Get-LatestTurnText $pad
+    if ([string]::IsNullOrWhiteSpace($turn)) { return $false }
+    return $turn -match '(?i)Sign-?off\s*(?:\*\*)?\s*:\s*\[x\]'
+}
+
+function Test-AutoRelaunchReady {
+    param(
+        [bool]$diskNewer,
+        [bool]$formDirty,
+        $seenUtc,
+        $nowUtc,
+        [int]$settleSeconds = 8
+    )
+    if (-not $diskNewer) { return $false }
+    if ($formDirty) { return $false }
+    if ($null -eq $seenUtc) { return $false }
+    return (($nowUtc - $seenUtc).TotalSeconds -ge $settleSeconds)
+}
+
+function Test-UnsignedTestRollback {
+    param(
+        [string]$phase,
+        [bool]$autoStep,
+        [string]$flow,
+        [bool]$padChanged,
+        [string]$pad
+    )
+    if ($phase -ne "test") { return $false }
+    if (-not $autoStep) { return $false }
+    if ($flow -match "STOP|PAUSE") { return $false }
+    if (-not $padChanged) { return $false }
+    if ([string]::IsNullOrWhiteSpace($pad)) { return $false }
+    if ($pad -match '(?i)^-\s*\(.*(?:updates?|scratchpad)') { return $false }
+    return -not (Test-LatestTurnSigned $pad)
+}
+
 function Get-LastMarkdownBody {
     param(
         [string]$raw,
@@ -3729,13 +3836,13 @@ function Save-BlackboardContent {
         "",
         "## Current Objective & Prompt",
         "",
-        $txtPrompt.Text,
+        (Remove-DanglingSeparators $txtPrompt.Text),
         "",
         "---",
         "",
         "## Alignment & Agreed Decisions",
         "",
-        $txtAlignment.Text,
+        (Remove-DanglingSeparators $txtAlignment.Text),
         "",
         "---",
         "",
@@ -4151,6 +4258,12 @@ function Invoke-SendKickoffPrompt {
             if ($item.Tag) { [string]$item.Tag } else { [string]$item.Content }
         } else { "Both" }
 
+        if ($chkDryRunKickoff -and $chkDryRunKickoff.IsChecked) {
+            $newNote = if ($doNew) { "New Chat armed" } else { "New Chat off" }
+            $txtStatus.Text = "Dry run: target $target ($s1 / $s2), $newNote. No prompt copied or sent."
+            return
+        }
+
         switch -Regex ($target) {
             "Seat1" {
                 $pAgent1 = Get-KickoffPromptForAgent -agentName $s1 -role $cbCursorRole.Text -seatId "seat1"
@@ -4487,13 +4600,27 @@ $timer.add_Tick({
             $diskTime = (Get-Item $script:ScriptFilePath).LastWriteTime
             if ($diskTime -gt $script:LoadedScriptWriteTime) {
                 $script:DiskScriptIsNewer = $true
+                if ($diskTime -ne $script:NewerScriptWriteTime) {
+                    $script:NewerScriptWriteTime = $diskTime
+                    $script:NewerScriptSinceUtc = [DateTime]::UtcNow
+                    $script:AutoRelaunchStarted = $false
+                }
                 if ($btnRelaunch -and $btnRelaunch.Content -notmatch "Newer on Disk") {
                     $btnRelaunch.Content = "⏭️ Relaunch (Newer on Disk)"
                     $btnRelaunch.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F9E2AF")
                     $btnRelaunch.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#11111B")
                     $btnRelaunch.FontWeight = [System.Windows.FontWeights]::Bold
-                    $btnRelaunch.ToolTip = "scripts/blackboard-ui.ps1 on disk is newer ($($diskTime.ToString('HH:mm:ss'))). Click to relaunch and load updates."
+                    $btnRelaunch.ToolTip = "scripts/blackboard-ui.ps1 on disk is newer ($($diskTime.ToString('HH:mm:ss'))). Relaunch is automatic after $($script:AutoRelaunchSettleSeconds)s when the form is clean."
                 }
+                $ready = Test-AutoRelaunchReady -diskNewer $true -formDirty ([bool]$script:FormDirty) -seenUtc $script:NewerScriptSinceUtc -nowUtc ([DateTime]::UtcNow) -settleSeconds $script:AutoRelaunchSettleSeconds
+                if ($ready -and -not $script:AutoRelaunchStarted) {
+                    $script:AutoRelaunchStarted = $true
+                    if ($txtStatus) { $txtStatus.Text = "Script on disk stayed newer and the form is clean. Relaunching..." }
+                    Invoke-ControllerRelaunch -force
+                }
+            } else {
+                $script:NewerScriptSinceUtc = $null
+                $script:AutoRelaunchStarted = $false
             }
         } catch {}
     }
@@ -4602,15 +4729,23 @@ function Load-BlackboardIntoUI {
                 $script:ActiveTurnOverride = $null
             } else {
                 $turnChanged = $false
+                $autoOn = -not ($chkAutoStep -and -not $chkAutoStep.IsChecked)
+                $flowNow = Get-FlowControlString
                 if ($newCursorPad -ne $script:LastCursorPad -and $newCursorPad -notmatch "(?i)^-\s*\((?:$s1Esc|Cursor|Agent\s*1|AI\s*1)\s+(?:updates?|scratchpad)" -and $newCursorPad.Trim()) {
                     $script:LastCursorPad = $newCursorPad
                     $script:ActiveTurnOverride = "$s1 responded at " + (Get-Date -Format "HH:mm")
                     $turnChanged = $true
+                    if (Test-UnsignedTestRollback -phase (Get-PhaseString) -autoStep $autoOn -flow $flowNow -padChanged $true -pad $newCursorPad) {
+                        $script:PendingUnsignedRollback = $true
+                    }
                 }
                 if ($newGeminiPad -ne $script:LastGeminiPad -and $newGeminiPad -notmatch "(?i)^-\s*\((?:$s2Esc|Gemini|Agent\s*2|AI\s*2)\s+(?:updates?|scratchpad)" -and $newGeminiPad.Trim()) {
                     $script:LastGeminiPad = $newGeminiPad
                     $script:ActiveTurnOverride = "$s2 responded at " + (Get-Date -Format "HH:mm")
                     $turnChanged = $true
+                    if (Test-UnsignedTestRollback -phase (Get-PhaseString) -autoStep $autoOn -flow $flowNow -padChanged $true -pad $newGeminiPad) {
+                        $script:PendingUnsignedRollback = $true
+                    }
                 }
                 if ($turnChanged) {
                     $script:TurnCueExpiresAt = [DateTime]::UtcNow.AddSeconds(6)
@@ -4625,25 +4760,23 @@ function Load-BlackboardIntoUI {
             }
             
             if (-not $fromTimer) {
-                $txtPrompt.Text = Get-LastMarkdownBody $raw '##\s+Current Objective\s*&\s*Prompt'
-                $alignLoaded = Get-LastMarkdownBody $raw '##\s+Alignment\s*&\s*Agreed Decisions'
-                if ($alignLoaded -eq "---") { $alignLoaded = "" }
+                $txtPrompt.Text = Remove-DanglingSeparators (Get-LastMarkdownBody $raw '##\s+Current Objective\s*&\s*Prompt')
+                $alignLoaded = Remove-DanglingSeparators (Get-LastMarkdownBody $raw '##\s+Alignment\s*&\s*Agreed Decisions')
                 $txtAlignment.Text = $alignLoaded
-                $humanLoaded = Get-LastMarkdownBody $raw '(?:###|##)\s+(?:Human(?:\s+\(Lead\))?|[^\r\n]+?\s+\(Lead\)|Lead)'
+                $humanLoaded = Remove-DanglingSeparators (Get-LastMarkdownBody $raw '(?:###|##)\s+(?:Human(?:\s+\(Lead\))?|[^\r\n]+?\s+\(Lead\)|Lead)')
                 if ($humanLoaded) { $txtHumanNotes.Text = $humanLoaded }
                 $script:FormDirty = $false
             } else {
                 if (-not $script:FormDirty) {
-                    $promptLoaded = Get-LastMarkdownBody $raw '##\s+Current Objective\s*&\s*Prompt'
+                    $promptLoaded = Remove-DanglingSeparators (Get-LastMarkdownBody $raw '##\s+Current Objective\s*&\s*Prompt')
                     if ($promptLoaded -and $promptLoaded -ne $txtPrompt.Text) {
                         $txtPrompt.Text = $promptLoaded
                     }
-                    $alignLoaded = Get-LastMarkdownBody $raw '##\s+Alignment\s*&\s*Agreed Decisions'
-                    if ($alignLoaded -eq "---") { $alignLoaded = "" }
+                    $alignLoaded = Remove-DanglingSeparators (Get-LastMarkdownBody $raw '##\s+Alignment\s*&\s*Agreed Decisions')
                     if ($alignLoaded -ne $txtAlignment.Text) {
                         $txtAlignment.Text = $alignLoaded
                     }
-                    $humanLoaded = Get-LastMarkdownBody $raw '(?:###|##)\s+(?:Human(?:\s+\(Lead\))?|[^\r\n]+?\s+\(Lead\)|Lead)'
+                    $humanLoaded = Remove-DanglingSeparators (Get-LastMarkdownBody $raw '(?:###|##)\s+(?:Human(?:\s+\(Lead\))?|[^\r\n]+?\s+\(Lead\)|Lead)')
                     if ($humanLoaded -and $humanLoaded -ne $txtHumanNotes.Text) {
                         $txtHumanNotes.Text = $humanLoaded
                     }
@@ -4664,20 +4797,18 @@ function Load-BlackboardIntoUI {
                 }
                 
                 if ($newAgreedItems.Count -gt 0) {
-                    $existing = $txtAlignment.Text.Trim()
                     $appendLines = ($newAgreedItems | ForEach-Object { "- **Agreed**: $_" }) -join [Environment]::NewLine
-                    if ($existing) {
-                        $txtAlignment.Text = $existing + [Environment]::NewLine + $appendLines
-                    } else {
-                        $txtAlignment.Text = $appendLines
+                    $joined = Join-TextWithSeparator -existing $txtAlignment.Text -addition $appendLines
+                    if ($joined -ne $txtAlignment.Text) {
+                        $txtAlignment.Text = $joined
+                        Save-BlackboardContent
+                        $txtStatus.Text = "Auto-promoted $($newAgreedItems.Count) agreed decision(s) to Alignment."
                     }
-                    Save-BlackboardContent
-                    $txtStatus.Text = "Auto-promoted $($newAgreedItems.Count) agreed decision(s) to Alignment."
                 }
             }
             
             if ($script:DiskScriptIsNewer -and (-not $script:FormDirty)) {
-                $txtStatus.Text = "⚠️ Controller script on disk is newer than this open window. Click Relaunch (⏭️) to update."
+                $txtStatus.Text = "⚠️ Controller script on disk is newer than this open window. It relaunches after a short settle while the form stays clean."
             } elseif (-not $fromTimer) {
                 $txtStatus.Text = "Loaded blackboard from .ai/blackboard.md"
             } elseif (-not $script:FormDirty) {
@@ -4697,7 +4828,10 @@ function Load-BlackboardIntoUI {
             $script:SuppressFormDirty = $false
             $script:SuppressPhaseAutoAdvance = $false
         }
-        if ($script:NewSignoffDuringLoad) {
+        if ($script:PendingUnsignedRollback) {
+            $script:NewSignoffDuringLoad = $false
+            Invoke-UnsignedTestRollback
+        } elseif ($script:NewSignoffDuringLoad) {
             $script:NewSignoffDuringLoad = $false
             Check-PhaseAutoAdvance
         }
