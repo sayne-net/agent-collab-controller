@@ -3885,10 +3885,8 @@ function Send-AgentChatPaste {
             # Electron window: the composer is not in the UI Automation tree.
             # Click the lower-center input, then paste. The Codex process has no window; the app process is ChatGPT.
             if ($newChat) {
-                # Ctrl+Alt+O is the documented Codex-only new standalone chat shortcut.
-                # The app's window title cannot confirm the chat, so do not paste or consume the one-shot.
-                Safe-SendKeys "^%o"
-                Start-Sleep -Milliseconds 500
+                # No Codex-specific new-chat action is verified for the desktop app.
+                # Keep the prompt copied and avoid sending it into an unverified conversation.
                 return $false
             }
             if (-not [WinHelper]::ClickLowerComposer([WinHelper]::LastHwnd, 110, 50)) {
@@ -4162,7 +4160,7 @@ function Invoke-SendKickoffPrompt {
                     $chatNote = if ($doNew) { " (New Chat, then off)" } else { "" }
                     $txtStatus.Text = if ($doNew -and $s1 -eq "Codex") { "🚀 Opened a new Codex chat with the kickoff prompt ready to send." } else { "🚀 Sent $s1 Kickoff Prompt to active IDE window$chatNote." }
                 } else {
-                    $txtStatus.Text = if ($doNew -and $s1 -eq "Codex") { "⚠️ Sent Ctrl+Alt+O; kickoff is copied. Confirm the new chat, then paste and submit. New Chat remains armed." } elseif ($doNew) { "⚠️ No new $s1 chat was confirmed; kickoff was not sent and New Chat remains armed." } else { "📋 Copied $s1 Kickoff to clipboard (IDE window not found). Focus $s1 and paste." }
+                    $txtStatus.Text = if ($doNew -and $s1 -eq "Codex") { "⚠️ Codex New Chat could not be opened or confirmed automatically. Kickoff is copied; open a new Codex chat, verify it, then paste and submit. New Chat remains armed." } elseif ($doNew) { "⚠️ No new $s1 chat was confirmed; kickoff was not sent and New Chat remains armed." } else { "📋 Copied $s1 Kickoff to clipboard (IDE window not found). Focus $s1 and paste." }
                 }
             }
             "Seat2" {
@@ -4173,7 +4171,7 @@ function Invoke-SendKickoffPrompt {
                     $chatNote = if ($doNew) { " (New Chat, then off)" } else { "" }
                     $txtStatus.Text = if ($doNew -and $s2 -eq "Codex") { "🚀 Opened a new Codex chat with the kickoff prompt ready to send." } else { "🚀 Sent $s2 Kickoff Prompt to active IDE window$chatNote." }
                 } else {
-                    $txtStatus.Text = if ($doNew -and $s2 -eq "Codex") { "⚠️ Sent Ctrl+Alt+O; kickoff is copied. Confirm the new chat, then paste and submit. New Chat remains armed." } elseif ($doNew) { "⚠️ No new $s2 chat was confirmed; kickoff was not sent and New Chat remains armed." } else { "📋 Copied $s2 Kickoff to clipboard (IDE window not found). Focus $s2 and paste." }
+                    $txtStatus.Text = if ($doNew -and $s2 -eq "Codex") { "⚠️ Codex New Chat could not be opened or confirmed automatically. Kickoff is copied; open a new Codex chat, verify it, then paste and submit. New Chat remains armed." } elseif ($doNew) { "⚠️ No new $s2 chat was confirmed; kickoff was not sent and New Chat remains armed." } else { "📋 Copied $s2 Kickoff to clipboard (IDE window not found). Focus $s2 and paste." }
                 }
             }
             default {

@@ -39,7 +39,7 @@ Running multiple autonomous AI coding agents in parallel usually leads to one of
 
 ## What's New in v1.2.32
 
-- **Codex New Chat**: The Codex seat sends the documented `Ctrl+Alt+O` new standalone chat shortcut and leaves its kickoff prompt copied for review. Since the desktop app does not expose a reliable new-chat confirmation to the controller, it does not paste into an unverified conversation or consume the one-shot option; verify the new chat, then paste and submit.
+- **Codex New Chat**: No Codex-specific new-chat action is verified for the desktop app. The controller leaves the kickoff prompt copied, does not send it into an unverified conversation, and keeps the one-shot armed. Open a new Codex chat manually, verify it, then paste and submit.
 
 ---
 
