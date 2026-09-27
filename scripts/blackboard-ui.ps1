@@ -1,12 +1,12 @@
 # Agent Collab Controller (WPF UI)
-# Version 1.2.25
+# Version 1.2.27
 # Standalone dual-session controller for multi-agent collaboration with human-in-the-loop steering.
 
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
 
-$script:AppVersion = "v1.2.25"
+$script:AppVersion = "v1.2.27"
 $script:RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $script:ProjectName = (Split-Path $script:RepoRoot -Leaf)
 $script:ScriptFilePath = if ($PSCommandPath) { $PSCommandPath } else { Join-Path $PSScriptRoot "blackboard-ui.ps1" }
@@ -868,6 +868,7 @@ function Get-ClientConfiguration {
             "Windsurf" = [PSCustomObject]@{ process = "Windsurf"; description = "Codeium Windsurf IDE" }
             "VS Code" = [PSCustomObject]@{ process = "Code"; description = "VS Code / GitHub Copilot" }
             "Terminal" = [PSCustomObject]@{ process = "WindowsTerminal"; description = "Windows Terminal (Claude Code, Aider, CLI)" }
+            "ChatGPT" = [PSCustomObject]@{ process = "ChatGPT"; description = "OpenAI ChatGPT Desktop / Web App" }
         }
     }
 
@@ -879,6 +880,9 @@ function Get-ClientConfiguration {
             if (-not $obj.PSObject.Properties['tooltips']) { $obj | Add-Member -NotePropertyName "tooltips" -NotePropertyValue $true -Force }
             if (-not $obj.PSObject.Properties['audioCue']) { $obj | Add-Member -NotePropertyName "audioCue" -NotePropertyValue $false -Force }
             if (-not $obj.PSObject.Properties['autoStep']) { $obj | Add-Member -NotePropertyName "autoStep" -NotePropertyValue $true -Force }
+            if ($obj.profiles -and (-not $obj.profiles.PSObject.Properties['ChatGPT'])) {
+                $obj.profiles | Add-Member -NotePropertyName "ChatGPT" -NotePropertyValue ([PSCustomObject]@{ process = "ChatGPT"; description = "OpenAI ChatGPT Desktop / Web App" }) -Force
+            }
         }
     }
 
@@ -1139,7 +1143,7 @@ function Populate-SeatClientDropdowns {
     $script:ClientConfig = Get-ClientConfiguration
     $profileNames = @($script:ClientConfig.profiles.PSObject.Properties | ForEach-Object { $_.Name })
     if ($profileNames.Count -eq 0) {
-        $profileNames = @("AI 1", "AI 2", "Cursor", "Antigravity", "Windsurf", "VS Code", "Terminal")
+        $profileNames = @("AI 1", "AI 2", "Cursor", "Antigravity", "Windsurf", "VS Code", "Terminal", "ChatGPT")
     }
 
     $boardSeat1 = $null
@@ -3629,6 +3633,7 @@ function Send-AgentChatPaste {
         elseif ($clientName -eq "Windsurf") { $procName = "Windsurf" }
         elseif ($clientName -eq "VS Code") { $procName = "Code" }
         elseif ($clientName -eq "Terminal") { $procName = "WindowsTerminal" }
+        elseif ($clientName -eq "ChatGPT") { $procName = "ChatGPT" }
     }
     
     if ([string]::IsNullOrWhiteSpace($procName)) {
@@ -3688,6 +3693,18 @@ function Send-AgentChatPaste {
             # Terminal / Shell: Blind keystroke injection forbidden for command safety.
             # Return $false to prompt manual clipboard paste.
             return $false
+        }
+        "ChatGPT" {
+            # Electron window: the composer is not in the UI Automation tree.
+            # Click the lower-center input, then paste. Codex runs inside this window (no top-level hwnd).
+            if (-not [WinHelper]::ClickLowerComposer([WinHelper]::LastHwnd, 110, 50)) {
+                return $false
+            }
+            Start-Sleep -Milliseconds 200
+            Safe-SendKeys "^v"
+            Start-Sleep -Milliseconds 150
+            Safe-SendKeys "{ENTER}"
+            return $true
         }
         default {
             return $false
