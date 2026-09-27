@@ -1,12 +1,12 @@
 # Agent Collab Controller (WPF UI)
-# Version 1.2.35
+# Version 1.2.36
 # Standalone dual-session controller for multi-agent collaboration with human-in-the-loop steering.
 
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
 
-$script:AppVersion = "v1.2.35"
+$script:AppVersion = "v1.2.36"
 $script:RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $script:ProjectName = (Split-Path $script:RepoRoot -Leaf)
 $script:ScriptFilePath = if ($PSCommandPath) { $PSCommandPath } else { Join-Path $PSScriptRoot "blackboard-ui.ps1" }
@@ -2749,7 +2749,8 @@ function Check-PhaseAutoAdvance {
 function Invoke-UnsignedTestRollback {
     if (-not $script:PendingUnsignedRollback) { return }
     $script:PendingUnsignedRollback = $false
-    if ((Get-PhaseString) -ne "test") { return }
+    $phaseNow = Get-PhaseString
+    if ($phaseNow -ne "test" -and $phaseNow -ne "closing") { return }
     if ($chkAutoStep -and -not $chkAutoStep.IsChecked) { return }
     $flow = Get-FlowControlString
     if ($flow -match "STOP|PAUSE") { return }
@@ -2762,7 +2763,7 @@ function Invoke-UnsignedTestRollback {
         if ($chkSignGemini) { $chkSignGemini.IsChecked = $false }
         Set-Phase "implement"
         Set-RolesForPhase "implement"
-        if ($txtStatus) { $txtStatus.Text = "Auto step: an AI test turn has no Sign-off [x]. Phase returned to implement." }
+        if ($txtStatus) { $txtStatus.Text = "Auto step: an AI $phaseNow turn has no Sign-off [x]. Phase returned to implement." }
         Save-BlackboardContent
         Update-UiActiveTurn -keepOverride
     } finally {
@@ -3525,7 +3526,7 @@ function Test-UnsignedTestRollback {
         [bool]$padChanged,
         [string]$pad
     )
-    if ($phase -ne "test") { return $false }
+    if ($phase -ne "test" -and $phase -ne "closing") { return $false }
     if (-not $autoStep) { return $false }
     if ($flow -match "STOP|PAUSE") { return $false }
     if (-not $padChanged) { return $false }

@@ -37,6 +37,12 @@ Running multiple autonomous AI coding agents in parallel usually leads to one of
 
 ---
 
+## What's New in v1.2.36
+
+- **Unsigned closing rollback**: With Auto Step on during `closing`, a new AI scratchpad turn without `Sign-off: [x]` returns the phase to `implement`, the same way `test` already does.
+
+---
+
 ## What's New in v1.2.35
 
 - **No empty separators**: Objective and Alignment boxes drop a trailing `---`. A `---` is inserted only when non-empty text is appended, and a no-op leaves the box unchanged.
