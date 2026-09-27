@@ -1,12 +1,12 @@
 # Agent Collab Controller (WPF UI)
-# Version 1.2.24
+# Version 1.2.25
 # Standalone dual-session controller for multi-agent collaboration with human-in-the-loop steering.
 
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
 
-$script:AppVersion = "v1.2.24"
+$script:AppVersion = "v1.2.25"
 $script:RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $script:ProjectName = (Split-Path $script:RepoRoot -Leaf)
 $script:ScriptFilePath = if ($PSCommandPath) { $PSCommandPath } else { Join-Path $PSScriptRoot "blackboard-ui.ps1" }
@@ -3110,6 +3110,7 @@ function Get-KickoffPromptForAgent {
     $alignBlock = Get-AlignmentBlock
     $latestNotes = Get-LatestScratchpadSummary
     $roleGuidance = Get-RoleGuidance $normRole
+    $signOffGuidance = Get-SignOffGuidance
     $sNameEsc = [regex]::Escape($agentName)
     $scratchpadSection = if ($seatId -eq "seat1" -or $agentName -match 'Cursor|Agent\s*1|AI\s*1') {
         if ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### $sNameEsc Scratchpad" -Quiet)) { "### $agentName Scratchpad" }
@@ -3131,6 +3132,7 @@ MANDATORY ACTION:
 1. Blackboard Updates: Edit '$boardPath' (targeted chunk/block replacement) to append your plan/progress under '$scratchpadSection' only. Never overwrite the entire blackboard; do NOT edit blackboard.example.md, .ai/history/, or .ai/saved/.
 2. Implementation: Land tracked repository changes, code, and documentation as required by the objective.
 3. Verification: Ensure the header (GitHub Issue and Objective) matches this prompt. If mismatched, halt and alert the user.
+4. Phase Sign-off: When your implementation work is complete and verified, include 'Sign-off: [x]' on your top scratchpad bullet and mark your row '[x]' in the Agent Roles table to advance to the next phase.
 Do not only reply in chat; all dual-session collaboration takes place through $boardPath.
 "@
     } else {
@@ -3139,6 +3141,7 @@ MANDATORY ACTION:
 1. Target File: '$boardPath' ONLY (do NOT edit blackboard.example.md, .ai/history/, or .ai/saved/).
 2. Edit Scope: Use your file editing tool (targeted chunk/block replacement) to update under '$scratchpadSection' only. Never overwrite the entire file.
 3. Verification: Ensure the header (GitHub Issue and Objective) matches this prompt. If mismatched, halt and alert the user.
+4. Phase Sign-off: When your advisory or review notes are complete, include 'Sign-off: [x]' on your top scratchpad bullet and mark your row '[x]' in the Agent Roles table to signal phase readiness.
 Do not only reply in chat; all dual-session collaboration takes place through $boardPath.
 "@
     }

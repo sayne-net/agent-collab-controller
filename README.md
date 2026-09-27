@@ -37,6 +37,13 @@ Running multiple autonomous AI coding agents in parallel usually leads to one of
 
 ---
 
+## What's New in v1.2.25
+
+- 🔄 **Prompt Phase Sign-off Guidance Injection**: Fixed an issue where `$signOffGuidance` was uninitialized in `Get-KickoffPromptForAgent`. Kickoff prompts now explicitly guide agents on phase sign-off criteria (`Sign-off: [x]` and table `[x]`) across all phases.
+- 📋 **Mandatory Action Sign-off Instruction**: Added an explicit sign-off step to the `MANDATORY ACTION` section of kickoff prompts, instructing implementing and reviewing agents to mark completion when their phase work is done to trigger automated auto-stepping without stalling.
+
+---
+
 ## What's New in v1.2.24
 
 - 🛡️ **Configuration Schema Resilience**: Automatically normalizes older or partial `clients.json` files on load and save, ensuring recent boards and preferences survive deserialization without exceptions.
