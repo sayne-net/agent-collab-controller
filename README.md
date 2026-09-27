@@ -37,6 +37,51 @@ Running multiple autonomous AI coding agents in parallel usually leads to one of
 
 ---
 
+## What's New in v1.2.32
+
+- **Codex New Chat**: The Codex seat opens a new local Codex chat with its kickoff prompt prefilled through the documented `codex://new` deep link. Codex does not submit the prompt automatically, so the user can review and press Enter. This avoids relying on the generic app window title as a new-chat confirmation signal.
+
+---
+
+## What's New in v1.2.31
+
+- **Deleted PNG diff**: A removed `.png` now shows the last image. Committed deletions use the upstream blob. Working-tree deletions use the HEAD blob. The label says the file was deleted.
+
+---
+
+## What's New in v1.2.30
+
+- **Committed PNG diff**: Review Diff now embeds images from `origin/..HEAD` as well as the working tree. A changed PNG shows the upstream image and the HEAD image. Close Project still asks before archiving when a sign-off is missing; answering Yes is the human override.
+
+---
+
+## What's New in v1.2.29
+
+- **Codex seat**: The seat pull-down name is `Codex`. Send still focuses the ChatGPT desktop window, because the `codex` process has no window of its own.
+
+---
+
+## What's New in v1.2.28
+
+- **Auto-step roles**: Advancing a phase now applies that phase's role pair. Pitch and discuss are both advise, plan is plan plus idle, implement is review plus implement, and review and test are both review.
+- **Closing**: Auto-step from test stops at `closing`. Both seats go idle and the kickoff asks only for the final sign-off. Close Project stays with the human. `closed` remains the archived state.
+- **PNG diff**: Review Diff shows `.png` files as images. It no longer prints the file bytes as text.
+
+---
+
+## What's New in v1.2.27
+
+- **ChatGPT Send**: Seat send focuses the ChatGPT window, clicks the lower-center composer, and pastes the prompt. Codex has no window of its own; it runs inside that ChatGPT window. The old path focused the window and then reported that the window was missing.
+
+---
+
+## What's New in v1.2.26
+
+- 🤖 **ChatGPT Client Profile Support**: Added `ChatGPT` as a selectable AI profile in the Seat 1 and Seat 2 client dropdowns (`cbSeat1Client`, `cbSeat2Client`). Automatically targets the `ChatGPT` desktop process and safely switches to clipboard-paste mode for prompt delivery.
+- 📦 **Profile Auto-Injection**: Updated controller configuration bootstrap to automatically inject the `ChatGPT` profile into existing `clients.json` configurations without requiring manual JSON editing or config resets.
+
+---
+
 ## What's New in v1.2.25
 
 - 🔄 **Prompt Phase Sign-off Guidance Injection**: Fixed an issue where `$signOffGuidance` was uninitialized in `Get-KickoffPromptForAgent`. Kickoff prompts now explicitly guide agents on phase sign-off criteria (`Sign-off: [x]` and table `[x]`) across all phases.

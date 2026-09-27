@@ -33,6 +33,10 @@
     "Terminal": {
       "process": "WindowsTerminal",
       "description": "Windows Terminal (Claude Code, Aider, CLI)"
+    },
+    "Codex": {
+      "process": "ChatGPT",
+      "description": "OpenAI Codex in the ChatGPT desktop app"
     }
   }
 }
