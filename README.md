@@ -37,6 +37,14 @@ Running multiple autonomous AI coding agents in parallel usually leads to one of
 
 ---
 
+## What's New in v1.2.24
+
+- 🛡️ **Configuration Schema Resilience**: Automatically normalizes older or partial `clients.json` files on load and save, ensuring recent boards and preferences survive deserialization without exceptions.
+- ⚠️ **Visible Save Error Reporting**: Displays configuration save exceptions directly in the controller status bar rather than catching them silently.
+- 🔍 **Safe Path Resolution**: Uses resilient path resolution for recent board paths to avoid runtime failures when paths are moved or temporarily inaccessible.
+
+---
+
 ## What's New in v1.2.23
 
 Since `v1.2.2`, the controller has evolved with major Human-in-the-Loop (HITL) lifecycle controls, safety latches, and multi-board navigation:
