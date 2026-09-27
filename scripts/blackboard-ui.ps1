@@ -1,12 +1,12 @@
 # Agent Collab Controller (WPF UI)
-# Version 1.2.16
+# Version 1.2.17
 # Standalone dual-session controller for multi-agent collaboration with human-in-the-loop steering.
 
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
 
-$script:AppVersion = "v1.2.16"
+$script:AppVersion = "v1.2.17"
 $script:RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $script:ProjectName = (Split-Path $script:RepoRoot -Leaf)
 $script:ScriptFilePath = if ($PSCommandPath) { $PSCommandPath } else { Join-Path $PSScriptRoot "blackboard-ui.ps1" }
@@ -275,17 +275,17 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
             <RowDefinition Height="Auto"/> <!-- 7: Status -->
         </Grid.RowDefinitions>
 
-        <!-- 0: Header Bar & Quick Workflow Presets -->
+        <!-- 0: Header Bar & Synced Phase Controls Pair -->
         <Grid Grid.Row="0" Margin="0,0,0,10">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
 
-            <!-- Presets Group -->
+            <!-- Phase Control Pair: Phase Presets & Current Phase -->
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                <TextBlock Text="⚡ Presets:" FontWeight="Bold" FontSize="11" Foreground="#BAC2DE" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                <ComboBox Name="cbPresets" Width="145" SelectedIndex="0" Margin="0,0,4,0" ToolTip="Select workflow preset">
+                <TextBlock Text="⚡ Phase Presets:" FontWeight="Bold" FontSize="11" Foreground="#BAC2DE" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                <ComboBox Name="cbPresets" Width="135" SelectedIndex="0" Margin="0,0,10,0" ToolTip="Select workflow preset (auto-applies roles and sets phase)">
                     <ComboBoxItem Content="💡 Pitch" Tag="Pitch"/>
                     <ComboBoxItem Content="💬 Discuss" Tag="Discuss"/>
                     <ComboBoxItem Content="📋 Plan" Tag="Plan"/>
@@ -293,6 +293,16 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                     <ComboBoxItem Content="🔍 Review" Tag="Review"/>
                     <ComboBoxItem Content="🧪 Test" Tag="Test"/>
                     <ComboBoxItem Content="📦 Inventory" Tag="Inventory"/>
+                </ComboBox>
+                <TextBlock Text="📍 Current Phase:" FontWeight="Bold" FontSize="11" Foreground="#BAC2DE" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                <ComboBox Name="cbPhase" Width="175" SelectedIndex="0" ToolTip="Current project workflow phase step">
+                    <ComboBoxItem Content="pitch (Proposals &amp; Ideas)"/>
+                    <ComboBoxItem Content="discuss (Discussion &amp; Debate)"/>
+                    <ComboBoxItem Content="plan (Architecture &amp; Design)"/>
+                    <ComboBoxItem Content="implement (Active Coding)"/>
+                    <ComboBoxItem Content="review (Audit &amp; Verification)"/>
+                    <ComboBoxItem Content="test (Verify scripts/UI)"/>
+                    <ComboBoxItem Content="closed (Completed &amp; Closed)"/>
                 </ComboBox>
             </StackPanel>
 
@@ -308,13 +318,12 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
             </StackPanel>
         </Grid>
 
-        <!-- 1: Stoplight Flow Control & Phase Selector -->
+        <!-- 1: Stoplight Flow Control & Active Board Path -->
         <Border Grid.Row="1" Background="#1E1E2E" CornerRadius="8" Padding="10,8" Margin="0,0,0,8" BorderBrush="#313244" BorderThickness="1">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
                 <!-- Stoplight -->
@@ -326,30 +335,16 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                 </StackPanel>
 
                 <!-- Board Path Info Box -->
-                <Border Grid.Column="1" Background="#11111B" CornerRadius="4" Padding="6,2" Margin="6,0,6,0" BorderBrush="#313244" BorderThickness="1" VerticalAlignment="Center" HorizontalAlignment="Center">
+                <Border Grid.Column="1" Background="#11111B" CornerRadius="4" Padding="6,2" Margin="10,0,0,0" BorderBrush="#313244" BorderThickness="1" VerticalAlignment="Center" HorizontalAlignment="Right">
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                         <TextBlock Text="📋 Board: " FontSize="11" FontWeight="SemiBold" Foreground="#BAC2DE" VerticalAlignment="Center" Margin="0,0,4,0"/>
-                        <ComboBox Name="cbRecentBoards" Width="135" Margin="0,0,6,0" ToolTip="Recent project boards (Select to switch)"/>
+                        <ComboBox Name="cbRecentBoards" Width="145" Margin="0,0,6,0" ToolTip="Recent project boards (Select to switch)"/>
                         <TextBlock Name="txtBoardPath" Text="" FontSize="10" Foreground="#89B4FA" FontFamily="Consolas, monospace" VerticalAlignment="Center" ToolTip="Active Blackboard.md path (Click to copy)" Cursor="Hand" Margin="0,0,6,0"/>
                         <Button Name="btnNewBoard" Content="➕ New" FontSize="10" Padding="5,1" Margin="0,0,3,0" Background="#313244" Foreground="#A6E3A1" FontWeight="SemiBold" ToolTip="Start a new board in a project folder"/>
                         <Button Name="btnSwitchBoard" Content="📂 Browse" FontSize="10" Padding="5,1" Margin="0,0,3,0" Background="#313244" Foreground="#BAC2DE" ToolTip="Browse to select an existing blackboard.md file"/>
                         <Button Name="btnReloadBoard" Content="🔄 Reload" FontSize="10" Padding="5,1" Margin="0,0,0,0" Background="#313244" Foreground="#89B4FA" FontWeight="SemiBold" ToolTip="Force reload active blackboard from disk"/>
                     </StackPanel>
                 </Border>
-
-                <!-- Phase Selector -->
-                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-                    <TextBlock Text="📍 Project Phase:" FontWeight="Bold" FontSize="12" Foreground="#BAC2DE" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                    <ComboBox Name="cbPhase" Width="180" SelectedIndex="0">
-                        <ComboBoxItem Content="pitch (Proposals &amp; Ideas)"/>
-                        <ComboBoxItem Content="discuss (Discussion &amp; Debate)"/>
-                        <ComboBoxItem Content="plan (Architecture &amp; Design)"/>
-                        <ComboBoxItem Content="implement (Active Coding)"/>
-                        <ComboBoxItem Content="review (Audit &amp; Verification)"/>
-                        <ComboBoxItem Content="test (Verify scripts/UI)"/>
-                        <ComboBoxItem Content="closed (Completed &amp; Closed)"/>
-                    </ComboBox>
-                </StackPanel>
             </Grid>
         </Border>
 
@@ -506,7 +501,14 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
-                    <TextBlock Name="lblSeat1Pane" Grid.Row="0" Text="💠 AI 1 LAST RESPONSE" FontWeight="Bold" FontSize="11" Foreground="#89B4FA" Margin="0,0,0,6"/>
+                    <Grid Grid.Row="0" Margin="0,0,0,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Name="lblSeat1Pane" Grid.Column="0" Text="💠 AI 1 LAST RESPONSE" FontWeight="Bold" FontSize="11" Foreground="#89B4FA" VerticalAlignment="Center"/>
+                        <Button Grid.Column="1" Name="btnPromoteSeat1" Content="🤝 Promote to Alignment" Background="#313244" Foreground="#A6E3A1" Padding="6,2" FontSize="10" FontWeight="SemiBold" ToolTip="Promote selected text or latest proposal bullet from Seat 1 into Alignment"/>
+                    </Grid>
                     <RichTextBox Name="rtbCursorLast" Grid.Row="1" IsReadOnly="True" IsTabStop="False" IsUndoEnabled="False"
                              MinHeight="120" VerticalAlignment="Stretch"
                              VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
@@ -520,7 +522,14 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
-                    <TextBlock Name="lblSeat2Pane" Grid.Row="0" Text="🪐 AI 2 LAST RESPONSE" FontWeight="Bold" FontSize="11" Foreground="#A6E3A1" Margin="0,0,0,6"/>
+                    <Grid Grid.Row="0" Margin="0,0,0,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Name="lblSeat2Pane" Grid.Column="0" Text="🪐 AI 2 LAST RESPONSE" FontWeight="Bold" FontSize="11" Foreground="#A6E3A1" VerticalAlignment="Center"/>
+                        <Button Grid.Column="1" Name="btnPromoteSeat2" Content="🤝 Promote to Alignment" Background="#313244" Foreground="#A6E3A1" Padding="6,2" FontSize="10" FontWeight="SemiBold" ToolTip="Promote selected text or latest proposal bullet from Seat 2 into Alignment"/>
+                    </Grid>
                     <RichTextBox Name="rtbGeminiLast" Grid.Row="1" IsReadOnly="True" IsTabStop="False" IsUndoEnabled="False"
                              MinHeight="120" VerticalAlignment="Stretch"
                              VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
@@ -819,6 +828,8 @@ $lblSeat1Role          = $window.FindName("lblSeat1Role")
 $lblSeat2Role          = $window.FindName("lblSeat2Role")
 $lblSeat1Pane          = $window.FindName("lblSeat1Pane")
 $lblSeat2Pane          = $window.FindName("lblSeat2Pane")
+$btnPromoteSeat1       = $window.FindName("btnPromoteSeat1")
+$btnPromoteSeat2       = $window.FindName("btnPromoteSeat2")
 
 function Get-ClientConfiguration {
     $defaultConfig = [PSCustomObject]@{
@@ -909,6 +920,8 @@ $script:MasterTooltips = @{
     # Response Panes
     "rtbCursorLast"        = "Formatted view of Seat 1's latest scratchpad response"
     "rtbGeminiLast"        = "Formatted view of Seat 2's latest scratchpad response"
+    "btnPromoteSeat1"      = "Promote selected text or latest proposal bullet from Seat 1 into Alignment"
+    "btnPromoteSeat2"      = "Promote selected text or latest proposal bullet from Seat 2 into Alignment"
 
     # Kickoff & Reprompt Dispatch
     "cbKickoffTarget"      = "Select kickoff recipient target (Seat 1, Seat 2, or Both)"
@@ -2320,6 +2333,50 @@ function Get-PhaseString {
     return "pitch"
 }
 
+$script:SuppressPresetSync = $false
+$script:LastAutoAdvanceTime = [DateTime]::MinValue
+
+function Sync-PresetFromPhase {
+    param([string]$phaseName)
+    if ($script:SuppressPresetSync -or -not $cbPresets) { return }
+    if ([string]::IsNullOrWhiteSpace($phaseName)) {
+        $phaseName = Get-PhaseString
+    }
+    $p = $phaseName.Trim().ToLower()
+    $targetTag = switch ($p) {
+        "pitch"     { "Pitch" }
+        "discuss"   { "Discuss" }
+        "advise"    { "Discuss" }
+        "plan"      { "Plan" }
+        "implement" { "Implement" }
+        "review"    { "Review" }
+        "test"      { "Test" }
+        default     { $null }
+    }
+    $script:SuppressPresetSync = $true
+    try {
+        if ($null -eq $targetTag) {
+            $cbPresets.SelectedIndex = -1
+        } else {
+            $found = $false
+            for ($i = 0; $i -lt $cbPresets.Items.Count; $i++) {
+                $item = $cbPresets.Items[$i]
+                $tag = if ($item.Tag) { [string]$item.Tag } else { [string]$item.Content }
+                if ($tag -match "(?i)^$targetTag") {
+                    if ($cbPresets.SelectedIndex -ne $i) {
+                        $cbPresets.SelectedIndex = $i
+                    }
+                    $found = $true
+                    break
+                }
+            }
+            if (-not $found) { $cbPresets.SelectedIndex = -1 }
+        }
+    } finally {
+        $script:SuppressPresetSync = $false
+    }
+}
+
 function Set-Phase {
     param([string]$targetPhase)
     if ([string]::IsNullOrWhiteSpace($targetPhase)) { return }
@@ -2329,6 +2386,7 @@ function Set-Phase {
         $token = ($itemText -split " ")[0].ToLower()
         if ($token -eq $tgt -or ($tgt -eq "advise" -and $token -eq "discuss") -or ($tgt -eq "discuss" -and $token -eq "advise")) {
             $cbPhase.SelectedIndex = $i
+            Sync-PresetFromPhase $tgt
             return
         }
     }
@@ -2356,12 +2414,17 @@ function Check-PhaseAutoAdvance {
         return
     }
 
+    if ($script:LastAutoAdvanceTime -and ([DateTime]::UtcNow - $script:LastAutoAdvanceTime).TotalSeconds -lt 3) {
+        return
+    }
+
     $currentPhase = Get-PhaseString
     if ($currentPhase -eq "closed") { return }
 
     $nextPhase = Get-NextPhase $currentPhase
     if ($nextPhase -eq $currentPhase) { return }
 
+    $script:LastAutoAdvanceTime = [DateTime]::UtcNow
     $script:SuppressFormDirty = $true
     try {
         $chkSignHuman.IsChecked = $false
@@ -2382,6 +2445,63 @@ function Check-PhaseAutoAdvance {
         Update-UiActiveTurn -keepOverride
     } finally {
         $script:SuppressFormDirty = $false
+    }
+}
+
+function Promote-SelectedBulletToAlignment {
+    param(
+        [System.Windows.Controls.RichTextBox]$rtbSource,
+        [string]$seatName
+    )
+    try {
+        $selectedText = if ($rtbSource -and $rtbSource.Selection) { $rtbSource.Selection.Text.Trim() } else { "" }
+        $candidate = ""
+
+        if ($selectedText) {
+            $candidate = $selectedText
+        } else {
+            $raw = if (Test-Path $script:BlackboardPath) { [System.IO.File]::ReadAllText($script:BlackboardPath, [System.Text.Encoding]::UTF8) } else { "" }
+            $sEsc = [regex]::Escape($seatName)
+            $pad = Get-LastMarkdownBody $raw "(?:###|##)\s+(?:$sEsc|$seatName)(?:\s+Scratchpad)?"
+            if ($pad) {
+                $matches = [regex]::Matches($pad, '(?im)^\s*[-*]\s*(?:\*\*(?:Proposal|Agreed|Agree|Option\s+[A-Z0-9]+)\*\*:?|[A-Z0-9]+:)\s*(.+)$')
+                if ($matches.Count -gt 0) {
+                    $candidate = $matches[$matches.Count - 1].Groups[1].Value.Trim()
+                } else {
+                    $bulletMatches = [regex]::Matches($pad, '(?im)^\s*[-*]\s*(.+)$')
+                    if ($bulletMatches.Count -gt 0) {
+                        $candidate = $bulletMatches[$bulletMatches.Count - 1].Groups[1].Value.Trim()
+                    }
+                }
+            }
+        }
+
+        if ([string]::IsNullOrWhiteSpace($candidate)) {
+            [System.Windows.MessageBox]::Show("No text selected in $seatName response pane, and no proposal bullet was found to promote.", "Promote to Alignment", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
+            return
+        }
+
+        $clean = $candidate -replace '^(?:-\s*|\*\s*)', '' -replace '^`?-\s*\*\*Agreed\*\*`?\s*:\s*', ''
+        $clean = $clean.Trim()
+        $lineToAdd = "- **Agreed**: $clean"
+
+        if ($txtAlignment.Text -match [regex]::Escape($clean)) {
+            if ($txtStatus) { $txtStatus.Text = "Proposal already exists in Alignment." }
+            return
+        }
+
+        $existing = $txtAlignment.Text.Trim()
+        if ($existing) {
+            $txtAlignment.Text = $existing + [Environment]::NewLine + $lineToAdd
+        } else {
+            $txtAlignment.Text = $lineToAdd
+        }
+
+        Mark-FormDirty
+        Save-BlackboardContent
+        if ($txtStatus) { $txtStatus.Text = "Promoted proposal from $seatName into Alignment." }
+    } catch {
+        if ($txtStatus) { $txtStatus.Text = "Promote error: $_" }
     }
 }
 
@@ -2506,7 +2626,13 @@ function Mark-FormDirty {
 
 $cbCursorRole.add_SelectionChanged({ Check-Safety; Mark-FormDirty })
 $cbGeminiRole.add_SelectionChanged({ Check-Safety; Mark-FormDirty })
-$cbPhase.add_SelectionChanged({ Ensure-PitchSeatsAdvise; Mark-FormDirty })
+$cbPhase.add_SelectionChanged({
+    if (-not $script:SuppressPresetSync) {
+        Sync-PresetFromPhase (Get-PhaseString)
+    }
+    Ensure-PitchSeatsAdvise
+    Mark-FormDirty
+})
 $rbGo.add_Checked({ Update-UiActiveTurn; Mark-FormDirty })
 $rbPause.add_Checked({ Update-UiActiveTurn; Mark-FormDirty })
 $rbStop.add_Checked({ Update-UiActiveTurn; Mark-FormDirty })
@@ -2525,12 +2651,38 @@ if ($rtbCursorLast) {
             $rtbCursorLast.Document.PageWidth = $rtbCursorLast.ActualWidth - 16
         }
     })
+    $menu1 = New-Object System.Windows.Controls.ContextMenu
+    $item1 = New-Object System.Windows.Controls.MenuItem
+    $item1.Header = "🤝 Promote to Alignment"
+    $item1.add_Click({
+        Promote-SelectedBulletToAlignment -rtbSource $rtbCursorLast -seatName (Get-Seat1Client)
+    })
+    [void]$menu1.Items.Add($item1)
+    $rtbCursorLast.ContextMenu = $menu1
 }
 if ($rtbGeminiLast) {
     $rtbGeminiLast.add_SizeChanged({
         if ($rtbGeminiLast.Document -and $rtbGeminiLast.ActualWidth -gt 48) {
             $rtbGeminiLast.Document.PageWidth = $rtbGeminiLast.ActualWidth - 16
         }
+    })
+    $menu2 = New-Object System.Windows.Controls.ContextMenu
+    $item2 = New-Object System.Windows.Controls.MenuItem
+    $item2.Header = "🤝 Promote to Alignment"
+    $item2.add_Click({
+        Promote-SelectedBulletToAlignment -rtbSource $rtbGeminiLast -seatName (Get-Seat2Client)
+    })
+    [void]$menu2.Items.Add($item2)
+    $rtbGeminiLast.ContextMenu = $menu2
+}
+if ($btnPromoteSeat1) {
+    $btnPromoteSeat1.add_Click({
+        Promote-SelectedBulletToAlignment -rtbSource $rtbCursorLast -seatName (Get-Seat1Client)
+    })
+}
+if ($btnPromoteSeat2) {
+    $btnPromoteSeat2.add_Click({
+        Promote-SelectedBulletToAlignment -rtbSource $rtbGeminiLast -seatName (Get-Seat2Client)
     })
 }
 $txtIssueNum.add_TextChanged({
@@ -3502,70 +3654,77 @@ $btnReset.add_Click({
 
 # Workflow Preset Handler
 function Apply-SelectedWorkflowPreset {
-    $s1 = Get-Seat1Client
-    $s2 = Get-Seat2Client
-    $item = $cbPresets.SelectedItem
-    $preset = if ($item -and $item.Tag) { [string]$item.Tag } elseif ($item) { [string]$item.Content } else { "Discuss" }
+    $script:SuppressPresetSync = $true
+    try {
+        $s1 = Get-Seat1Client
+        $s2 = Get-Seat2Client
+        $item = $cbPresets.SelectedItem
+        $preset = if ($item -and $item.Tag) { [string]$item.Tag } elseif ($item) { [string]$item.Content } else { "Discuss" }
 
-    switch -Regex ($preset) {
-        "Pitch" {
-            $cbCursorRole.SelectedIndex = 2 # advise
-            $cbGeminiRole.SelectedIndex = 2 # advise
-            Set-Phase "pitch"
-            $script:FormDirty = $true
-            $txtStatus.Text = "Preset applied: Pitch Mode ($s1 advise + $s2 advise, phase pitch)"
+        switch -Regex ($preset) {
+            "Pitch" {
+                $cbCursorRole.SelectedIndex = 2 # advise
+                $cbGeminiRole.SelectedIndex = 2 # advise
+                Set-Phase "pitch"
+                $script:FormDirty = $true
+                $txtStatus.Text = "Preset applied: Pitch Mode ($s1 advise + $s2 advise, phase pitch)"
+            }
+            "Discuss" {
+                $cbCursorRole.SelectedIndex = 2 # advise
+                $cbGeminiRole.SelectedIndex = 2 # advise
+                Set-Phase "discuss"
+                $script:FormDirty = $true
+                $txtStatus.Text = "Preset applied: Discussion Mode ($s1 advise + $s2 advise, phase discuss)"
+            }
+            "Plan" {
+                $cbCursorRole.SelectedIndex = 4 # plan
+                $cbGeminiRole.SelectedIndex = 5 # idle
+                Set-Phase "plan"
+                $script:FormDirty = $true
+                $txtStatus.Text = "Preset applied: Planning Mode ($s1 plan + $s2 idle, phase plan)"
+            }
+            "Implement" {
+                $cbCursorRole.SelectedIndex = 1 # review
+                $cbGeminiRole.SelectedIndex = 1 # implement
+                Set-Phase "implement"
+                $script:FormDirty = $true
+                $txtStatus.Text = "Preset applied: Implementation Mode ($s2 implement + $s1 review, phase implement)"
+            }
+            "Review" {
+                $cbCursorRole.SelectedIndex = 1 # review
+                $cbGeminiRole.SelectedIndex = 0 # review
+                Set-Phase "review"
+                $script:FormDirty = $true
+                $txtStatus.Text = "Preset applied: Review Mode ($s1 review + $s2 review, phase review)"
+                Show-ReviewDiffViewer
+            }
+            "Test" {
+                $cbCursorRole.SelectedIndex = 1 # review
+                $cbGeminiRole.SelectedIndex = 0 # review
+                Set-Phase "test"
+                $script:FormDirty = $true
+                $txtStatus.Text = "Preset applied: Test Mode ($s1 review + $s2 review, phase test)"
+            }
+            "Inventory" {
+                $cbCursorRole.SelectedIndex = 3 # inventory
+                $cbGeminiRole.SelectedIndex = 3 # inventory
+                Set-Phase "review"
+                $script:FormDirty = $true
+                $txtStatus.Text = "Preset applied: Inventory Mode ($s1 inventory + $s2 inventory)"
+            }
         }
-        "Discuss" {
-            $cbCursorRole.SelectedIndex = 2 # advise
-            $cbGeminiRole.SelectedIndex = 2 # advise
-            Set-Phase "discuss"
-            $script:FormDirty = $true
-            $txtStatus.Text = "Preset applied: Discussion Mode ($s1 advise + $s2 advise, phase discuss)"
-        }
-        "Plan" {
-            $cbCursorRole.SelectedIndex = 4 # plan
-            $cbGeminiRole.SelectedIndex = 5 # idle
-            Set-Phase "plan"
-            $script:FormDirty = $true
-            $txtStatus.Text = "Preset applied: Planning Mode ($s1 plan + $s2 idle, phase plan)"
-        }
-        "Implement" {
-            $cbCursorRole.SelectedIndex = 1 # review
-            $cbGeminiRole.SelectedIndex = 1 # implement
-            Set-Phase "implement"
-            $script:FormDirty = $true
-            $txtStatus.Text = "Preset applied: Implementation Mode ($s2 implement + $s1 review, phase implement)"
-        }
-        "Review" {
-            $cbCursorRole.SelectedIndex = 1 # review
-            $cbGeminiRole.SelectedIndex = 0 # review
-            Set-Phase "review"
-            $script:FormDirty = $true
-            $txtStatus.Text = "Preset applied: Review Mode ($s1 review + $s2 review, phase review)"
-            Show-ReviewDiffViewer
-        }
-        "Test" {
-            $cbCursorRole.SelectedIndex = 1 # review
-            $cbGeminiRole.SelectedIndex = 0 # review
-            Set-Phase "test"
-            $script:FormDirty = $true
-            $txtStatus.Text = "Preset applied: Test Mode ($s1 review + $s2 review, phase test)"
-        }
-        "Inventory" {
-            $cbCursorRole.SelectedIndex = 3 # inventory
-            $cbGeminiRole.SelectedIndex = 3 # inventory
-            Set-Phase "review"
-            $script:FormDirty = $true
-            $txtStatus.Text = "Preset applied: Inventory Mode ($s1 inventory + $s2 inventory)"
-        }
+        Check-Safety
+        Update-UiActiveTurn -keepOverride
+    } finally {
+        $script:SuppressPresetSync = $false
     }
-    Check-Safety
-    Update-UiActiveTurn -keepOverride
 }
 
 if ($cbPresets) {
     $cbPresets.add_SelectionChanged({
-        Apply-SelectedWorkflowPreset
+        if (-not $script:SuppressPresetSync) {
+            Apply-SelectedWorkflowPreset
+        }
     })
 }
 
