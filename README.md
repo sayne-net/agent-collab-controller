@@ -37,13 +37,16 @@ Running multiple autonomous AI coding agents in parallel usually leads to one of
 
 ---
 
-## Current Build: v1.2.39 — Defender
+## Current Build & Release: v1.2.39 — Defender
 
-- **Build vs. Release**: `v1.2.39` is the current working tree development build. The latest tagged release published on GitHub is [**v1.2.25**](https://github.com/sayne-net/agent-collab-controller/releases).
-- **Close Project allowlist**: Root `CHANGELOG.md` and `README.md` ship with Close Project. The stale `docs/CHANGELOG.md` path is no longer allowlisted.
-- **Sign-off latch**: An unsigned newest turn leaves that seat’s box open. A phase change clears all three sign-off boxes.
-- **Debrief preserved on Close Cycle**: Accepting 'Yes' to complete the close cycle during `closing` phase auto-advance ships allowlisted code and proceeds directly into `debrief`. Session archiving and reset to `ready` await completion of debrief.
-- **Arcade Codenames**: Releases now feature classic 80's & 90's arcade game codenames.
+- **Latest Release**: `v1.2.39` is both the current build and the latest published GitHub release ([**v1.2.39**](https://github.com/sayne-net/agent-collab-controller/releases/tag/v1.2.39)).
+- **Full Lifecycle Ladder**: Auto-stepping guides sessions across `pitch` $\rightarrow$ `discuss` $\rightarrow$ `implement` $\rightarrow$ `test` $\rightarrow$ `closing` $\rightarrow$ `debrief` $\rightarrow$ `ready`.
+- **Debrief Preserved on Close Cycle**: Accepting 'Yes' to complete the close cycle during `closing` auto-advance ships allowlisted changes to git and proceeds directly into `debrief`. Session archiving and board reset to `ready` await completion of the debrief phase.
+- **Sign-off Latch Integrity**: An unsigned newest scratchpad turn leaves that seat's sign-off box open and rolls test/closing phases back to `implement`. Changing phases clears all three sign-off checkboxes.
+- **Safe Shipping Allowlist**: Close Project audits tracked changes and allowlists root `CHANGELOG.md`, `README.md`, controller scripts, and agent instruction rules while blocking `.env`, keys, or credentials.
+- **Selection-Aware Promote to Prompt**: Highlighting notes in Human Notes and clicking **Promote** cleanly strips markdown bullet prefixes and appends the selection into Objective & Prompt without overwriting.
+- **Codex Safety Guard**: Codex seat profiles automatically clear and disable the New Chat checkbox with prominent manual guidance alerts to protect operator chats.
+- **Arcade Codenames**: Releases feature classic 80's & 90's arcade game codenames.
 - 📜 **[View Full Release History & Changelog](CHANGELOG.md)**
 
 ---
@@ -94,9 +97,10 @@ Ensure your `.gitignore` contains:
    ![Built-in Git Review Diff Viewer](docs/images/controller-diff-viewer.png)
    *Note: Simulated screenshot demonstrating git diff and untracked file auditing.*
 
-5. **Sign-off & Close**:
-   - When all tasks and verification steps are complete, all 3 participants sign off (`[x]`).
-   - The **🏁 Close Project** button activates, archiving the session tape to `.ai/history/`, resetting the board, and auto-closing associated GitHub issues:
+5. **Sign-off, Ship & Debrief**:
+   - When implementation and test verification steps are complete, all 3 participants sign off (`[x]`) to reach `closing`.
+   - Accepting the prompt to complete the close cycle ships allowlisted code to git and advances directly into `debrief` for post-run evaluation.
+   - Once debrief completes (or upon manual Close Project click), the controller archives the session tape to `.ai/history/`, auto-closes associated GitHub issues, and resets the board to `ready`:
 
    ![3-Way Sign-off and Close Project](docs/images/controller-signoff-close.png)
    *Note: Simulated screenshot demonstrating 3-way sign-off gating and session close.*
