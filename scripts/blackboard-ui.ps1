@@ -6,7 +6,7 @@ $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
 
-$script:AppVersion = "v1.2.36"
+$script:AppVersion = "v1.2.37"
 $script:RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $script:ProjectName = (Split-Path $script:RepoRoot -Leaf)
 $script:ScriptFilePath = if ($PSCommandPath) { $PSCommandPath } else { Join-Path $PSScriptRoot "blackboard-ui.ps1" }
@@ -2981,14 +2981,13 @@ function Check-PhaseAutoAdvance {
     if ($currentPhase -eq "closing") {
         $script:ClosingSignoffsCompleted = $true
         $askClose = [System.Windows.MessageBox]::Show(
-            "All 3 sign-offs complete for Closing.`n`nClose Project now (run git audit, commit, push, archive, and open ready)?`n`nClick 'Yes' to Close and Ship project now.`nClick 'No' to advance to Debrief phase (post-run review).",
-            "Close Project or Advance to Debrief",
+            "All 3 sign-offs complete for Closing.`n`nShip project code now (run git audit, commit, push) and proceed to Debrief?`n`nClick 'Yes' to Ship code and advance to Debrief.`nClick 'No' to advance to Debrief without shipping yet.",
+            "Ship Code and Advance to Debrief",
             [System.Windows.MessageBoxButton]::YesNo,
             [System.Windows.MessageBoxImage]::Question
         )
         if ($askClose -eq [System.Windows.MessageBoxResult]::Yes) {
-            Invoke-CloseProjectWorkflow -promptConfirm $false
-            return
+            Invoke-CloseProjectGitShip -allSigned $true
         }
     }
 
