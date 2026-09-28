@@ -37,9 +37,11 @@ Running multiple autonomous AI coding agents in parallel usually leads to one of
 
 ---
 
-## Latest Release: v1.2.36 — Galaga
+## Current Build: v1.2.38 — Frogger
 
-- **Unsigned closing rollback**: With Auto Step enabled during `closing`, any new AI scratchpad turn without `Sign-off: [x]` automatically returns the project phase to `implement`, matching the test phase rollback.
+- **Build vs. Release**: `v1.2.38` is the current working tree development build. The latest tagged release published on GitHub is [**v1.2.25**](https://github.com/sayne-net/agent-collab-controller/releases).
+- **Sign-off latch**: An unsigned newest turn leaves that seat’s box open. A phase change clears all three sign-off boxes.
+- **Debrief preserved on Close Cycle**: Accepting 'Yes' to complete the close cycle during `closing` phase auto-advance ships allowlisted code and proceeds directly into `debrief`. Session archiving and reset to `ready` await completion of debrief.
 - **Arcade Codenames**: Releases now feature classic 80's & 90's arcade game codenames.
 - 📜 **[View Full Release History & Changelog](CHANGELOG.md)**
 
