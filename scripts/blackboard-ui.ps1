@@ -12,6 +12,7 @@ $script:ProjectName = (Split-Path $script:RepoRoot -Leaf)
 $script:ScriptFilePath = if ($PSCommandPath) { $PSCommandPath } else { Join-Path $PSScriptRoot "blackboard-ui.ps1" }
 $script:LoadedScriptWriteTime = if (Test-Path $script:ScriptFilePath) { (Get-Item $script:ScriptFilePath).LastWriteTime } else { [DateTime]::MinValue }
 $script:DiskScriptIsNewer = $false
+$script:ClosingSignoffsCompleted = $false
 $script:GitHubRepo = $null
 function Get-TargetGitHubRepo {
     if ($script:GitHubRepo) { return $script:GitHubRepo }
@@ -297,6 +298,7 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                 </ComboBox>
                 <TextBlock Text="📍 Current Phase:" FontWeight="Bold" FontSize="11" Foreground="#BAC2DE" VerticalAlignment="Center" Margin="0,0,6,0"/>
                 <ComboBox Name="cbPhase" Width="175" SelectedIndex="0" ToolTip="Current project workflow phase step">
+                    <ComboBoxItem Content="ready (Waiting for Objective)"/>
                     <ComboBoxItem Content="pitch (Proposals &amp; Ideas)"/>
                     <ComboBoxItem Content="discuss (Discussion &amp; Debate)"/>
                     <ComboBoxItem Content="plan (Architecture &amp; Design)"/>
@@ -304,7 +306,7 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                     <ComboBoxItem Content="review (Audit &amp; Verification)"/>
                     <ComboBoxItem Content="test (Verify scripts/UI)"/>
                     <ComboBoxItem Content="closing (Final sign-off)"/>
-                    <ComboBoxItem Content="closed (Completed &amp; Closed)"/>
+                    <ComboBoxItem Content="debrief (Post-run Review)"/>
                 </ComboBox>
             </StackPanel>
 
@@ -565,7 +567,7 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                     </ComboBox>
                     <Button Name="btnCopyKickoffPrompt" Content="📋 Copy Prompt" Background="#313244" Margin="0,0,4,0" ToolTip="Copy tailored full Kickoff Prompt for selected target to Clipboard"/>
                     <Button Name="btnSendKickoffPrompt" Content="🚀 Send Prompt" Background="#89B4FA" Foreground="#11111B" FontWeight="Bold" Margin="0,0,6,0" ToolTip="Sequence and send full Kickoff Prompt to selected target agent(s)"/>
-                    <CheckBox Name="chkNewChatKickoff" Content="New Chat" IsChecked="False" VerticalAlignment="Center" Margin="4,0,4,0" Foreground="#A6E3A1" ToolTip="Optional one-shot on Kickoff. Codex New Chat is manual: the kickoff is copied, not sent; open and verify a new Codex chat, then paste and submit. The one-shot stays armed. Cursor uses Chat: New Chat; Antigravity uses Ctrl+Shift+I then Ctrl+Shift+L. Re-prompt never opens a new chat."/>
+                    <CheckBox Name="chkNewChatKickoff" Content="New Chat" IsChecked="False" VerticalAlignment="Center" Margin="4,0,4,0" Foreground="#A6E3A1" ToolTip="Optional one-shot on Kickoff. Cursor uses Chat: New Chat; Antigravity uses Ctrl+Shift+I then Ctrl+Shift+L. Codex New Chat is unavailable (desktop app limitation; open new chat manually in Codex). Re-prompt never opens a new chat."/>
                     <CheckBox Name="chkDryRunKickoff" Content="Dry run" IsChecked="False" VerticalAlignment="Center" Margin="4,0,4,0" Foreground="#89B4FA" ToolTip="Record the selected kickoff target, New Chat state, and status. Do not copy or send the prompt."/>
                 </StackPanel>
 
@@ -938,7 +940,7 @@ $script:MasterTooltips = @{
     "btnNewBoard"          = "Initialize a new blackboard in a project folder"
     "btnSwitchBoard"       = "Browse to select an existing blackboard.md file"
     "btnReloadBoard"       = "Force reload active blackboard from disk"
-    "cbPhase"              = "Select current project workflow phase (pitch, discuss, plan, implement, review, test, closing, closed)"
+    "cbPhase"              = "Select current project workflow phase (ready, pitch, discuss, plan, implement, review, test, closing, debrief)"
 
     # Seat Profiles, Roles, Sign-offs & Issues
     "cbSeat1Client"        = "Select AI client / IDE profile for Seat 1"
@@ -959,7 +961,7 @@ $script:MasterTooltips = @{
     "txtPrompt"            = "Enter primary task objective, requirements, and acceptance criteria"
     "txtAlignment"         = "Key design rules, architectural constraints, and agreed decisions"
     "txtHumanNotes"        = "Active steering notes and directives from the Human Lead"
-    "btnPromoteNotes"      = "Draft a Prompt from these steering notes (replaces Current Objective)"
+    "btnPromoteNotes"      = "Draft a Prompt from these steering notes (appends to Current Objective)"
 
     # Response Panes
     "rtbCursorLast"        = "Formatted view of Seat 1's latest scratchpad response"
@@ -971,7 +973,7 @@ $script:MasterTooltips = @{
     "cbKickoffTarget"      = "Select kickoff recipient target (Seat 1, Seat 2, or Both)"
     "btnCopyKickoffPrompt" = "Copy tailored Kickoff Prompt for selected target to Clipboard"
     "btnSendKickoffPrompt" = "Focus target window and paste tailored Kickoff Prompt"
-    "chkNewChatKickoff"    = "Optional one-shot on Kickoff. Codex New Chat is manual: the kickoff is copied, not sent; open and verify a new Codex chat, then paste and submit. The one-shot stays armed. Cursor uses Chat: New Chat; Antigravity uses Ctrl+Shift+I then Ctrl+Shift+L. Re-prompt never opens a new chat."
+    "chkNewChatKickoff"    = "Optional one-shot on Kickoff. Cursor uses Chat: New Chat; Antigravity uses Ctrl+Shift+I then Ctrl+Shift+L. Codex New Chat is unavailable (desktop app limitation; open new chat manually in Codex). Re-prompt never opens a new chat."
     "chkDryRunKickoff"     = "Record the selected kickoff target, New Chat state, and status. Do not copy or send the prompt."
     "btnRepromptCursor"    = "Focus Seat 1 window and trigger follow-up prompt"
     "btnRepromptGemini"    = "Focus Seat 2 window and trigger follow-up prompt"
@@ -1107,20 +1109,275 @@ function Get-Seat2Client {
     return "AI 2"
 }
 
+$script:CodexAlertTimer = $null
+$script:CodexFlashCount = 0
+$script:LastCodexTargeted = $false
+
+function Trigger-CodexNewChatAlert {
+    param([string]$message = "⚠️ New Chat unavailable for Codex: manually open a new chat in the Codex app.")
+    
+    if ($txtStatus) {
+        $txtStatus.Text = $message
+        $txtStatus.FontWeight = [System.Windows.FontWeights]::Bold
+        $txtStatus.FontSize = 12
+        $txtStatus.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#FAB387")
+    }
+    
+    $cursorRole = if (Get-Command Get-ComboRoleText -ErrorAction SilentlyContinue) { Get-ComboRoleText $cbCursorRole } else { "" }
+    $geminiRole = if (Get-Command Get-ComboRoleText -ErrorAction SilentlyContinue) { Get-ComboRoleText $cbGeminiRole } else { "" }
+    $hasRoleConflict = ($cursorRole -eq "implement" -and $geminiRole -eq "implement")
+    if (-not $hasRoleConflict -and $txtSafetyWarning) {
+        $txtSafetyWarning.Text = $message
+        $txtSafetyWarning.FontWeight = [System.Windows.FontWeights]::Bold
+        $txtSafetyWarning.FontSize = 11
+        $txtSafetyWarning.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F9E2AF")
+    }
+
+    if ($script:CodexAlertTimer) {
+        $script:CodexAlertTimer.Stop()
+    }
+    $script:CodexFlashCount = 0
+    $script:CodexAlertTimer = New-Object System.Windows.Threading.DispatcherTimer
+    $script:CodexAlertTimer.Interval = [TimeSpan]::FromMilliseconds(350)
+    $script:CodexAlertTimer.add_Tick({
+        $script:CodexFlashCount++
+        $isBright = ($script:CodexFlashCount % 2 -eq 1)
+        
+        if ($txtStatus) {
+            $txtStatus.Foreground = if ($isBright) {
+                [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F38BA8")
+            } else {
+                [System.Windows.Media.BrushConverter]::new().ConvertFromString("#FAB387")
+            }
+        }
+        if (-not $hasRoleConflict -and $txtSafetyWarning) {
+            $txtSafetyWarning.Foreground = if ($isBright) {
+                [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F38BA8")
+            } else {
+                [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F9E2AF")
+            }
+        }
+        
+        if ($script:CodexFlashCount -ge 6) {
+            $script:CodexAlertTimer.Stop()
+            $script:CodexAlertTimer = $null
+            if ($txtStatus) {
+                $txtStatus.FontWeight = [System.Windows.FontWeights]::Normal
+                $txtStatus.FontSize = 11
+                $txtStatus.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#A6ADC8")
+            }
+        }
+    })
+    $script:CodexAlertTimer.Start()
+}
+
+function Sync-CodexNewChatState {
+    param(
+        [string]$seat1,
+        [string]$seat2,
+        [string]$target
+    )
+
+    if (-not $chkNewChatKickoff) { return }
+
+    $isCodexTargeted = ($target -eq "Both" -and ($seat1 -eq "Codex" -or $seat2 -eq "Codex")) -or `
+                       ($target -eq "Seat1" -and $seat1 -eq "Codex") -or `
+                       ($target -eq "Seat2" -and $seat2 -eq "Codex")
+
+    if ($isCodexTargeted) {
+        $wasChecked = $chkNewChatKickoff.IsChecked
+        $chkNewChatKickoff.IsChecked = $false
+        $chkNewChatKickoff.IsEnabled = $false
+        $chkNewChatKickoff.Opacity = 0.4
+        $chkNewChatKickoff.ToolTip = "New Chat is unavailable when Codex is targeted (ChatGPT client limitation). Please manually open a new chat in the Codex app."
+
+        if (-not $script:LastCodexTargeted -or $wasChecked) {
+            Trigger-CodexNewChatAlert -message "⚠️ New Chat unavailable for Codex: manually open a new chat in the Codex app."
+        }
+        $script:LastCodexTargeted = $true
+    } else {
+        $chkNewChatKickoff.IsEnabled = $true
+        $chkNewChatKickoff.Opacity = 1.0
+        if ($script:MasterTooltips -and $script:MasterTooltips["chkNewChatKickoff"]) {
+            $chkNewChatKickoff.ToolTip = $script:MasterTooltips["chkNewChatKickoff"]
+        } else {
+            $chkNewChatKickoff.ToolTip = "Optional one-shot on Kickoff. Cursor uses Chat: New Chat; Antigravity uses Ctrl+Shift+I then Ctrl+Shift+L. Codex New Chat is unavailable (desktop app limitation; open new chat manually in Codex). Re-prompt never opens a new chat."
+        }
+        
+        if ($txtSafetyWarning -and $txtSafetyWarning.Text -like "*New Chat unavailable for Codex*") {
+            $txtSafetyWarning.Text = ""
+        }
+        $script:LastCodexTargeted = $false
+    }
+}
+
 function Update-KickoffButtonTooltips {
     $s1 = Get-Seat1Client
     $s2 = Get-Seat2Client
     $targetName = "Both ($s1 & $s2)"
+    $targetTag = "Both"
     if ($cbKickoffTarget -and $cbKickoffTarget.SelectedItem) {
         $tag = [string]$cbKickoffTarget.SelectedItem.Tag
-        if ($tag -eq "Seat1") { $targetName = $s1 }
-        elseif ($tag -eq "Seat2") { $targetName = $s2 }
+        if ($tag -eq "Seat1") { 
+            $targetName = $s1 
+            $targetTag = "Seat1"
+        }
+        elseif ($tag -eq "Seat2") { 
+            $targetName = $s2 
+            $targetTag = "Seat2"
+        }
     }
-    if ($btnCopyKickoffPrompt) {
-        $btnCopyKickoffPrompt.ToolTip = "Copy tailored full Kickoff Prompt for $targetName to Clipboard"
+    if (-not $script:DiskScriptIsNewer) {
+        if ($btnCopyKickoffPrompt) {
+            $btnCopyKickoffPrompt.ToolTip = "Copy tailored full Kickoff Prompt for $targetName to Clipboard"
+        }
+        if ($btnSendKickoffPrompt) {
+            $btnSendKickoffPrompt.ToolTip = "Focus $targetName window and paste tailored full Kickoff Prompt"
+        }
     }
-    if ($btnSendKickoffPrompt) {
-        $btnSendKickoffPrompt.ToolTip = "Focus $targetName window and paste tailored full Kickoff Prompt"
+
+    Sync-CodexNewChatState -seat1 $s1 -seat2 $s2 -target $targetTag
+}
+
+function Update-PromptButtonsLockState {
+    param([bool]$locked)
+
+    $s1 = Get-Seat1Client
+    $s2 = Get-Seat2Client
+    $brushConv = [System.Windows.Media.BrushConverter]::new()
+
+    if ($locked) {
+        $redBg = $brushConv.ConvertFromString("#F38BA8")
+        $darkFg = $brushConv.ConvertFromString("#11111B")
+        $borderBrush = $brushConv.ConvertFromString("#EBA0AC")
+        $lockCursor = [System.Windows.Input.Cursors]::No
+        $lockedTip = "🔒 Prompt dispatch is locked because scripts/blackboard-ui.ps1 was modified on disk. Please click 'Relaunch' before prompting."
+
+        if ($btnCopyKickoffPrompt) {
+            $btnCopyKickoffPrompt.Background = $redBg
+            $btnCopyKickoffPrompt.Foreground = $darkFg
+            $btnCopyKickoffPrompt.BorderBrush = $borderBrush
+            $btnCopyKickoffPrompt.BorderThickness = New-Object System.Windows.Thickness(2)
+            $btnCopyKickoffPrompt.FontWeight = [System.Windows.FontWeights]::Bold
+            $btnCopyKickoffPrompt.Content = "🔒 Copy (Locked)"
+            $btnCopyKickoffPrompt.ToolTip = $lockedTip
+            $btnCopyKickoffPrompt.Cursor = $lockCursor
+        }
+        if ($btnSendKickoffPrompt) {
+            $btnSendKickoffPrompt.Background = $redBg
+            $btnSendKickoffPrompt.Foreground = $darkFg
+            $btnSendKickoffPrompt.BorderBrush = $borderBrush
+            $btnSendKickoffPrompt.BorderThickness = New-Object System.Windows.Thickness(2)
+            $btnSendKickoffPrompt.FontWeight = [System.Windows.FontWeights]::Bold
+            $btnSendKickoffPrompt.Content = "🔒 Send (Locked)"
+            $btnSendKickoffPrompt.ToolTip = $lockedTip
+            $btnSendKickoffPrompt.Cursor = $lockCursor
+        }
+        if ($btnRepromptCursor) {
+            $btnRepromptCursor.Background = $redBg
+            $btnRepromptCursor.Foreground = $darkFg
+            $btnRepromptCursor.BorderBrush = $borderBrush
+            $btnRepromptCursor.BorderThickness = New-Object System.Windows.Thickness(2)
+            $btnRepromptCursor.FontWeight = [System.Windows.FontWeights]::Bold
+            $btnRepromptCursor.Content = "🔒 $s1 (Locked)"
+            $btnRepromptCursor.ToolTip = $lockedTip
+            $btnRepromptCursor.Cursor = $lockCursor
+        }
+        if ($btnRepromptGemini) {
+            $btnRepromptGemini.Background = $redBg
+            $btnRepromptGemini.Foreground = $darkFg
+            $btnRepromptGemini.BorderBrush = $borderBrush
+            $btnRepromptGemini.BorderThickness = New-Object System.Windows.Thickness(2)
+            $btnRepromptGemini.FontWeight = [System.Windows.FontWeights]::Bold
+            $btnRepromptGemini.Content = "🔒 $s2 (Locked)"
+            $btnRepromptGemini.ToolTip = $lockedTip
+            $btnRepromptGemini.Cursor = $lockCursor
+        }
+        if ($btnRepromptBoth) {
+            $btnRepromptBoth.Background = $redBg
+            $btnRepromptBoth.Foreground = $darkFg
+            $btnRepromptBoth.BorderBrush = $borderBrush
+            $btnRepromptBoth.BorderThickness = New-Object System.Windows.Thickness(2)
+            $btnRepromptBoth.FontWeight = [System.Windows.FontWeights]::Bold
+            $btnRepromptBoth.Content = "🔒 Both (Locked)"
+            $btnRepromptBoth.ToolTip = $lockedTip
+            $btnRepromptBoth.Cursor = $lockCursor
+        }
+        if ($btnCompareNotes) {
+            $btnCompareNotes.Background = $redBg
+            $btnCompareNotes.Foreground = $darkFg
+            $btnCompareNotes.BorderBrush = $borderBrush
+            $btnCompareNotes.BorderThickness = New-Object System.Windows.Thickness(2)
+            $btnCompareNotes.FontWeight = [System.Windows.FontWeights]::Bold
+            $btnCompareNotes.Content = "🔒 Compare (Locked)"
+            $btnCompareNotes.ToolTip = $lockedTip
+            $btnCompareNotes.Cursor = $lockCursor
+        }
+    } else {
+        $defaultCursor = [System.Windows.Input.Cursors]::Arrow
+        $defaultBorder = $brushConv.ConvertFromString("#45475A")
+        $darkBg = $brushConv.ConvertFromString("#313244")
+        $lightFg = $brushConv.ConvertFromString("#CDD6F4")
+
+        if ($btnCopyKickoffPrompt) {
+            $btnCopyKickoffPrompt.Background = $darkBg
+            $btnCopyKickoffPrompt.Foreground = $lightFg
+            $btnCopyKickoffPrompt.BorderBrush = $defaultBorder
+            $btnCopyKickoffPrompt.BorderThickness = New-Object System.Windows.Thickness(1)
+            $btnCopyKickoffPrompt.FontWeight = [System.Windows.FontWeights]::Normal
+            $btnCopyKickoffPrompt.Content = "📋 Copy Prompt"
+            $btnCopyKickoffPrompt.Cursor = $defaultCursor
+        }
+        if ($btnSendKickoffPrompt) {
+            $btnSendKickoffPrompt.Background = $brushConv.ConvertFromString("#89B4FA")
+            $btnSendKickoffPrompt.Foreground = $brushConv.ConvertFromString("#11111B")
+            $btnSendKickoffPrompt.BorderBrush = $defaultBorder
+            $btnSendKickoffPrompt.BorderThickness = New-Object System.Windows.Thickness(1)
+            $btnSendKickoffPrompt.FontWeight = [System.Windows.FontWeights]::Bold
+            $btnSendKickoffPrompt.Content = "🚀 Send Prompt"
+            $btnSendKickoffPrompt.Cursor = $defaultCursor
+        }
+        if ($btnRepromptCursor) {
+            $btnRepromptCursor.Background = $darkBg
+            $btnRepromptCursor.Foreground = $lightFg
+            $btnRepromptCursor.BorderBrush = $defaultBorder
+            $btnRepromptCursor.BorderThickness = New-Object System.Windows.Thickness(1)
+            $btnRepromptCursor.FontWeight = [System.Windows.FontWeights]::Normal
+            $btnRepromptCursor.Content = $s1
+            $btnRepromptCursor.ToolTip = "Focus $s1 & re-prompt"
+            $btnRepromptCursor.Cursor = $defaultCursor
+        }
+        if ($btnRepromptGemini) {
+            $btnRepromptGemini.Background = $darkBg
+            $btnRepromptGemini.Foreground = $lightFg
+            $btnRepromptGemini.BorderBrush = $defaultBorder
+            $btnRepromptGemini.BorderThickness = New-Object System.Windows.Thickness(1)
+            $btnRepromptGemini.FontWeight = [System.Windows.FontWeights]::Normal
+            $btnRepromptGemini.Content = $s2
+            $btnRepromptGemini.ToolTip = "Focus $s2 & re-prompt"
+            $btnRepromptGemini.Cursor = $defaultCursor
+        }
+        if ($btnRepromptBoth) {
+            $btnRepromptBoth.Background = $brushConv.ConvertFromString("#45475A")
+            $btnRepromptBoth.Foreground = $brushConv.ConvertFromString("#F9E2AF")
+            $btnRepromptBoth.BorderBrush = $defaultBorder
+            $btnRepromptBoth.BorderThickness = New-Object System.Windows.Thickness(1)
+            $btnRepromptBoth.FontWeight = [System.Windows.FontWeights]::Normal
+            $btnRepromptBoth.Content = "👥 Both"
+            $btnRepromptBoth.ToolTip = "Re-prompt both agents"
+            $btnRepromptBoth.Cursor = $defaultCursor
+        }
+        if ($btnCompareNotes) {
+            $btnCompareNotes.Background = $darkBg
+            $btnCompareNotes.Foreground = $brushConv.ConvertFromString("#89B4FA")
+            $btnCompareNotes.BorderBrush = $defaultBorder
+            $btnCompareNotes.BorderThickness = New-Object System.Windows.Thickness(1)
+            $btnCompareNotes.FontWeight = [System.Windows.FontWeights]::SemiBold
+            $btnCompareNotes.Content = "⚖️ Compare Notes"
+            $btnCompareNotes.ToolTip = "Send a compare-notes re-prompt to both agents without replacing Objective or Alignment"
+            $btnCompareNotes.Cursor = $defaultCursor
+        }
+        Update-KickoffButtonTooltips
     }
 }
 
@@ -1138,8 +1395,10 @@ function Update-SeatClientLabels {
     if ($cbiKickoffSeat2) { $cbiKickoffSeat2.Content = $s2 }
     Update-KickoffButtonTooltips
     
-    if ($btnRepromptCursor) { $btnRepromptCursor.Content = $s1 }
-    if ($btnRepromptGemini) { $btnRepromptGemini.Content = $s2 }
+    if (-not $script:DiskScriptIsNewer) {
+        if ($btnRepromptCursor) { $btnRepromptCursor.Content = $s1 }
+        if ($btnRepromptGemini) { $btnRepromptGemini.Content = $s2 }
+    }
     
     if ($lblSeat1Pane) { $lblSeat1Pane.Text = "💠 " + $s1.ToUpper() + " LAST RESPONSE" }
     if ($lblSeat2Pane) { $lblSeat2Pane.Text = "🪐 " + $s2.ToUpper() + " LAST RESPONSE" }
@@ -2536,15 +2795,17 @@ if ($btnViewCompare) {
 
 if ($btnPromoteNotes) {
     $btnPromoteNotes.add_Click({
-        $rawNotes = $txtHumanNotes.Text.Trim()
+        $selected = if ($txtHumanNotes -and $txtHumanNotes.SelectionLength -gt 0) { $txtHumanNotes.SelectedText.Trim() } else { "" }
+        $rawNotes = if ($selected) { $selected } else { if ($txtHumanNotes) { $txtHumanNotes.Text.Trim() } else { "" } }
         if ([string]::IsNullOrWhiteSpace($rawNotes) -or $rawNotes -eq "- Active steering notes.") {
             [System.Windows.MessageBox]::Show("Human Notes are empty or default. Enter steering notes first.", "Promote Notes", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
             return
         }
-        $confirm = [System.Windows.MessageBox]::Show("Promote Human Notes to Current Objective & Prompt?`n`n[Notes Preview]:`n$rawNotes`n`nNote: This will update the Prompt field and mark blackboard dirty. It will not auto-send or create an issue.", "Confirm Promote Notes", [System.Windows.MessageBoxButton]::YesNo, [System.Windows.MessageBoxImage]::Question)
+        $confirm = [System.Windows.MessageBox]::Show("Promote Human Notes to Current Objective & Prompt?`n`n[Notes Preview]:`n$rawNotes`n`nNote: This will append to the Prompt field and mark blackboard dirty. It will not auto-send or create an issue.", "Confirm Promote Notes", [System.Windows.MessageBoxButton]::YesNo, [System.Windows.MessageBoxImage]::Question)
         if ($confirm -eq [System.Windows.MessageBoxResult]::Yes) {
             $clean = $rawNotes -replace '^(?:-\s*|\*\s*)', ''
-            $txtPrompt.Text = $clean
+            $joined = Join-TextWithSeparator -existing $txtPrompt.Text -addition $clean
+            $txtPrompt.Text = $joined
             Mark-FormDirty
             $txtStatus.Text = "Human Notes promoted to Current Objective & Prompt."
         }
@@ -2577,6 +2838,7 @@ $script:NewerScriptSinceUtc = $null
 $script:NewerScriptWriteTime = [DateTime]::MinValue
 $script:AutoRelaunchStarted = $false
 $script:AutoRelaunchSettleSeconds = 8
+$script:RelaunchFlashToggle = $false
 
 function Read-SignoffBaseline {
     if ($null -ne $script:CursorPadAtPhaseChange -or $null -ne $script:GeminiPadAtPhaseChange) { return }
@@ -2644,6 +2906,7 @@ function Set-RolesForPhase {
     if (-not $cbCursorRole -or -not $cbGeminiRole) { return }
     if ([string]::IsNullOrWhiteSpace($phaseName)) { return }
     switch ($phaseName.Trim().ToLower()) {
+        "ready"     { $cbCursorRole.SelectedIndex = 5; $cbGeminiRole.SelectedIndex = 5 }
         "pitch"     { $cbCursorRole.SelectedIndex = 2; $cbGeminiRole.SelectedIndex = 2 }
         "discuss"   { $cbCursorRole.SelectedIndex = 2; $cbGeminiRole.SelectedIndex = 2 }
         "advise"    { $cbCursorRole.SelectedIndex = 2; $cbGeminiRole.SelectedIndex = 2 }
@@ -2652,6 +2915,7 @@ function Set-RolesForPhase {
         "review"    { $cbCursorRole.SelectedIndex = 1; $cbGeminiRole.SelectedIndex = 0 }
         "test"      { $cbCursorRole.SelectedIndex = 1; $cbGeminiRole.SelectedIndex = 0 }
         "closing"   { $cbCursorRole.SelectedIndex = 5; $cbGeminiRole.SelectedIndex = 5 }
+        "debrief"   { $cbCursorRole.SelectedIndex = 2; $cbGeminiRole.SelectedIndex = 2 }
         "closed"    { $cbCursorRole.SelectedIndex = 5; $cbGeminiRole.SelectedIndex = 5 }
     }
 }
@@ -2660,6 +2924,9 @@ function Set-Phase {
     param([string]$targetPhase)
     if ([string]::IsNullOrWhiteSpace($targetPhase)) { return }
     $tgt = $targetPhase.Trim().ToLower()
+    if ($tgt -in @("pitch", "discuss", "implement", "test")) {
+        $script:ClosingSignoffsCompleted = $false
+    }
     for ($i = 0; $i -lt $cbPhase.Items.Count; $i++) {
         $itemText = [string]$cbPhase.Items[$i].Content
         $token = ($itemText -split " ")[0].ToLower()
@@ -2674,6 +2941,7 @@ function Set-Phase {
 function Get-NextPhase {
     param([string]$currentPhase)
     switch ($currentPhase.ToLower()) {
+        "ready"     { return "ready" }
         "pitch"     { return "discuss" }
         "discuss"   { return "implement" }
         "advise"    { return "implement" }
@@ -2681,9 +2949,10 @@ function Get-NextPhase {
         "implement" { return "test" }
         "review"    { return "test" }
         "test"      { return "closing" }
-        "closing"   { return "closing" }
-        "closed"    { return "closed" }
-        default     { return "closed" }
+        "closing"   { return "debrief" }
+        "debrief"   { return "ready" }
+        "closed"    { return "ready" }
+        default     { return "ready" }
     }
 }
 
@@ -2704,10 +2973,37 @@ function Check-PhaseAutoAdvance {
     }
 
     $currentPhase = Get-PhaseString
-    if ($currentPhase -eq "closing" -or $currentPhase -eq "closed") { return }
+    if ($currentPhase -eq "ready" -or $currentPhase -eq "closed") { return }
 
     $nextPhase = Get-NextPhase $currentPhase
     if ($nextPhase -eq $currentPhase) { return }
+
+    if ($currentPhase -eq "closing") {
+        $script:ClosingSignoffsCompleted = $true
+        $askClose = [System.Windows.MessageBox]::Show(
+            "All 3 sign-offs complete for Closing.`n`nClose Project now (run git audit, commit, push, archive, and open ready)?`n`nClick 'Yes' to Close and Ship project now.`nClick 'No' to advance to Debrief phase (post-run review).",
+            "Close Project or Advance to Debrief",
+            [System.Windows.MessageBoxButton]::YesNo,
+            [System.Windows.MessageBoxImage]::Question
+        )
+        if ($askClose -eq [System.Windows.MessageBoxResult]::Yes) {
+            Invoke-CloseProjectWorkflow -promptConfirm $false
+            return
+        }
+    }
+
+    if ($currentPhase -eq "debrief") {
+        $askClose = [System.Windows.MessageBox]::Show(
+            "Debrief complete with all 3 sign-offs.`n`nClose Project now (run git audit, commit, push, archive, and open ready)?`n`nClick 'Yes' to Close and Ship project now.`nClick 'No' to arm New Chat and move to ready.",
+            "Close Project or Advance to Ready",
+            [System.Windows.MessageBoxButton]::YesNo,
+            [System.Windows.MessageBoxImage]::Question
+        )
+        if ($askClose -eq [System.Windows.MessageBoxResult]::Yes) {
+            Invoke-CloseProjectWorkflow -promptConfirm $false
+            return
+        }
+    }
 
     $script:LastAutoAdvanceTime = [DateTime]::UtcNow
     $script:PhaseAdvanceGateLatched = $true
@@ -2732,6 +3028,18 @@ function Check-PhaseAutoAdvance {
 
         Set-Phase $nextPhase
         Set-RolesForPhase $nextPhase
+
+        if ($currentPhase -eq "debrief" -and $nextPhase -eq "ready") {
+            $targetTag = if ($cbKickoffTarget -and $cbKickoffTarget.SelectedItem) { [string]$cbKickoffTarget.SelectedItem.Tag } else { "Both" }
+            $isCodex = ($targetTag -eq "Both" -and ($s1 -eq "Codex" -or $s2 -eq "Codex")) -or `
+                       ($targetTag -eq "Seat1" -and $s1 -eq "Codex") -or `
+                       ($targetTag -eq "Seat2" -and $s2 -eq "Codex")
+            if ($chkNewChatKickoff -and -not $isCodex) {
+                $chkNewChatKickoff.IsChecked = $true
+            }
+            Update-KickoffButtonTooltips
+        }
+
         $txtStatus.Text = "Phase auto-advanced: $currentPhase -> $nextPhase (all 3 sign-offs complete)."
         Save-BlackboardContent
         Update-UiActiveTurn -keepOverride
@@ -2824,7 +3132,7 @@ function Get-ActiveTurn {
 
     # 2. Closed phase with all 3 signed off -> Ready to close / archive
     $phaseNow = Get-PhaseString
-    if ($signHuman -and $signCursor -and $signGemini -and ($phaseNow -eq "closing" -or $phaseNow -eq "closed")) {
+    if ($signHuman -and $signCursor -and $signGemini -and ($phaseNow -eq "closing" -or $phaseNow -eq "debrief" -or $phaseNow -eq "ready" -or $phaseNow -eq "closed")) {
         $badgeTurn.Background = [System.Windows.Media.Brushes]::DarkGreen
         $txtActiveTurn.Foreground = [System.Windows.Media.Brushes]::White
         return "✅ Complete - Ready to Close"
@@ -2890,7 +3198,8 @@ function Update-UiActiveTurn {
     $txtActiveTurn.Text = Get-ActiveTurn
     if ($btnCloseProject) {
         $phaseForClose = Get-PhaseString
-        if (($phaseForClose -eq "closing" -or $phaseForClose -eq "closed") -and $chkSignHuman.IsChecked -and $chkSignCursor.IsChecked -and $chkSignGemini.IsChecked) {
+        $isSignedOrCompleted = ($chkSignHuman.IsChecked -and $chkSignCursor.IsChecked -and $chkSignGemini.IsChecked) -or ($script:ClosingSignoffsCompleted -and ($phaseForClose -eq "debrief" -or $phaseForClose -eq "ready"))
+        if (($phaseForClose -eq "closing" -or $phaseForClose -eq "debrief" -or $phaseForClose -eq "ready" -or $phaseForClose -eq "closed") -and $isSignedOrCompleted) {
             $btnCloseProject.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#A6E3A1")
             $btnCloseProject.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#11111B")
         } else {
@@ -2915,6 +3224,9 @@ function Check-Safety {
     if ($cursor -eq "implement" -and $gemini -eq "implement") {
         $txtSafetyWarning.Text = "⚠️ SAFETY WARNING: Both agents set to implement! Conflict risk."
         $txtSafetyWarning.Foreground = [System.Windows.Media.Brushes]::Salmon
+    } elseif ($script:LastCodexTargeted) {
+        $txtSafetyWarning.Text = "⚠️ New Chat unavailable for Codex: manually open a new chat in the Codex app."
+        $txtSafetyWarning.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F9E2AF")
     } else {
         $txtSafetyWarning.Text = ""
     }
@@ -3172,15 +3484,109 @@ function Invoke-CloseProjectGitShip {
     }
 }
 
+function Invoke-CloseProjectWorkflow {
+    param(
+        [bool]$promptConfirm = $true
+    )
+    $signHuman = if ($chkSignHuman) { [bool]$chkSignHuman.IsChecked } else { $false }
+    $signCursor = if ($chkSignCursor) { [bool]$chkSignCursor.IsChecked } else { $false }
+    $signGemini = if ($chkSignGemini) { [bool]$chkSignGemini.IsChecked } else { $false }
+    $allSigned = ($signHuman -and $signCursor -and $signGemini) -or $script:ClosingSignoffsCompleted
+    $phaseNow = Get-PhaseString
+
+    if ($promptConfirm) {
+        if ($phaseNow -ne "test" -and $phaseNow -ne "closing" -and $phaseNow -ne "debrief" -and $phaseNow -ne "ready" -and $phaseNow -ne "closed") {
+            $testWarn = [System.Windows.MessageBox]::Show(
+                "Project phase is '$phaseNow' (not test). For programs/scripts, sign-off should follow the test phase.`n`nClose anyway?",
+                "Testing phase not reached",
+                [System.Windows.MessageBoxButton]::YesNo,
+                [System.Windows.MessageBoxImage]::Warning
+            )
+            if ($testWarn -ne [System.Windows.MessageBoxResult]::Yes) {
+                return $false
+            }
+        }
+
+        $s1 = Get-Seat1Client
+        $s2 = Get-Seat2Client
+        $confirmMsg = if ($allSigned) {
+            "All participants (Human, $s1, $s2) have signed off.`n`nClose this project, archive session history, and reset board to idle?"
+        } else {
+            "Not all sign-offs are complete.`n`nAre you sure you want to close and archive this project anyway?"
+        }
+
+        $result = [System.Windows.MessageBox]::Show($confirmMsg, "Close Project", [System.Windows.MessageBoxButton]::YesNo, [System.Windows.MessageBoxImage]::Question)
+        if ($result -ne [System.Windows.MessageBoxResult]::Yes) {
+            return $false
+        }
+    }
+
+    $s1 = Get-Seat1Client
+    $s2 = Get-Seat2Client
+    Invoke-CloseProjectGitShip -allSigned ([bool]$allSigned)
+
+    $num = if ($txtIssueNum) { $txtIssueNum.Text.Trim() } else { "" }
+    if ($num -and $num -ne "none") {
+        $closeIssuePrompt = [System.Windows.MessageBox]::Show("Linked GitHub Issue #$num detected.`n`nClose Issue #$num on GitHub via gh CLI?", "Close GitHub Issue #$num", [System.Windows.MessageBoxButton]::YesNo, [System.Windows.MessageBoxImage]::Question)
+        if ($closeIssuePrompt -eq [System.Windows.MessageBoxResult]::Yes) {
+            try {
+                if ($txtStatus) { $txtStatus.Text = "Closing issue #$num via gh CLI..." }
+                $targetRepo = Get-TargetGitHubRepo
+                $closeArgs = @("issue", "close", $num, "--comment", "Completed with sign-offs from Human, $s1, and $s2.")
+                if ($targetRepo) { $closeArgs += @("--repo", $targetRepo) }
+                & gh @closeArgs
+                if ($txtStatus) { $txtStatus.Text = "Closed GitHub Issue #$num." }
+            } catch {
+                if ($txtStatus) { $txtStatus.Text = "Warning: Failed to close issue #$num via gh: $_" }
+            }
+        }
+    }
+
+    # Derive slug for archive
+    $slug = "closed"
+    if ($num -and $num -ne "none") {
+        $slug += "-issue$num"
+    } else {
+        $firstLine = if ($txtPrompt) { ($txtPrompt.Text -split "\r?\n")[0].Trim() } else { "" }
+        if ($firstLine) {
+            $short = ($firstLine -replace '[^a-zA-Z0-9]', '-').Trim('-')
+            if ($short.Length -gt 25) { $short = $short.Substring(0, 25).Trim('-') }
+            if ($short) { $slug += "-$short" }
+        }
+    }
+
+    Auto-ArchiveSnapshot -customLabel $slug
+    Clear-FormInMemory
+    $script:ClosingSignoffsCompleted = $false
+    if ($chkNewChatKickoff) {
+        $targetTag = if ($cbKickoffTarget -and $cbKickoffTarget.SelectedItem) { [string]$cbKickoffTarget.SelectedItem.Tag } else { "Both" }
+        $isCodex = ($targetTag -eq "Both" -and ($s1 -eq "Codex" -or $s2 -eq "Codex")) -or `
+                   ($targetTag -eq "Seat1" -and $s1 -eq "Codex") -or `
+                   ($targetTag -eq "Seat2" -and $s2 -eq "Codex")
+        if (-not $isCodex) {
+            $chkNewChatKickoff.IsChecked = $true
+        }
+    }
+    Update-KickoffButtonTooltips
+    Set-Phase "ready"
+    if ($rbGo) { $rbGo.IsChecked = $true }
+    Save-BlackboardContent -clearScratchpads
+    if ($txtStatus) { $txtStatus.Text = "Project closed & archived to .ai/history. Controller reset to ready state. New Chat armed for next project." }
+    return $true
+}
+
 function Get-RoleGuidance {
     param([string]$role)
     $boardPath = $script:BlackboardPath
     $phase = Get-PhaseString
-    if ($phase -eq "closed") {
-        return "This project/objective is CLOSED. All sign-offs complete. Hold IDLE. Do not modify files or execute tasks unless a new objective is assigned."
+    if ($phase -eq "ready" -or $phase -eq "closed") {
+        return "This project/objective is READY. All sign-offs complete. Hold IDLE. Do not modify files or execute tasks unless a new active objective is assigned."
+    }
+    if ($phase -eq "debrief") {
+        return "Project phase is DEBRIEF. Review and discuss the previous run with the Human Lead. Do not modify tracked files. Once the Human Lead signs off, follow their lead and provide your sign-off to complete debrief."
     }
     if ($phase -eq "closing") {
-        return "Project phase is CLOSING. Your role is idle. Do not edit tracked files or start new work. Your one action is the final sign-off: write Sign-off: [x] on your top scratchpad bullet and mark your Agent Roles row [x] so the Human Lead can press Close Project."
+        return "Project phase is CLOSING. Your role is idle. Do not edit tracked files or start new work. Your one action is the final sign-off: write Sign-off: [x] on your top scratchpad bullet and mark your Agent Roles row [x] so the project can advance to debrief."
     }
     if ($phase -eq "test") {
         return "Project phase is TEST. Verify the program/script/UI already landed. Exercise the live controller or script under test (do not relaunch a second blackboard-ui unless asked). Record pass/fail in your scratchpad. FORBIDDEN: new features. After a recorded pass (or N/A with why), set your Agent Roles Sign-off [x] and scratchpad Sign-off: [x]. GO does not mean implement."
@@ -3201,17 +3607,24 @@ function Get-RoleGuidance {
 function Get-NonImplementHardStop {
     param([string]$role)
     $boardPath = $script:BlackboardPath
-    if ((Get-PhaseString) -eq "closed") {
+    if ((Get-PhaseString) -eq "ready" -or (Get-PhaseString) -eq "closed") {
         return @"
-NOTICE: Project phase is CLOSED. All sign-offs have been completed.
+NOTICE: Project phase is READY. Awaiting new objective.
 Hold IDLE. Do not modify files, execute tasks, or make commits unless the Human Lead assigns a new active objective.
+
+"@
+    }
+    if ((Get-PhaseString) -eq "debrief") {
+        return @"
+NOTICE: Project phase is DEBRIEF.
+Review and discuss the last run with the Human Lead. Do not modify tracked files or make commits. When debrief discussion concludes, the Human Lead signs off first; follow their lead and provide your sign-off to complete the cycle.
 
 "@
     }
     if ((Get-PhaseString) -eq "closing") {
         return @"
 NOTICE: Project phase is CLOSING. Both seats are idle.
-Do not edit tracked files or start new work. Your one action is the final sign-off so the Human Lead can press Close Project.
+Do not edit tracked files or start new work. Your one action is the final sign-off so the project can advance to debrief.
 
 "@
     }
@@ -3240,7 +3653,15 @@ If your role is not implement, ignore the GitHub issue's implementation checklis
 
 function Get-SignOffGuidance {
     $phase = Get-PhaseString
-    if ($phase -eq "closed") { return "" }
+    if ($phase -eq "ready" -or $phase -eq "closed") { return "" }
+    if ($phase -eq "debrief") {
+        return @"
+
+Debrief Sign-off:
+- Participate in debrief discussion and review.
+- Once the Human Lead signs off, add 'Sign-off: [x]' on your top bullet and mark your row '[x]' in Agent Roles.
+"@
+    }
     if ($phase -eq "test") {
         return @"
 
@@ -3486,12 +3907,12 @@ function Get-LatestTurnText {
     $lines = @($pad -split "`r?`n")
     $start = -1
     for ($i = 0; $i -lt $lines.Count; $i++) {
-        if ($lines[$i] -match '^\s*[-*]\s+\*\*') { $start = $i; break }
+        if ($lines[$i] -match '^[-*]\s+(?!\*\*Agreed\*\*)') { $start = $i; break }
     }
     if ($start -lt 0) { return $pad.Trim() }
     $end = $lines.Count
     for ($j = $start + 1; $j -lt $lines.Count; $j++) {
-        if ($lines[$j] -match '^\s*[-*]\s+\*\*') { $end = $j; break }
+        if ($lines[$j] -match '^[-*]\s+(?!\*\*Agreed\*\*)') { $end = $j; break }
     }
     if ($end -le $start) { return "" }
     return (($lines[$start..($end - 1)] -join "`n").Trim())
@@ -3512,10 +3933,8 @@ function Test-AutoRelaunchReady {
         $nowUtc,
         [int]$settleSeconds = 8
     )
-    if (-not $diskNewer) { return $false }
-    if ($formDirty) { return $false }
-    if ($null -eq $seenUtc) { return $false }
-    return (($nowUtc - $seenUtc).TotalSeconds -ge $settleSeconds)
+    # Automatic relaunch timer removed in v1.2.36 in favor of prompt button lockout.
+    return $false
 }
 
 function Test-UnsignedTestRollback {
@@ -4033,12 +4452,13 @@ function Complete-KickoffNewChatOneShot {
 }
 
 function Clear-FormInMemory {
+    $script:ClosingSignoffsCompleted = $false
     $txtPrompt.Text = ""
     $txtAlignment.Text = ""
     $txtHumanNotes.Text = "- Active steering notes."
     $cbCursorRole.SelectedIndex = 5
     $cbGeminiRole.SelectedIndex = 5
-    Set-Phase "pitch"
+    Set-Phase "ready"
     $chkSignHuman.IsChecked = $false
     $chkSignCursor.IsChecked = $false
     $chkSignGemini.IsChecked = $false
@@ -4056,75 +4476,7 @@ $btnApply.add_Click({
 })
 
 $btnCloseProject.add_Click({
-    $signHuman = $chkSignHuman.IsChecked
-    $signCursor = $chkSignCursor.IsChecked
-    $signGemini = $chkSignGemini.IsChecked
-    $allSigned = ($signHuman -and $signCursor -and $signGemini)
-    $phaseNow = Get-PhaseString
-    if ($phaseNow -ne "test" -and $phaseNow -ne "closing" -and $phaseNow -ne "closed") {
-        $testWarn = [System.Windows.MessageBox]::Show(
-            "Project phase is '$phaseNow' (not test). For programs/scripts, sign-off should follow the test phase.`n`nClose anyway?",
-            "Testing phase not reached",
-            [System.Windows.MessageBoxButton]::YesNo,
-            [System.Windows.MessageBoxImage]::Warning
-        )
-        if ($testWarn -ne [System.Windows.MessageBoxResult]::Yes) {
-            return
-        }
-    }
-    
-    $s1 = Get-Seat1Client
-    $s2 = Get-Seat2Client
-    $confirmMsg = if ($allSigned) {
-        "All participants (Human, $s1, $s2) have signed off.`n`nClose this project, archive session history, and reset board to idle?"
-    } else {
-        "Not all sign-offs are complete.`n`nAre you sure you want to close and archive this project anyway?"
-    }
-    
-    $result = [System.Windows.MessageBox]::Show($confirmMsg, "Close Project", [System.Windows.MessageBoxButton]::YesNo, [System.Windows.MessageBoxImage]::Question)
-    if ($result -ne [System.Windows.MessageBoxResult]::Yes) {
-        return
-    }
-
-    Invoke-CloseProjectGitShip -allSigned ([bool]$allSigned)
-
-    $num = $txtIssueNum.Text.Trim()
-    if ($num -and $num -ne "none") {
-        $closeIssuePrompt = [System.Windows.MessageBox]::Show("Linked GitHub Issue #$num detected.`n`nClose Issue #$num on GitHub via gh CLI?", "Close GitHub Issue #$num", [System.Windows.MessageBoxButton]::YesNo, [System.Windows.MessageBoxImage]::Question)
-        if ($closeIssuePrompt -eq [System.Windows.MessageBoxResult]::Yes) {
-            try {
-                $txtStatus.Text = "Closing issue #$num via gh CLI..."
-                $targetRepo = Get-TargetGitHubRepo
-                $closeArgs = @("issue", "close", $num, "--comment", "Completed with sign-offs from Human, $s1, and $s2.")
-                if ($targetRepo) { $closeArgs += @("--repo", $targetRepo) }
-                & gh @closeArgs
-                $txtStatus.Text = "Closed GitHub Issue #$num."
-            } catch {
-                $txtStatus.Text = "Warning: Failed to close issue #$num via gh: $_"
-            }
-        }
-    }
-    
-    # Derive slug for archive
-    $slug = "closed"
-    if ($num -and $num -ne "none") {
-        $slug += "-issue$num"
-    } else {
-        $firstLine = ($txtPrompt.Text -split "\r?\n")[0].Trim()
-        if ($firstLine) {
-            $short = ($firstLine -replace '[^a-zA-Z0-9]', '-').Trim('-')
-            if ($short.Length -gt 25) { $short = $short.Substring(0, 25).Trim('-') }
-            if ($short) { $slug += "-$short" }
-        }
-    }
-    
-    Auto-ArchiveSnapshot -customLabel $slug
-    Clear-FormInMemory
-    if ($chkNewChatKickoff) { $chkNewChatKickoff.IsChecked = $true }
-    Set-Phase "closed"
-    $rbGo.IsChecked = $true
-    Save-BlackboardContent -clearScratchpads
-    $txtStatus.Text = "Project closed & archived to .ai/history. Board reset to idle. New Chat armed for next project."
+    Invoke-CloseProjectWorkflow -promptConfirm $true
 })
 
 $btnReset.add_Click({
@@ -4217,6 +4569,11 @@ if ($btnApplyPreset) {
 
 # Kickoff Prompt Target & Button Handlers
 function Invoke-CopyKickoffPrompt {
+    if ($script:DiskScriptIsNewer) {
+        if ($txtStatus) { $txtStatus.Text = "🔒 Controller script on disk is newer. Please click 'Relaunch' before prompting." }
+        [System.Windows.MessageBox]::Show("scripts/blackboard-ui.ps1 has been updated on disk.`n`nPrompt dispatching is locked until the controller is relaunched.", "Relaunch Required", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
+        return
+    }
     try {
         Save-BlackboardContent
         $s1 = Get-Seat1Client
@@ -4249,6 +4606,11 @@ function Invoke-CopyKickoffPrompt {
 }
 
 function Invoke-SendKickoffPrompt {
+    if ($script:DiskScriptIsNewer) {
+        if ($txtStatus) { $txtStatus.Text = "🔒 Controller script on disk is newer. Please click 'Relaunch' before prompting." }
+        [System.Windows.MessageBox]::Show("scripts/blackboard-ui.ps1 has been updated on disk.`n`nPrompt dispatching is locked until the controller is relaunched.", "Relaunch Required", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
+        return
+    }
     try {
         Save-BlackboardContent
         $s1 = Get-Seat1Client
@@ -4272,9 +4634,9 @@ function Invoke-SendKickoffPrompt {
                 if (Send-AgentChatPaste -clientName $s1 -newChat $doNew) {
                     Complete-KickoffNewChatOneShot -didNew $doNew
                     $chatNote = if ($doNew) { " (New Chat, then off)" } else { "" }
-                    $txtStatus.Text = if ($doNew -and $s1 -eq "Codex") { "🚀 Opened a new Codex chat with the kickoff prompt ready to send." } else { "🚀 Sent $s1 Kickoff Prompt to active IDE window$chatNote." }
+                    $txtStatus.Text = "🚀 Sent $s1 Kickoff Prompt to active IDE window$chatNote."
                 } else {
-                    $txtStatus.Text = if ($doNew -and $s1 -eq "Codex") { "⚠️ Codex New Chat could not be opened or confirmed automatically. Kickoff is copied; open a new Codex chat, verify it, then paste and submit. New Chat remains armed." } elseif ($doNew) { "⚠️ No new $s1 chat was confirmed; kickoff was not sent and New Chat remains armed." } else { "📋 Copied $s1 Kickoff to clipboard (IDE window not found). Focus $s1 and paste." }
+                    $txtStatus.Text = if ($doNew) { "⚠️ No new $s1 chat was confirmed; kickoff was not sent and New Chat remains armed." } else { "📋 Copied $s1 Kickoff to clipboard (IDE window not found). Focus $s1 and paste." }
                 }
             }
             "Seat2" {
@@ -4283,9 +4645,9 @@ function Invoke-SendKickoffPrompt {
                 if (Send-AgentChatPaste -clientName $s2 -newChat $doNew) {
                     Complete-KickoffNewChatOneShot -didNew $doNew
                     $chatNote = if ($doNew) { " (New Chat, then off)" } else { "" }
-                    $txtStatus.Text = if ($doNew -and $s2 -eq "Codex") { "🚀 Opened a new Codex chat with the kickoff prompt ready to send." } else { "🚀 Sent $s2 Kickoff Prompt to active IDE window$chatNote." }
+                    $txtStatus.Text = "🚀 Sent $s2 Kickoff Prompt to active IDE window$chatNote."
                 } else {
-                    $txtStatus.Text = if ($doNew -and $s2 -eq "Codex") { "⚠️ Codex New Chat could not be opened or confirmed automatically. Kickoff is copied; open a new Codex chat, verify it, then paste and submit. New Chat remains armed." } elseif ($doNew) { "⚠️ No new $s2 chat was confirmed; kickoff was not sent and New Chat remains armed." } else { "📋 Copied $s2 Kickoff to clipboard (IDE window not found). Focus $s2 and paste." }
+                    $txtStatus.Text = if ($doNew) { "⚠️ No new $s2 chat was confirmed; kickoff was not sent and New Chat remains armed." } else { "📋 Copied $s2 Kickoff to clipboard (IDE window not found). Focus $s2 and paste." }
                 }
             }
             default {
@@ -4293,7 +4655,7 @@ function Invoke-SendKickoffPrompt {
                 $pAgent2 = Get-KickoffPromptForAgent -agentName $s2 -role $cbGeminiRole.Text -seatId "seat2"
 
                 if ($doNew -and ($s1 -eq "Codex" -or $s2 -eq "Codex")) {
-                    $txtStatus.Text = "⚠️ Select a single Codex seat for New Chat; both prompts were copied and no chat was changed."
+                    $txtStatus.Text = "⚠️ New Chat unavailable for Codex: manually open a new chat in the Codex app."
                     Safe-SetClipboard ("=== [$($s1.ToUpper()) KICKOFF PROMPT] ===" + [Environment]::NewLine + $pAgent1 + [Environment]::NewLine + [Environment]::NewLine + "=== [$($s2.ToUpper()) KICKOFF PROMPT] ===" + [Environment]::NewLine + $pAgent2)
                     return
                 }
@@ -4386,6 +4748,12 @@ $btnNewIssue.add_Click({
 function Trigger-AgentReprompt {
     param([string]$target)
 
+    if ($script:DiskScriptIsNewer) {
+        if ($txtStatus) { $txtStatus.Text = "🔒 Controller script on disk is newer. Please click 'Relaunch' before prompting." }
+        [System.Windows.MessageBox]::Show("scripts/blackboard-ui.ps1 has been updated on disk.`n`nPrompt dispatching is locked until the controller is relaunched.", "Relaunch Required", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
+        return
+    }
+
     try {
         Save-BlackboardContent
         $s1 = Get-Seat1Client
@@ -4434,6 +4802,11 @@ function Trigger-AgentReprompt {
 }
 
 function Trigger-CompareNotesReprompt {
+    if ($script:DiskScriptIsNewer) {
+        if ($txtStatus) { $txtStatus.Text = "🔒 Controller script on disk is newer. Please click 'Relaunch' before prompting." }
+        [System.Windows.MessageBox]::Show("scripts/blackboard-ui.ps1 has been updated on disk.`n`nPrompt dispatching is locked until the controller is relaunched.", "Relaunch Required", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
+        return
+    }
     try {
         Save-BlackboardContent
         Show-CompareTurnsViewer
@@ -4474,6 +4847,14 @@ if ($btnCompareNotes) {
 
 function Invoke-ControllerRelaunch {
     param([switch]$force)
+    if (-not $force -and $script:DiskScriptIsNewer) {
+        $secondsSinceWrite = if ($script:NewerScriptSinceUtc) { ([DateTime]::UtcNow - $script:NewerScriptSinceUtc).TotalSeconds } else { 999 }
+        $isImplementActive = ((Get-PhaseString) -eq "implement" -or ($cbCursorRole -and $cbCursorRole.Text -eq "implement") -or ($cbGeminiRole -and $cbGeminiRole.Text -eq "implement"))
+        if (($secondsSinceWrite -lt 4) -or ($isImplementActive -and $secondsSinceWrite -lt 6)) {
+            [System.Windows.MessageBox]::Show("An AI is actively updating the controller's code.`n`nPlease wait until the update finishes before relaunching.", "Relaunch Locked", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
+            return
+        }
+    }
     if (-not $force -and $script:FormDirty) {
         $res = [System.Windows.MessageBox]::Show("You have unsaved changes in the Blackboard UI.`n`nDo you want to save before relaunching?`n`nYes = Save & Relaunch`nNo = Discard & Relaunch`nCancel = Stay here", "Unsaved Changes", [System.Windows.MessageBoxButton]::YesNoCancel, [System.Windows.MessageBoxImage]::Warning)
         if ($res -eq [System.Windows.MessageBoxResult]::Cancel) { return }
@@ -4604,24 +4985,54 @@ $timer.add_Tick({
                 if ($diskTime -ne $script:NewerScriptWriteTime) {
                     $script:NewerScriptWriteTime = $diskTime
                     $script:NewerScriptSinceUtc = [DateTime]::UtcNow
-                    $script:AutoRelaunchStarted = $false
                 }
-                if ($btnRelaunch -and $btnRelaunch.Content -notmatch "Newer on Disk") {
-                    $btnRelaunch.Content = "⏭️ Relaunch (Newer on Disk)"
-                    $btnRelaunch.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F9E2AF")
-                    $btnRelaunch.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#11111B")
-                    $btnRelaunch.FontWeight = [System.Windows.FontWeights]::Bold
-                    $btnRelaunch.ToolTip = "scripts/blackboard-ui.ps1 on disk is newer ($($diskTime.ToString('HH:mm:ss'))). Relaunch is automatic after $($script:AutoRelaunchSettleSeconds)s when the form is clean."
-                }
-                $ready = Test-AutoRelaunchReady -diskNewer $true -formDirty ([bool]$script:FormDirty) -seenUtc $script:NewerScriptSinceUtc -nowUtc ([DateTime]::UtcNow) -settleSeconds $script:AutoRelaunchSettleSeconds
-                if ($ready -and -not $script:AutoRelaunchStarted) {
-                    $script:AutoRelaunchStarted = $true
-                    if ($txtStatus) { $txtStatus.Text = "Script on disk stayed newer and the form is clean. Relaunching..." }
-                    Invoke-ControllerRelaunch -force
+
+                $secondsSinceWrite = if ($script:NewerScriptSinceUtc) { ([DateTime]::UtcNow - $script:NewerScriptSinceUtc).TotalSeconds } else { 999 }
+                $isImplementActive = ((Get-PhaseString) -eq "implement" -or ($cbCursorRole -and $cbCursorRole.Text -eq "implement") -or ($cbGeminiRole -and $cbGeminiRole.Text -eq "implement"))
+                $aiActivelyUpdating = ($secondsSinceWrite -lt 4) -or ($isImplementActive -and $secondsSinceWrite -lt 6)
+
+                Update-PromptButtonsLockState -locked $true
+
+                if ($btnRelaunch) {
+                    if ($aiActivelyUpdating) {
+                        $btnRelaunch.IsEnabled = $false
+                        $btnRelaunch.Content = "🔒 Relaunch (AI Updating Code)"
+                        $btnRelaunch.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#45475A")
+                        $btnRelaunch.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#A6ADC8")
+                        $btnRelaunch.BorderBrush = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#313244")
+                        $btnRelaunch.BorderThickness = New-Object System.Windows.Thickness(1)
+                        $btnRelaunch.FontWeight = [System.Windows.FontWeights]::SemiBold
+                        $btnRelaunch.ToolTip = "scripts/blackboard-ui.ps1 is actively being updated by an AI. Relaunch will unlock when write activity settles."
+                    } else {
+                        $btnRelaunch.IsEnabled = $true
+                        $script:RelaunchFlashToggle = -not $script:RelaunchFlashToggle
+                        $flashBg = if ($script:RelaunchFlashToggle) { "#F9E2AF" } else { "#FAB387" }
+                        $flashBorder = if ($script:RelaunchFlashToggle) { "#FAB387" } else { "#F9E2AF" }
+                        $btnRelaunch.Content = "⏭️ Relaunch is needed"
+                        $btnRelaunch.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString($flashBg)
+                        $btnRelaunch.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#11111B")
+                        $btnRelaunch.BorderBrush = [System.Windows.Media.BrushConverter]::new().ConvertFromString($flashBorder)
+                        $btnRelaunch.BorderThickness = New-Object System.Windows.Thickness(2)
+                        $btnRelaunch.FontWeight = [System.Windows.FontWeights]::Bold
+                        $btnRelaunch.ToolTip = "scripts/blackboard-ui.ps1 on disk is newer ($($diskTime.ToString('HH:mm:ss'))). Click to relaunch controller."
+                    }
                 }
             } else {
                 $script:NewerScriptSinceUtc = $null
-                $script:AutoRelaunchStarted = $false
+                if ($script:DiskScriptIsNewer) {
+                    $script:DiskScriptIsNewer = $false
+                    Update-PromptButtonsLockState -locked $false
+                    if ($btnRelaunch) {
+                        $btnRelaunch.IsEnabled = $true
+                        $btnRelaunch.Content = "⏭️ Relaunch"
+                        $btnRelaunch.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#313244")
+                        $btnRelaunch.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#CDD6F4")
+                        $btnRelaunch.BorderBrush = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#45475A")
+                        $btnRelaunch.BorderThickness = New-Object System.Windows.Thickness(1)
+                        $btnRelaunch.FontWeight = [System.Windows.FontWeights]::Normal
+                        $btnRelaunch.ToolTip = "Restart Blackboard UI to pick up code changes or reset state"
+                    }
+                }
             }
         } catch {}
     }
@@ -4809,7 +5220,7 @@ function Load-BlackboardIntoUI {
             }
             
             if ($script:DiskScriptIsNewer -and (-not $script:FormDirty)) {
-                $txtStatus.Text = "⚠️ Controller script on disk is newer than this open window. It relaunches after a short settle while the form stays clean."
+                $txtStatus.Text = "⚠️ Controller script on disk is newer than this open window. Prompt buttons are locked until relaunched."
             } elseif (-not $fromTimer) {
                 $txtStatus.Text = "Loaded blackboard from .ai/blackboard.md"
             } elseif (-not $script:FormDirty) {
@@ -4829,7 +5240,12 @@ function Load-BlackboardIntoUI {
             $script:SuppressFormDirty = $false
             $script:SuppressPhaseAutoAdvance = $false
         }
-        if ($script:PendingUnsignedRollback) {
+        $allSignedNow = ($chkSignHuman -and $chkSignHuman.IsChecked) -and ($chkSignCursor -and $chkSignCursor.IsChecked) -and ($chkSignGemini -and $chkSignGemini.IsChecked)
+        if ($allSignedNow) {
+            $script:PendingUnsignedRollback = $false
+            $script:NewSignoffDuringLoad = $false
+            Check-PhaseAutoAdvance
+        } elseif ($script:PendingUnsignedRollback) {
             $script:NewSignoffDuringLoad = $false
             Invoke-UnsignedTestRollback
         } elseif ($script:NewSignoffDuringLoad) {
@@ -4848,6 +5264,7 @@ if ($script:ClientConfig -and $script:ClientConfig.boardPath -and (Test-Path $sc
     Populate-RecentBoardsDropdown
 }
 if ($chkNewChatKickoff) { $chkNewChatKickoff.IsChecked = $false }
+Update-KickoffButtonTooltips
 Start-StartupUpdateCheck
 
 $window.ShowDialog() | Out-Null
