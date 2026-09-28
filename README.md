@@ -37,9 +37,10 @@ Running multiple autonomous AI coding agents in parallel usually leads to one of
 
 ---
 
-## Current Build: v1.2.38 — Frogger
+## Current Build: v1.2.39 — Defender
 
-- **Build vs. Release**: `v1.2.38` is the current working tree development build. The latest tagged release published on GitHub is [**v1.2.25**](https://github.com/sayne-net/agent-collab-controller/releases).
+- **Build vs. Release**: `v1.2.39` is the current working tree development build. The latest tagged release published on GitHub is [**v1.2.25**](https://github.com/sayne-net/agent-collab-controller/releases).
+- **Close Project allowlist**: Root `CHANGELOG.md` and `README.md` ship with Close Project. The stale `docs/CHANGELOG.md` path is no longer allowlisted.
 - **Sign-off latch**: An unsigned newest turn leaves that seat’s box open. A phase change clears all three sign-off boxes.
 - **Debrief preserved on Close Cycle**: Accepting 'Yes' to complete the close cycle during `closing` phase auto-advance ships allowlisted code and proceeds directly into `debrief`. Session archiving and reset to `ready` await completion of debrief.
 - **Arcade Codenames**: Releases now feature classic 80's & 90's arcade game codenames.

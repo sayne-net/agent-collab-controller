@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Releases adopt 80's and 90's arcade game names as optional release codenames.
 
+## [v1.2.39] — Defender
+
+### Fixed
+- **Close Project allowlist**: Root `CHANGELOG.md` and `README.md` are now allowlisted in `Test-CloseProjectAllowedPath`. The stale `docs/CHANGELOG.md` entry is gone.
+
 ## [v1.2.38] — Frogger
 
 ### Fixed

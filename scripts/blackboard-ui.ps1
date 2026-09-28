@@ -1,12 +1,12 @@
 # AI Collab Controller (WPF UI)
-# Version 1.2.38
+# Version 1.2.39
 # Standalone dual-session controller for multi-agent collaboration with human-in-the-loop steering.
 
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
 
-$script:AppVersion = "v1.2.38"
+$script:AppVersion = "v1.2.39"
 $script:RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $script:ProjectName = (Split-Path $script:RepoRoot -Leaf)
 $script:ScriptFilePath = if ($PSCommandPath) { $PSCommandPath } else { Join-Path $PSScriptRoot "blackboard-ui.ps1" }
@@ -3394,7 +3394,7 @@ function Test-CloseProjectAllowedPath {
     $n = ($relPath -replace '\\', '/').Trim().Trim('"')
     if ($n -match '(^|/)\.env($|\.)' -or $n -match '\.pem$' -or $n -match '(?i)secret|credential') { return $false }
     if ($n -eq 'scripts/blackboard-ui.ps1') { return $true }
-    if ($n -in @('docs/STATUS.md', 'docs/collaboration.md', 'docs/CHANGELOG.md', 'AGENTS.md', 'GEMINI.md')) { return $true }
+    if ($n -in @('docs/STATUS.md', 'docs/collaboration.md', 'CHANGELOG.md', 'README.md', 'AGENTS.md', 'GEMINI.md')) { return $true }
     if ($n.StartsWith('.cursor/rules/')) { return $true }
     return $false
 }
