@@ -1,12 +1,12 @@
 # AI Collab Controller (WPF UI)
-# Version 1.2.36
+# Version 1.2.38
 # Standalone dual-session controller for multi-agent collaboration with human-in-the-loop steering.
 
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
 
-$script:AppVersion = "v1.2.37"
+$script:AppVersion = "v1.2.38"
 $script:RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $script:ProjectName = (Split-Path $script:RepoRoot -Leaf)
 $script:ScriptFilePath = if ($PSCommandPath) { $PSCommandPath } else { Join-Path $PSScriptRoot "blackboard-ui.ps1" }
@@ -3240,6 +3240,34 @@ function Mark-FormDirty {
 
 $cbCursorRole.add_SelectionChanged({ Check-Safety; Mark-FormDirty })
 $cbGeminiRole.add_SelectionChanged({ Check-Safety; Mark-FormDirty })
+function Clear-SignoffBoxesForPhaseChange {
+    $script:SuppressPhaseAutoAdvance = $true
+    $script:SuppressAutoAdvanceLatchReset = $true
+    $script:SuppressFormDirty = $true
+    try {
+        if ($chkSignHuman) { $chkSignHuman.IsChecked = $false }
+        if ($chkSignCursor) { $chkSignCursor.IsChecked = $false }
+        if ($chkSignGemini) { $chkSignGemini.IsChecked = $false }
+        if (Test-Path $script:BlackboardPath) {
+            $raw = [System.IO.File]::ReadAllText($script:BlackboardPath, [System.Text.Encoding]::UTF8)
+            $s1 = Get-Seat1Client
+            $s2 = Get-Seat2Client
+            $s1Esc = [regex]::Escape($s1)
+            $s2Esc = [regex]::Escape($s2)
+            $cPad = Get-LastMarkdownBody $raw "(?:###|##)\s+(?:$s1Esc|Cursor|Agent\s*1)(?:\s+Scratchpad)?"
+            $gPad = Get-LastMarkdownBody $raw "(?:###|##)\s+(?:$s2Esc|Gemini(?:\s+\(Antigravity\))?|Agent\s*2)(?:\s+Scratchpad)?"
+            $script:CursorPadAtPhaseChange = if ($cPad) { ($cPad -replace '\r\n', "`n" -replace '\r', "`n").Trim() } else { "" }
+            $script:GeminiPadAtPhaseChange = if ($gPad) { ($gPad -replace '\r\n', "`n" -replace '\r', "`n").Trim() } else { "" }
+            Save-SignoffBaseline
+        }
+        Save-BlackboardContent
+    } finally {
+        $script:SuppressPhaseAutoAdvance = $false
+        $script:SuppressAutoAdvanceLatchReset = $false
+        $script:SuppressFormDirty = $false
+    }
+}
+
 $cbPhase.add_SelectionChanged({
     if (-not $script:SuppressPresetSync) {
         Sync-PresetFromPhase (Get-PhaseString)
@@ -3247,6 +3275,9 @@ $cbPhase.add_SelectionChanged({
     if (-not $script:SuppressAutoAdvanceLatchReset) {
         $script:PhaseAdvanceGateLatched = $false
         $script:PhaseAdvanceUncheckObserved = $false
+    }
+    if (-not $script:SuppressPhaseAutoAdvance -and -not $script:SuppressFormDirty) {
+        Clear-SignoffBoxesForPhaseChange
     }
     Ensure-PitchSeatsAdvise
     Mark-FormDirty
@@ -4132,6 +4163,8 @@ function Sync-SignoffCheckboxes {
     if ($cFreshSignoff) {
         $chkSignCursor.IsChecked = $true
         $script:NewSignoffDuringLoad = $true
+    } elseif (-not [string]::IsNullOrWhiteSpace($cPad) -and -not $cPadSign) {
+        $chkSignCursor.IsChecked = $false
     } elseif ($cCleared) {
         $chkSignCursor.IsChecked = $false
     } elseif ($cTable) {
@@ -4158,6 +4191,8 @@ function Sync-SignoffCheckboxes {
     if ($gFreshSignoff) {
         $chkSignGemini.IsChecked = $true
         $script:NewSignoffDuringLoad = $true
+    } elseif (-not [string]::IsNullOrWhiteSpace($gPad) -and -not $gPadSign) {
+        $chkSignGemini.IsChecked = $false
     } elseif ($gCleared) {
         $chkSignGemini.IsChecked = $false
     } elseif ($gTable) {
