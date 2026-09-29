@@ -1,13 +1,88 @@
 # AI Collab Controller (WPF UI)
-# Version 1.2.39
+# Version 1.3.0
 # Standalone dual-session controller for multi-agent collaboration with human-in-the-loop steering.
+# SemVer tracks protocol and feature releases. Do not bump the patch on every local edit.
+
+param(
+    [string]$TargetRepo = ""
+)
 
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
 
-$script:AppVersion = "v1.2.39"
-$script:RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
+$script:AppVersion = "v1.3.0"
+$script:ControllerRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$script:UserConfigDir = Join-Path $HOME ".blackboard"
+$script:UserConfigPath = Join-Path $script:UserConfigDir "config.json"
+
+function Test-SameFullPath {
+    param([string]$left, [string]$right)
+    if ([string]::IsNullOrWhiteSpace($left) -or [string]::IsNullOrWhiteSpace($right)) { return $false }
+    try {
+        $a = [System.IO.Path]::GetFullPath($left).TrimEnd('\', '/')
+        $b = [System.IO.Path]::GetFullPath($right).TrimEnd('\', '/')
+        return $a.Equals($b, [System.StringComparison]::OrdinalIgnoreCase)
+    } catch {
+        return $false
+    }
+}
+
+function Get-UserBlackboardConfig {
+    $empty = [PSCustomObject]@{ lastOpenedRepo = "" }
+    if (-not (Test-Path $script:UserConfigPath)) { return $empty }
+    try {
+        $json = Get-Content $script:UserConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if (-not $json) { return $empty }
+        if (-not $json.PSObject.Properties['lastOpenedRepo']) {
+            $json | Add-Member -NotePropertyName "lastOpenedRepo" -NotePropertyValue "" -Force
+        }
+        return $json
+    } catch {
+        return $empty
+    }
+}
+
+function Save-LastOpenedRepo {
+    param([string]$repoPath)
+    if ([string]::IsNullOrWhiteSpace($repoPath)) { return }
+    try {
+        if (-not (Test-Path $script:UserConfigDir)) {
+            New-Item -ItemType Directory -Force -Path $script:UserConfigDir | Out-Null
+        }
+        $cfg = Get-UserBlackboardConfig
+        $cfg.lastOpenedRepo = $repoPath
+        $exportObj = [PSCustomObject]@{ lastOpenedRepo = $repoPath }
+        $jsonStr = $exportObj | ConvertTo-Json -Depth 4
+        [System.IO.File]::WriteAllText($script:UserConfigPath, $jsonStr, [System.Text.Encoding]::UTF8)
+    } catch {
+        Write-Warning "Save-LastOpenedRepo failed: $_"
+    }
+}
+
+function Resolve-LaunchRepoRoot {
+    if (-not [string]::IsNullOrWhiteSpace($TargetRepo)) {
+        if (Test-Path -LiteralPath $TargetRepo) {
+            return (Resolve-Path -LiteralPath $TargetRepo).Path
+        }
+        Write-Warning "TargetRepo not found: $TargetRepo"
+    }
+    $saved = [string](Get-UserBlackboardConfig).lastOpenedRepo
+    if ($saved -and (Test-Path -LiteralPath $saved)) {
+        $resolved = (Resolve-Path -LiteralPath $saved).Path
+        if (-not (Test-SameFullPath $resolved $script:ControllerRoot)) {
+            return $resolved
+        }
+    }
+    return $null
+}
+
+$script:LaunchRepoRoot = Resolve-LaunchRepoRoot
+if ($script:LaunchRepoRoot) {
+    $script:RepoRoot = $script:LaunchRepoRoot
+} else {
+    $script:RepoRoot = $script:ControllerRoot
+}
 $script:ProjectName = (Split-Path $script:RepoRoot -Leaf)
 $script:ScriptFilePath = if ($PSCommandPath) { $PSCommandPath } else { Join-Path $PSScriptRoot "blackboard-ui.ps1" }
 $script:LoadedScriptWriteTime = if (Test-Path $script:ScriptFilePath) { (Get-Item $script:ScriptFilePath).LastWriteTime } else { [DateTime]::MinValue }
@@ -32,7 +107,6 @@ function Get-TargetGitHubRepo {
     } catch {}
     return $null
 }
-$script:ControllerRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $script:ControllerAiDir = Join-Path $script:ControllerRoot ".ai"
 $script:ClientsConfigPath = Join-Path $script:ControllerAiDir "clients.json"
 $script:SignoffBaselinePath = Join-Path $script:ControllerAiDir "signoff-baseline.json"
@@ -413,7 +487,7 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                         <CheckBox Name="chkSignHuman" Content="Human" Margin="0,0,6,0"/>
                         <CheckBox Name="chkSignCursor" Content="AI 1" Margin="0,0,6,0"/>
                         <CheckBox Name="chkSignGemini" Content="AI 2" Margin="0,0,10,0"/>
-                        <CheckBox Name="chkAutoStep" Content="⚡ Auto Step" IsChecked="True" ToolTip="On: all three sign-offs advance one phase. Off: the phase stays."/>
+                        <CheckBox Name="chkAutoStep" Content="⚡ Auto Step" IsChecked="False" ToolTip="Off by default. On: all three sign-offs advance one phase badge. Roles stay as assigned."/>
                     </StackPanel>
                     <TextBlock Name="txtGitStatusSummary" Text="Git: clean" FontSize="10" Foreground="#A6ADC8" Margin="0,3,0,0" ToolTip="Read-only git status for active repository"/>
                 </StackPanel>
@@ -565,8 +639,8 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                         <ComboBoxItem Name="cbiKickoffSeat2" Content="AI 2" Tag="Seat2"/>
                         <ComboBoxItem Name="cbiKickoffBoth" Content="Both" Tag="Both"/>
                     </ComboBox>
-                    <Button Name="btnCopyKickoffPrompt" Content="📋 Copy Prompt" Background="#313244" Margin="0,0,4,0" ToolTip="Copy tailored full Kickoff Prompt for selected target to Clipboard"/>
-                    <Button Name="btnSendKickoffPrompt" Content="🚀 Send Prompt" Background="#89B4FA" Foreground="#11111B" FontWeight="Bold" Margin="0,0,6,0" ToolTip="Sequence and send full Kickoff Prompt to selected target agent(s)"/>
+                    <Button Name="btnCopyKickoffPrompt" Content="📋 Copy Prompt" Background="#89B4FA" Foreground="#11111B" FontWeight="Bold" Margin="0,0,4,0" ToolTip="Canonical handoff. Copy the kickoff prompt to the clipboard."/>
+                    <Button Name="btnSendKickoffPrompt" Content="Send (best-effort)" Background="#313244" Foreground="#BAC2DE" Margin="0,0,6,0" ToolTip="Best-effort only. Focus and SendKeys can miss Electron chats. The prompt is also copied to the clipboard."/>
                     <CheckBox Name="chkNewChatKickoff" Content="New Chat" IsChecked="False" VerticalAlignment="Center" Margin="4,0,4,0" Foreground="#A6E3A1" ToolTip="Optional one-shot on Kickoff. Cursor uses Chat: New Chat; Antigravity uses Ctrl+Shift+I then Ctrl+Shift+L. Codex New Chat is unavailable (desktop app limitation; open new chat manually in Codex). Re-prompt never opens a new chat."/>
                     <CheckBox Name="chkDryRunKickoff" Content="Dry run" IsChecked="False" VerticalAlignment="Center" Margin="4,0,4,0" Foreground="#89B4FA" ToolTip="Record the selected kickoff target, New Chat state, and status. Do not copy or send the prompt."/>
                 </StackPanel>
@@ -577,9 +651,9 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                 <!-- Row 0 Right: Re-prompt Buttons -->
                 <StackPanel Grid.Row="0" Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                     <TextBlock Text="⚡ Re-prompt Sync:" FontWeight="Bold" FontSize="11" Foreground="#F9E2AF" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                    <Button Name="btnRepromptCursor" Content="AI 1" Background="#313244" Margin="0,0,4,0" ToolTip="Focus AI 1 &amp; re-prompt"/>
-                    <Button Name="btnRepromptGemini" Content="AI 2" Background="#313244" Margin="0,0,4,0" ToolTip="Focus AI 2 &amp; re-prompt"/>
-                    <Button Name="btnRepromptBoth" Content="⚡ Both" Background="#45475A" Foreground="#F9E2AF" Margin="0,0,6,0" ToolTip="Re-prompt both agents"/>
+                    <Button Name="btnRepromptCursor" Content="AI 1 (best-effort)" Background="#313244" Margin="0,0,4,0" ToolTip="Best-effort re-prompt for AI 1. Clipboard copy is the reliable handoff."/>
+                    <Button Name="btnRepromptGemini" Content="AI 2 (best-effort)" Background="#313244" Margin="0,0,4,0" ToolTip="Best-effort re-prompt for AI 2. Clipboard copy is the reliable handoff."/>
+                    <Button Name="btnRepromptBoth" Content="Both (best-effort)" Background="#45475A" Foreground="#F9E2AF" Margin="0,0,6,0" ToolTip="Best-effort re-prompt for both seats. Clipboard copy is the reliable handoff."/>
                     <Button Name="btnCompareNotes" Content="⚖️ Compare Notes" Background="#313244" Foreground="#89B4FA" FontWeight="SemiBold" ToolTip="Send a compare-notes re-prompt to both agents without replacing Objective or Alignment"/>
                 </StackPanel>
             </Grid>
@@ -595,7 +669,7 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
             <!-- Left Controls: Apply, Close Project, Reset, Text Output -->
             <StackPanel Orientation="Horizontal">
                 <Button Name="btnApply" Content="💾 Apply Blackboard" Background="#89B4FA" Foreground="#11111B" FontWeight="Bold" Margin="0,0,6,0" Padding="12,5"/>
-                <Button Name="btnCloseProject" Content="🏁 Close Project" Background="#313244" Foreground="#A6E3A1" FontWeight="Bold" Margin="0,0,6,0" Padding="10,5" ToolTip="Audit git, optionally commit allowlisted files and ff-only push, then archive and idle"/>
+                <Button Name="btnCloseProject" Content="🏁 Close Project" Background="#313244" Foreground="#A6E3A1" FontWeight="Bold" Margin="0,0,6,0" Padding="10,5" ToolTip="Audit the target repo git status, confirm tracked files, ff-only push, then archive and idle"/>
                 <Button Name="btnReset" Content="🔄 Reset (Auto-Save)" Background="#F38BA8" Foreground="#11111B" FontWeight="Bold" Margin="0,0,6,0" Padding="10,5" ToolTip="Archive the current board to .ai/history, then clear the form for the next task on this same file"/>
                 <Button Name="btnViewText" Content="📄 Blackboard Output" Background="#45475A" Foreground="#89B4FA" Margin="0,0,6,0" Padding="8,5" ToolTip="Open separate window showing live blackboard markdown text"/>
                 <Button Name="btnViewDiff" Content="🔍 Review Diff" Background="#45475A" Foreground="#A6E3A1" Margin="0,0,6,0" Padding="8,5" ToolTip="Open window showing git diff of uncommitted changes"/>
@@ -864,7 +938,7 @@ function Get-ClientConfiguration {
         boardSeats = [PSCustomObject]@{}
         tooltips = $true
         audioCue = $false
-        autoStep = $true
+        autoStep = $false
         profiles = [PSCustomObject]@{
             "AI 1" = [PSCustomObject]@{ process = ""; description = "Generic Seat 1 (Manual Clipboard Copy)" }
             "AI 2" = [PSCustomObject]@{ process = ""; description = "Generic Seat 2 (Manual Clipboard Copy)" }
@@ -884,7 +958,7 @@ function Get-ClientConfiguration {
             if (-not $obj.PSObject.Properties['boardSeats']) { $obj | Add-Member -NotePropertyName "boardSeats" -NotePropertyValue ([PSCustomObject]@{}) -Force }
             if (-not $obj.PSObject.Properties['tooltips']) { $obj | Add-Member -NotePropertyName "tooltips" -NotePropertyValue $true -Force }
             if (-not $obj.PSObject.Properties['audioCue']) { $obj | Add-Member -NotePropertyName "audioCue" -NotePropertyValue $false -Force }
-            if (-not $obj.PSObject.Properties['autoStep']) { $obj | Add-Member -NotePropertyName "autoStep" -NotePropertyValue $true -Force }
+            if (-not $obj.PSObject.Properties['autoStep']) { $obj | Add-Member -NotePropertyName "autoStep" -NotePropertyValue $false -Force }
             if ($obj.profiles) {
                 if (-not $obj.profiles.PSObject.Properties['Codex']) {
                     $obj.profiles | Add-Member -NotePropertyName "Codex" -NotePropertyValue ([PSCustomObject]@{ process = "ChatGPT"; description = "OpenAI Codex in the ChatGPT desktop app" }) -Force
@@ -950,7 +1024,7 @@ $script:MasterTooltips = @{
     "chkSignHuman"         = "Phase sign-off approval from Human Lead (all 3 advance phase / close project)"
     "chkSignCursor"        = "Phase sign-off approval from Seat 1 (all 3 advance phase / close project)"
     "chkSignGemini"        = "Phase sign-off approval from Seat 2 (all 3 advance phase / close project)"
-    "chkAutoStep"          = "Auto step. On advances one phase when all three sign-offs are checked. Off leaves the phase where it is."
+    "chkAutoStep"          = "Off by default. On advances one phase badge when all three sign-offs are checked. Roles are not changed."
     "txtGitStatusSummary"  = "Read-only summary of active git branch and uncommitted changes"
     "txtIssueNum"          = "Associated GitHub issue number (e.g. 24 or none)"
     "txtIssueTitle"        = "Fetched title of the linked GitHub issue"
@@ -971,18 +1045,18 @@ $script:MasterTooltips = @{
 
     # Kickoff & Reprompt Dispatch
     "cbKickoffTarget"      = "Select kickoff recipient target (Seat 1, Seat 2, or Both)"
-    "btnCopyKickoffPrompt" = "Copy tailored Kickoff Prompt for selected target to Clipboard"
-    "btnSendKickoffPrompt" = "Focus target window and paste tailored Kickoff Prompt"
+    "btnCopyKickoffPrompt" = "Canonical handoff. Copy the kickoff prompt to the clipboard."
+    "btnSendKickoffPrompt" = "Best-effort only. Focus and SendKeys can miss the chat. The prompt is also on the clipboard."
     "chkNewChatKickoff"    = "Optional one-shot on Kickoff. Cursor uses Chat: New Chat; Antigravity uses Ctrl+Shift+I then Ctrl+Shift+L. Codex New Chat is unavailable (desktop app limitation; open new chat manually in Codex). Re-prompt never opens a new chat."
     "chkDryRunKickoff"     = "Record the selected kickoff target, New Chat state, and status. Do not copy or send the prompt."
-    "btnRepromptCursor"    = "Focus Seat 1 window and trigger follow-up prompt"
-    "btnRepromptGemini"    = "Focus Seat 2 window and trigger follow-up prompt"
-    "btnRepromptBoth"      = "Re-prompt both agents"
+    "btnRepromptCursor"    = "Best-effort re-prompt for Seat 1. Clipboard copy is the reliable handoff."
+    "btnRepromptGemini"    = "Best-effort re-prompt for Seat 2. Clipboard copy is the reliable handoff."
+    "btnRepromptBoth"      = "Best-effort re-prompt for both seats. Clipboard copy is the reliable handoff."
     "btnCompareNotes"      = "Send a compare-notes re-prompt to both agents without replacing Objective or Alignment"
 
     # Bottom Toolbar Actions
     "btnApply"             = "Write current form configuration to active blackboard.md on disk"
-    "btnCloseProject"      = "Audit git, archive session to .ai/history, and reset board to idle"
+    "btnCloseProject"      = "Audit the target repo, confirm tracked files, archive the session to .ai/history, and reset the board"
     "btnReset"             = "Archive the current board to .ai/history and clear the form for the next task on this same file"
     "btnViewText"          = "Open live blackboard markdown text viewer window"
     "btnViewDiff"          = "Open Review Diff viewer showing uncommitted working tree changes"
@@ -1016,7 +1090,7 @@ function Save-ClientConfiguration {
             "boardPath"    = $script:BlackboardPath
             "tooltips"     = $true
             "audioCue"     = $false
-            "autoStep"     = $true
+            "autoStep"     = $false
             "recentBoards" = @()
             "boardSeats"   = [PSCustomObject]@{}
         }
@@ -1033,7 +1107,7 @@ function Save-ClientConfiguration {
         $cfg.tooltips = $tooltipsVal
         $audioCueVal = if ($chkAudioCue) { [bool]$chkAudioCue.IsChecked } elseif ($null -ne $cfg.audioCue) { [bool]$cfg.audioCue } else { $false }
         $cfg.audioCue = $audioCueVal
-        $autoStepVal = if ($chkAutoStep) { [bool]$chkAutoStep.IsChecked } elseif ($null -ne $cfg.autoStep) { [bool]$cfg.autoStep } else { $true }
+        $autoStepVal = if ($chkAutoStep) { [bool]$chkAutoStep.IsChecked } elseif ($null -ne $cfg.autoStep) { [bool]$cfg.autoStep } else { $false }
         $cfg.autoStep = $autoStepVal
 
         if ($script:BlackboardPath) {
@@ -1229,10 +1303,10 @@ function Update-KickoffButtonTooltips {
     }
     if (-not $script:DiskScriptIsNewer) {
         if ($btnCopyKickoffPrompt) {
-            $btnCopyKickoffPrompt.ToolTip = "Copy tailored full Kickoff Prompt for $targetName to Clipboard"
+            $btnCopyKickoffPrompt.ToolTip = "Canonical handoff. Copy the $targetName kickoff prompt to the clipboard."
         }
         if ($btnSendKickoffPrompt) {
-            $btnSendKickoffPrompt.ToolTip = "Focus $targetName window and paste tailored full Kickoff Prompt"
+            $btnSendKickoffPrompt.ToolTip = "Best-effort focus and SendKeys for $targetName. The prompt is also copied to the clipboard."
         }
     }
 
@@ -1320,21 +1394,21 @@ function Update-PromptButtonsLockState {
         $lightFg = $brushConv.ConvertFromString("#CDD6F4")
 
         if ($btnCopyKickoffPrompt) {
-            $btnCopyKickoffPrompt.Background = $darkBg
-            $btnCopyKickoffPrompt.Foreground = $lightFg
+            $btnCopyKickoffPrompt.Background = $brushConv.ConvertFromString("#89B4FA")
+            $btnCopyKickoffPrompt.Foreground = $brushConv.ConvertFromString("#11111B")
             $btnCopyKickoffPrompt.BorderBrush = $defaultBorder
             $btnCopyKickoffPrompt.BorderThickness = New-Object System.Windows.Thickness(1)
-            $btnCopyKickoffPrompt.FontWeight = [System.Windows.FontWeights]::Normal
+            $btnCopyKickoffPrompt.FontWeight = [System.Windows.FontWeights]::Bold
             $btnCopyKickoffPrompt.Content = "📋 Copy Prompt"
             $btnCopyKickoffPrompt.Cursor = $defaultCursor
         }
         if ($btnSendKickoffPrompt) {
-            $btnSendKickoffPrompt.Background = $brushConv.ConvertFromString("#89B4FA")
-            $btnSendKickoffPrompt.Foreground = $brushConv.ConvertFromString("#11111B")
+            $btnSendKickoffPrompt.Background = $darkBg
+            $btnSendKickoffPrompt.Foreground = $lightFg
             $btnSendKickoffPrompt.BorderBrush = $defaultBorder
             $btnSendKickoffPrompt.BorderThickness = New-Object System.Windows.Thickness(1)
-            $btnSendKickoffPrompt.FontWeight = [System.Windows.FontWeights]::Bold
-            $btnSendKickoffPrompt.Content = "🚀 Send Prompt"
+            $btnSendKickoffPrompt.FontWeight = [System.Windows.FontWeights]::Normal
+            $btnSendKickoffPrompt.Content = "Send (best-effort)"
             $btnSendKickoffPrompt.Cursor = $defaultCursor
         }
         if ($btnRepromptCursor) {
@@ -1343,8 +1417,8 @@ function Update-PromptButtonsLockState {
             $btnRepromptCursor.BorderBrush = $defaultBorder
             $btnRepromptCursor.BorderThickness = New-Object System.Windows.Thickness(1)
             $btnRepromptCursor.FontWeight = [System.Windows.FontWeights]::Normal
-            $btnRepromptCursor.Content = $s1
-            $btnRepromptCursor.ToolTip = "Focus $s1 & re-prompt"
+            $btnRepromptCursor.Content = "$s1 (best-effort)"
+            $btnRepromptCursor.ToolTip = "Best-effort re-prompt for $s1. Clipboard copy is the reliable handoff."
             $btnRepromptCursor.Cursor = $defaultCursor
         }
         if ($btnRepromptGemini) {
@@ -1353,8 +1427,8 @@ function Update-PromptButtonsLockState {
             $btnRepromptGemini.BorderBrush = $defaultBorder
             $btnRepromptGemini.BorderThickness = New-Object System.Windows.Thickness(1)
             $btnRepromptGemini.FontWeight = [System.Windows.FontWeights]::Normal
-            $btnRepromptGemini.Content = $s2
-            $btnRepromptGemini.ToolTip = "Focus $s2 & re-prompt"
+            $btnRepromptGemini.Content = "$s2 (best-effort)"
+            $btnRepromptGemini.ToolTip = "Best-effort re-prompt for $s2. Clipboard copy is the reliable handoff."
             $btnRepromptGemini.Cursor = $defaultCursor
         }
         if ($btnRepromptBoth) {
@@ -1363,8 +1437,8 @@ function Update-PromptButtonsLockState {
             $btnRepromptBoth.BorderBrush = $defaultBorder
             $btnRepromptBoth.BorderThickness = New-Object System.Windows.Thickness(1)
             $btnRepromptBoth.FontWeight = [System.Windows.FontWeights]::Normal
-            $btnRepromptBoth.Content = "👥 Both"
-            $btnRepromptBoth.ToolTip = "Re-prompt both agents"
+            $btnRepromptBoth.Content = "Both (best-effort)"
+            $btnRepromptBoth.ToolTip = "Best-effort re-prompt for both seats. Clipboard copy is the reliable handoff."
             $btnRepromptBoth.Cursor = $defaultCursor
         }
         if ($btnCompareNotes) {
@@ -1563,6 +1637,7 @@ function Set-ActiveBlackboardPath {
         $script:SavedDir = Join-Path $script:AiDir "saved"
         $script:ExamplePath = Join-Path $script:AiDir "blackboard.example.md"
         $script:GitHubRepo = $null
+        Save-LastOpenedRepo -repoPath $script:RepoRoot
 
         foreach ($dir in @($script:AiDir, $script:HistoryDir, $script:SavedDir)) {
             if (-not (Test-Path $dir)) {
@@ -1667,7 +1742,7 @@ if ($chkAudioCue) {
 }
 
 if ($chkAutoStep) {
-    $initialAutoStep = if ($script:ClientConfig -and $null -ne $script:ClientConfig.autoStep) { [bool]$script:ClientConfig.autoStep } else { $true }
+    $initialAutoStep = if ($script:ClientConfig -and $null -ne $script:ClientConfig.autoStep) { [bool]$script:ClientConfig.autoStep } else { $false }
     $chkAutoStep.IsChecked = $initialAutoStep
     $chkAutoStep.add_Checked({
         Save-ClientConfiguration
@@ -3026,7 +3101,6 @@ function Check-PhaseAutoAdvance {
         Save-SignoffBaseline
 
         Set-Phase $nextPhase
-        Set-RolesForPhase $nextPhase
 
         if ($currentPhase -eq "debrief" -and $nextPhase -eq "ready") {
             $targetTag = if ($cbKickoffTarget -and $cbKickoffTarget.SelectedItem) { [string]$cbKickoffTarget.SelectedItem.Tag } else { "Both" }
@@ -3069,8 +3143,7 @@ function Invoke-UnsignedTestRollback {
         if ($chkSignCursor) { $chkSignCursor.IsChecked = $false }
         if ($chkSignGemini) { $chkSignGemini.IsChecked = $false }
         Set-Phase "implement"
-        Set-RolesForPhase "implement"
-        if ($txtStatus) { $txtStatus.Text = "Auto step: an AI $phaseNow turn has no Sign-off [x]. Phase returned to implement." }
+        if ($txtStatus) { $txtStatus.Text = "Auto step: an AI $phaseNow turn has no Sign-off [x]. Phase badge returned to implement. Roles were left as assigned." }
         Save-BlackboardContent
         Update-UiActiveTurn -keepOverride
     } finally {
@@ -3389,13 +3462,34 @@ function Get-NormalizedRole {
     return (($role.Trim() -split '\s+')[0]).ToLower()
 }
 
+function Test-CloseProjectDeniedPath {
+    param([string]$relPath)
+    $n = ($relPath -replace '\\', '/').Trim().Trim('"')
+    if ($n -match '(^|/)\.env($|\.)' -or $n -match '\.pem$' -or $n -match '(?i)secret|credential') { return $true }
+    if ($n -match '(^|/)\.ai/') { return $true }
+    return $false
+}
+
+function Get-CloseAllowPatterns {
+    $allowFile = Join-Path $script:AiDir "close-allow.json"
+    if (-not (Test-Path -LiteralPath $allowFile)) { return $null }
+    try {
+        $json = Get-Content -LiteralPath $allowFile -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($json -and $json.paths) { return @($json.paths | Where-Object { $_ }) }
+    } catch {}
+    return $null
+}
+
 function Test-CloseProjectAllowedPath {
     param([string]$relPath)
     $n = ($relPath -replace '\\', '/').Trim().Trim('"')
-    if ($n -match '(^|/)\.env($|\.)' -or $n -match '\.pem$' -or $n -match '(?i)secret|credential') { return $false }
-    if ($n -eq 'scripts/blackboard-ui.ps1') { return $true }
-    if ($n -in @('docs/STATUS.md', 'docs/collaboration.md', 'CHANGELOG.md', 'README.md', 'AGENTS.md', 'GEMINI.md')) { return $true }
-    if ($n.StartsWith('.cursor/rules/')) { return $true }
+    if (Test-CloseProjectDeniedPath $n) { return $false }
+    $patterns = Get-CloseAllowPatterns
+    if ($null -eq $patterns -or $patterns.Count -eq 0) { return $true }
+    foreach ($pattern in $patterns) {
+        $p = ([string]$pattern) -replace '\\', '/'
+        if ($n -like $p) { return $true }
+    }
     return $false
 }
 
@@ -3449,15 +3543,28 @@ function Update-GitStatusSummary {
 function Invoke-CloseProjectGitShip {
     param([bool]$allSigned)
     if (-not $allSigned) { return }
+    if (Test-SameFullPath $script:RepoRoot $script:ControllerRoot) {
+        $selfAsk = [System.Windows.MessageBox]::Show(
+            "The active git root is the controller repo itself:`n$script:RepoRoot`n`nClose Project will commit and push that repo. Continue only if this session is about the controller.",
+            "Controller repo is the git target",
+            [System.Windows.MessageBoxButton]::YesNo,
+            [System.Windows.MessageBoxImage]::Warning
+        )
+        if ($selfAsk -ne [System.Windows.MessageBoxResult]::Yes) {
+            $txtStatus.Text = "Close Project git ship cancelled. Browse to the target repo board first."
+            return
+        }
+    }
     $audit = Get-CloseProjectGitAudit
     $lines = [System.Collections.Generic.List[string]]::new()
     [void]$lines.Add("Git audit before Close Project ($script:AppVersion):")
-    if ($audit.Allowed.Count -gt 0) { [void]$lines.Add("Allowlisted dirty (can commit):`n  " + ($audit.Allowed -join "`n  ")) } else { [void]$lines.Add("Allowlisted dirty: none") }
-    if ($audit.Blocked.Count -gt 0) { [void]$lines.Add("Other tracked dirty (will NOT auto-commit):`n  " + ($audit.Blocked -join "`n  ")) }
+    [void]$lines.Add("Repo: $script:RepoRoot")
+    if ($audit.Allowed.Count -gt 0) { [void]$lines.Add("Tracked dirty (can commit):`n  " + ($audit.Allowed -join "`n  ")) } else { [void]$lines.Add("Tracked dirty: none") }
+    if ($audit.Blocked.Count -gt 0) { [void]$lines.Add("Refused (secrets, .ai, or outside optional close-allow.json):`n  " + ($audit.Blocked -join "`n  ")) }
     if ($audit.Untracked.Count -gt 0) { [void]$lines.Add("Untracked (will NOT auto-add):`n  " + ($audit.Untracked -join "`n  ")) }
     [void]$lines.Add("")
     if ($audit.Allowed.Count -gt 0) {
-        [void]$lines.Add("Commit allowlisted files now?")
+        [void]$lines.Add("Commit these tracked files now?")
         $commitAsk = [System.Windows.MessageBox]::Show(($lines -join "`n"), "Close Project git audit", [System.Windows.MessageBoxButton]::YesNo, [System.Windows.MessageBoxImage]::Question)
         if ($commitAsk -eq [System.Windows.MessageBoxResult]::Yes) {
         foreach ($p in $audit.Allowed) {
@@ -3465,15 +3572,20 @@ function Invoke-CloseProjectGitShip {
         }
         $issueHint = $txtIssueNum.Text.Trim()
         $msg = if ($issueHint -and $issueHint -ne "none") {
-            "chore(controller): ship on Close Project $script:AppVersion (Refs #$issueHint)"
+            "docs: ship on Close Project (Refs #$issueHint)"
         } else {
-            "chore(controller): ship on Close Project $script:AppVersion"
+            "docs: ship on Close Project"
         }
         git -C $script:RepoRoot commit -m $msg
         if ($LASTEXITCODE -ne 0) {
             $txtStatus.Text = "Warning: git commit on Close Project failed (exit $LASTEXITCODE)."
         }
         }
+    }
+    if ($audit.Blocked.Count -gt 0) {
+        [System.Windows.MessageBox]::Show("Push skipped. Refused dirty paths are still in the working tree:`n`n" + ($audit.Blocked -join "`n"), "Close Project push skipped", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
+        $txtStatus.Text = "Push skipped: refused dirty paths remain."
+        return
     }
     git -C $script:RepoRoot fetch origin main 2>$null | Out-Null
     $aheadStr = (git -C $script:RepoRoot rev-list --count origin/main..HEAD 2>$null)
@@ -4668,7 +4780,7 @@ function Invoke-SendKickoffPrompt {
                 if (Send-AgentChatPaste -clientName $s1 -newChat $doNew) {
                     Complete-KickoffNewChatOneShot -didNew $doNew
                     $chatNote = if ($doNew) { " (New Chat, then off)" } else { "" }
-                    $txtStatus.Text = "🚀 Sent $s1 Kickoff Prompt to active IDE window$chatNote."
+                    $txtStatus.Text = "Best-effort send for $s1$chatNote. Prompt is on the clipboard. Confirm it landed in chat."
                 } else {
                     $txtStatus.Text = if ($doNew) { "⚠️ No new $s1 chat was confirmed; kickoff was not sent and New Chat remains armed." } else { "📋 Copied $s1 Kickoff to clipboard (IDE window not found). Focus $s1 and paste." }
                 }
@@ -4679,7 +4791,7 @@ function Invoke-SendKickoffPrompt {
                 if (Send-AgentChatPaste -clientName $s2 -newChat $doNew) {
                     Complete-KickoffNewChatOneShot -didNew $doNew
                     $chatNote = if ($doNew) { " (New Chat, then off)" } else { "" }
-                    $txtStatus.Text = "🚀 Sent $s2 Kickoff Prompt to active IDE window$chatNote."
+                    $txtStatus.Text = "Best-effort send for $s2$chatNote. Prompt is on the clipboard. Confirm it landed in chat."
                 } else {
                     $txtStatus.Text = if ($doNew) { "⚠️ No new $s2 chat was confirmed; kickoff was not sent and New Chat remains armed." } else { "📋 Copied $s2 Kickoff to clipboard (IDE window not found). Focus $s2 and paste." }
                 }
@@ -4898,7 +5010,11 @@ function Invoke-ControllerRelaunch {
     $targetScript = if ($PSCommandPath) { $PSCommandPath } else { Join-Path $PSScriptRoot "blackboard-ui.ps1" }
     $psExe = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { "pwsh.exe" } else { "powershell.exe" }
     $txtStatus.Text = "Relaunching controller..."
-    Start-Process $psExe -ArgumentList "-STA -NoProfile -ExecutionPolicy Bypass -File `"$targetScript`"" -WorkingDirectory $script:RepoRoot
+    $relaunchArgs = "-STA -NoProfile -ExecutionPolicy Bypass -File `"$targetScript`""
+    if ($script:RepoRoot -and -not (Test-SameFullPath $script:RepoRoot $script:ControllerRoot)) {
+        $relaunchArgs += " -TargetRepo `"$script:RepoRoot`""
+    }
+    Start-Process $psExe -ArgumentList $relaunchArgs -WorkingDirectory $script:ControllerRoot
     Start-Sleep -Milliseconds 250
     $window.Close()
 }
@@ -4912,14 +5028,14 @@ function Invoke-ControllerUpdate {
 
     $txtStatus.Text = "Checking online GitHub (origin/main) for controller updates..."
     try {
-        git -C $script:RepoRoot fetch origin main --quiet 2>$null
+        git -C $script:ControllerRoot fetch origin main --quiet 2>$null
         if ($LASTEXITCODE -ne 0) {
             $txtStatus.Text = "Could not reach online GitHub (fetch failed / offline)."
             [System.Windows.MessageBox]::Show("Could not reach online GitHub (origin/main). Please check your network connection.", "Update Check Failed", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
             return
         }
         
-        $localDirty = git -C $script:RepoRoot status --porcelain scripts/blackboard-ui.ps1 2>$null
+        $localDirty = git -C $script:ControllerRoot status --porcelain scripts/blackboard-ui.ps1 2>$null
         if ($localDirty) {
             $dirtyWarn = [System.Windows.MessageBox]::Show("Warning: You have uncommitted local modifications in 'scripts/blackboard-ui.ps1'.`n`nRunning git pull may overwrite or conflict with your local edits.`n`nProceed with git pull anyway?", "Uncommitted Script Changes", [System.Windows.MessageBoxButton]::YesNo, [System.Windows.MessageBoxImage]::Warning)
             if ($dirtyWarn -ne [System.Windows.MessageBoxResult]::Yes) {
@@ -4930,13 +5046,13 @@ function Invoke-ControllerUpdate {
 
         # Check if upstream commits exist behind current HEAD for controller
         $behindCount = 0
-        $behindStr = git -C $script:RepoRoot rev-list --count 'HEAD..origin/main' -- scripts/blackboard-ui.ps1 2>$null
+        $behindStr = git -C $script:ControllerRoot rev-list --count 'HEAD..origin/main' -- scripts/blackboard-ui.ps1 2>$null
         if ($LASTEXITCODE -eq 0 -and $behindStr) {
             $behindCount = [int]$behindStr
         }
 
         # Check if scripts/blackboard-ui.ps1 has diff against upstream
-        $diffOut = git -C $script:RepoRoot diff --stat 'HEAD..origin/main' -- scripts/blackboard-ui.ps1 2>$null
+        $diffOut = git -C $script:ControllerRoot diff --stat 'HEAD..origin/main' -- scripts/blackboard-ui.ps1 2>$null
 
         if ($behindCount -eq 0 -or -not $diffOut) {
             $txtStatus.Text = "Controller is up-to-date with online GitHub ($script:AppVersion)."
@@ -4951,7 +5067,7 @@ function Invoke-ControllerUpdate {
         $confirm = [System.Windows.MessageBox]::Show("A newer version of the Blackboard Controller is available on online GitHub ($behindCount commit(s) ahead)!`n`nPull the latest changes and relaunch now?", "Update Available", [System.Windows.MessageBoxButton]::YesNo, [System.Windows.MessageBoxImage]::Question)
         if ($confirm -eq [System.Windows.MessageBoxResult]::Yes) {
             $txtStatus.Text = "Pulling latest changes from online GitHub..."
-            git -C $script:RepoRoot pull --ff-only origin main
+            git -C $script:ControllerRoot pull --ff-only origin main
             if ($LASTEXITCODE -ne 0) {
                 $txtStatus.Text = "Error: git pull --ff-only failed with exit code $LASTEXITCODE. Relaunch cancelled."
                 [System.Windows.MessageBox]::Show("git pull --ff-only encountered an issue (divergent history or merge conflict). Please resolve git state manually.", "Pull Failed", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
@@ -4970,16 +5086,16 @@ function Invoke-ControllerUpdate {
 function Start-StartupUpdateCheck {
     [System.Threading.Tasks.Task]::Run([Action]{
         try {
-            git -C $script:RepoRoot fetch origin main --quiet 2>$null
+            git -C $script:ControllerRoot fetch origin main --quiet 2>$null
             if ($LASTEXITCODE -ne 0) { return }
 
             $behindCount = 0
-            $behindStr = git -C $script:RepoRoot rev-list --count 'HEAD..origin/main' -- scripts/blackboard-ui.ps1 2>$null
+            $behindStr = git -C $script:ControllerRoot rev-list --count 'HEAD..origin/main' -- scripts/blackboard-ui.ps1 2>$null
             if ($LASTEXITCODE -eq 0 -and $behindStr) {
                 $behindCount = [int]$behindStr
             }
 
-            $diffOut = git -C $script:RepoRoot diff --stat 'HEAD..origin/main' -- scripts/blackboard-ui.ps1 2>$null
+            $diffOut = git -C $script:ControllerRoot diff --stat 'HEAD..origin/main' -- scripts/blackboard-ui.ps1 2>$null
             $hasUpdate = ($behindCount -gt 0 -and $diffOut)
 
             $window.Dispatcher.Invoke([Action]{
@@ -5291,7 +5407,33 @@ function Load-BlackboardIntoUI {
     }
 }
 
-if ($script:ClientConfig -and $script:ClientConfig.boardPath -and (Test-Path $script:ClientConfig.boardPath)) {
+function Ensure-RepoBlackboardFile {
+    param([string]$repo)
+    $ai = Join-Path $repo ".ai"
+    $bb = Join-Path $ai "blackboard.md"
+    if (-not (Test-Path -LiteralPath $ai)) { New-Item -ItemType Directory -Force -Path $ai | Out-Null }
+    foreach ($sub in @("history", "saved")) {
+        $subPath = Join-Path $ai $sub
+        if (-not (Test-Path -LiteralPath $subPath)) { New-Item -ItemType Directory -Force -Path $subPath | Out-Null }
+    }
+    if (-not (Test-Path -LiteralPath $bb)) {
+        $example = Join-Path $script:ControllerAiDir "blackboard.example.md"
+        if (Test-Path -LiteralPath $example) {
+            Copy-Item -LiteralPath $example -Destination $bb
+        }
+    }
+    return $bb
+}
+
+if ($script:LaunchRepoRoot) {
+    $launchBoard = Ensure-RepoBlackboardFile -repo $script:LaunchRepoRoot
+    if (Test-Path -LiteralPath $launchBoard) {
+        Set-ActiveBlackboardPath -targetPath $launchBoard
+    } else {
+        Load-BlackboardIntoUI
+        Populate-RecentBoardsDropdown
+    }
+} elseif ($script:ClientConfig -and $script:ClientConfig.boardPath -and (Test-Path $script:ClientConfig.boardPath)) {
     Set-ActiveBlackboardPath -targetPath $script:ClientConfig.boardPath
 } else {
     Load-BlackboardIntoUI

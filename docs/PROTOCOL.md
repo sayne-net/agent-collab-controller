@@ -41,22 +41,32 @@ Most multi-agent frameworks run autonomous loops that quickly diverge, race each
 
 ---
 
+## Where the controller runs
+
+Install the controller once (for example `$HOME/agent-collab-controller`). Launch it with `-TargetRepo` set to the project working tree. The last opened repo is stored in `$HOME/.blackboard/config.json`. Close Project git commands use that target. Updating the controller app uses the controller checkout. An in-repo copy of `blackboard-ui.ps1` that only forwards to this install stays a frozen shim.
+
 ## The Blackboard Lifecycle
 
 ### Phase Progression Ladder
 
-The default project lifecycle follows a structured 5-phase ladder:
-`pitch` $\rightarrow$ `discuss` $\rightarrow$ `implement` $\rightarrow$ `test` $\rightarrow$ `closed`
+Phases are status badges. They do not assign seat roles. **Auto Step** is off unless the operator turns it on. When it is on, three sign-offs advance the badge one step and leave the role dropdowns alone. The operator, or a workflow preset the operator selects, sets roles. Pitch still forces both seats to `advise`. At most one seat may be `implement`.
 
-1. **Pitch**: Agents suggest additions, improvements, alternatives, and options to the objective without touching code. Human Lead chooses what graduates to discussion. Both seats stay `advise`. Switching the phase to pitch sets both role dropdowns to advise, and the kickoff hard stop still forbids tracked edits if a seat was left on implement.
-2. **Discuss**: Agents debate trade-offs, answer architectural questions, and align on agreed decisions. Consensus lines auto-promote to Alignment.
-3. **Implement**: Exactly one agent writes code and documents changes while the other reviews.
-4. **Test**: Agents and Human Lead verify script, UI, and functionality, recording pass/fail evidence in scratchpads.
-5. **Closed**: All sign-offs complete; Human Lead uses the **Close Project** button to audit git, commit allowlisted changes, push, and archive.
+The phase combo is:
+
+`ready` → `pitch` → `discuss` → `plan` → `implement` → `review` → `test` → `closing` → `debrief`
+
+`debrief` returns to `ready` when that badge advances. `plan`, `review`, and `closing` are real badges, not aliases of the shorter pitch/discuss/implement/test list.
+
+1. **Pitch**: Agents suggest options without touching code. Both seats are `advise`.
+2. **Discuss**: Agents debate trade-offs. Consensus lines can promote to Alignment.
+3. **Plan**: Architecture notes. Roles stay as the operator set them.
+4. **Implement**: Exactly one agent writes code. The other reviews, advises, or idles.
+5. **Review** and **Test**: Verification notes. Roles are not rewritten when the badge changes.
+6. **Closing** and **Debrief**: Human Lead uses **Close Project** to audit the **target** repo, confirm tracked files, and optionally push. Secrets and `.ai/` are refused. Push waits until refused paths are gone. Snapshots stay in that repo's `.ai/history/`.
 
 ### Phase Sign-Off & Advancement
 
 - Each phase uses the three sign-off checkboxes (`Human`, `AI 1`, `AI 2`). A scratchpad counts as signed off only when the latest top-level note says `Sign-off: [x]`. Older `[x]` lines in that pad do not carry into the next phase.
-- When all 3 participants mark sign-off complete (`[x]`) while Flow Control is `🟢 GO` and **Auto Step** is on, the controller clears the checkboxes, saves them unchecked, and auto-advances one phase. Auto Step sits next to the three sign-off boxes and defaults to on. When it is off, the phase stays where it is. A new latest scratchpad note that says `Sign-off: [x]` checks that seat even when the role table is still `[ ]`. A note already present at the last auto-advance does not check it again. Loading the board does not auto-advance unless that new sign-off arrived.
+- When all 3 participants mark sign-off complete (`[x]`) while Flow Control is `🟢 GO` and **Auto Step** is on, the controller clears the checkboxes, saves them unchecked, and auto-advances one phase badge without changing roles. Auto Step sits next to the three sign-off boxes and defaults to off. When it is off, the phase stays where it is. A new latest scratchpad note that says `Sign-off: [x]` checks that seat even when the role table is still `[ ]`. A note already present at the last auto-advance does not check it again. Loading the board does not auto-advance unless that new sign-off arrived.
 - Unchecking a box never moves backward. Auto-advance is blocked during `🟡 PAUSE` or `🔴 ALL STOP`.
 - Intermediate advances do not commit or push git; final shipping remains safely on the **Close Project** button.

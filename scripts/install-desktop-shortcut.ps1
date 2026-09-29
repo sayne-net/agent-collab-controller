@@ -1,5 +1,8 @@
 # Creates a Desktop shortcut for the Blackboard Controller on the current machine
-# Usage: pwsh .\scripts\install-desktop-shortcut.ps1
+# Usage: pwsh .\scripts\install-desktop-shortcut.ps1 [-TargetRepo C:\path\to\project]
+param(
+    [string]$TargetRepo = ""
+)
 
 $repo = Split-Path -Parent $PSScriptRoot
 $scriptPath = Join-Path $repo "scripts\blackboard-ui.ps1"
@@ -46,7 +49,11 @@ if (-not $pwshPath) {
 }
 
 $Shortcut.TargetPath = $pwshPath
-$Shortcut.Arguments = "-STA -NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`""
+$shortcutArgs = "-STA -NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`""
+if ($TargetRepo) {
+    $shortcutArgs += " -TargetRepo `"$TargetRepo`""
+}
+$Shortcut.Arguments = $shortcutArgs
 $Shortcut.WorkingDirectory = $repo
 $Shortcut.IconLocation = "powershell.exe,0"
 $Shortcut.Description = "AI Collab Controller"

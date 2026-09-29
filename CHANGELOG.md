@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Releases adopt 80's and 90's arcade game names as optional release codenames.
 
+## [v1.3.0] — Joust
+
+### Changed
+- **Target repo**: `blackboard-ui.ps1 -TargetRepo <path>` opens that working tree. The last repo is stored in `$HOME/.blackboard/config.json`. Close Project asks before committing when the git root is the controller itself. Controller self-update still uses the controller checkout.
+- **Auto Step off**: The checkbox defaults to off. Advancing a phase badge does not rewrite seat roles.
+- **Close Project**: Tracked dirty files are confirmed from `git status`. Secrets and `.ai/` stay refused. Optional `.ai/close-allow.json` (`paths` wildcards) can narrow the set. Push is skipped while a refused path is still dirty.
+- **Handoff**: Copy Prompt is the primary control. Send and re-prompt buttons are labeled best-effort.
+- **Docs**: README quickstart is the single global install. PROTOCOL.md matches the phase combo and says phases do not assign roles.
+
 ## [v1.2.39] — Defender
 
 ### Fixed

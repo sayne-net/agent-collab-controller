@@ -37,13 +37,13 @@ Running multiple autonomous AI coding agents in parallel usually leads to one of
 
 ---
 
-## Current Build & Release: v1.2.39 — Defender
+## Current Build: v1.3.0 — Joust
 
-- **Latest Release**: `v1.2.39` is both the current build and the latest published GitHub release ([**v1.2.39**](https://github.com/sayne-net/agent-collab-controller/releases/tag/v1.2.39)).
-- **Full Lifecycle Ladder**: Auto-stepping guides sessions across `pitch` $\rightarrow$ `discuss` $\rightarrow$ `implement` $\rightarrow$ `test` $\rightarrow$ `closing` $\rightarrow$ `debrief` $\rightarrow$ `ready`.
+- **Version**: `v1.3.0` in the window title. SemVer marks protocol and feature releases. Patch numbers are not a run counter.
+- **Phase badges**: The phase combo is `ready`, `pitch`, `discuss`, `plan`, `implement`, `review`, `test`, `closing`, `debrief`. Auto Step is off unless you turn it on, and it does not change seat roles.
 - **Debrief Preserved on Close Cycle**: Accepting 'Yes' to complete the close cycle during `closing` auto-advance ships allowlisted changes to git and proceeds directly into `debrief`. Session archiving and board reset to `ready` await completion of the debrief phase.
 - **Sign-off Latch Integrity**: An unsigned newest scratchpad turn leaves that seat's sign-off box open and rolls test/closing phases back to `implement`. Changing phases clears all three sign-off checkboxes.
-- **Safe Shipping Allowlist**: Close Project audits tracked changes and allowlists root `CHANGELOG.md`, `README.md`, controller scripts, and agent instruction rules while blocking `.env`, keys, or credentials.
+- **Close Project**: Confirms tracked dirty files in the target repo, refuses secrets and `.ai/`, and skips push while a refused path is still dirty. Optional `.ai/close-allow.json` can narrow which paths may be committed.
 - **Selection-Aware Promote to Prompt**: Highlighting notes in Human Notes and clicking **Promote** cleanly strips markdown bullet prefixes and appends the selection into Objective & Prompt without overwriting.
 - **Codex Safety Guard**: Codex seat profiles automatically clear and disable the New Chat checkbox with prominent manual guidance alerts to protect operator chats.
 - **Arcade Codenames**: Releases feature classic 80's & 90's arcade game codenames.
@@ -53,41 +53,34 @@ Running multiple autonomous AI coding agents in parallel usually leads to one of
 
 ## Quickstart (5 Minutes)
 
-### 1. Drop into Your Repository
-Copy `scripts/`, `.ai/`, and optionally `.agents/` or `.cursor/` into your existing project repository:
-```text
-your-project/
-├── .ai/
-│   └── blackboard.example.md     # Template board
-├── scripts/
-│   ├── blackboard-ui.bat         # Double-click launcher
-│   ├── blackboard-ui.ps1         # Native WPF controller
-│   ├── install-desktop-shortcut.ps1
-│   └── prompt-collab.ps1         # CLI helper
-└── ...
-```
+### 1. Install once
+Clone this repository once, for example to `$HOME\agent-collab-controller`. Do not copy `scripts/` into each project. The controller points at an external working tree.
 
-Ensure your `.gitignore` contains:
+Each target repo should ignore the live board:
+
 ```gitignore
 .ai/blackboard.md
 ```
 
-### 2. Launch the Controller
-- Double-click `scripts\blackboard-ui.bat`, or run:
-  ```powershell
-  pwsh .\scripts\blackboard-ui.ps1
-  ```
-- *(Optional)* Create a desktop shortcut by running:
-  ```powershell
-  pwsh .\scripts\install-desktop-shortcut.ps1
-  ```
+### 2. Launch against a target repo
+```powershell
+pwsh $HOME\agent-collab-controller\scripts\blackboard-ui.ps1 -TargetRepo C:\path\to\your-project
+```
+
+The last opened repo is saved in `$HOME\.blackboard\config.json`. The next launch without `-TargetRepo` restores that repo when it is not the controller checkout.
+
+Optional desktop shortcut for a fixed target:
+
+```powershell
+pwsh $HOME\agent-collab-controller\scripts\install-desktop-shortcut.ps1 -TargetRepo C:\path\to\your-project
+```
 
 ### 3. Start a Session
 1. **Enter Objective**: Describe what you want accomplished in the **Current Objective & Prompt** box.
 2. **Assign Roles**:
    - Set **AI 1** (e.g. Cursor) to `implement`.
    - Set **AI 2** (e.g. Gemini Antigravity) to `review`.
-3. **Copy & Paste Kickoff**: Select your target in the Kickoff dropdown (Seat 1, Seat 2, or Both) and click **📋 Copy Prompt** (or **🚀 Send Prompt**) to paste the generated prompt directly into your agent's chat window.
+3. **Copy the kickoff**: Select Seat 1, Seat 2, or Both and click **Copy Prompt**. Paste that clipboard text into the agent chat. **Send (best-effort)** may focus the IDE, and it can miss the chat box.
 4. **Watch & Steer**:
    - The implementing agent writes code, updates progress in its scratchpad, and commits changes.
    - The reviewing agent tests and audits the diff.
@@ -126,7 +119,7 @@ Place the included agent instruction files in your repository so your agents aut
 
 ### Option B: Zero Setup (Self-Contained Kickoff Prompts)
 Even without pre-configuring agent rules or skills, the controller works out of the box:
-1. In the controller UI, assign roles, select your target in the Kickoff dropdown, and click **📋 Copy Prompt** (or **🚀 Send Prompt** to auto-focus and paste).
+1. In the controller UI, assign roles, select your target in the Kickoff dropdown, and click **Copy Prompt**. Paste into the agent chat. **Send (best-effort)** is optional and can miss the chat box.
 2. The generated kickoff prompt injects all required protocol context:
    - Specific identity (`AI 1` or `AI 2`)
    - Assigned role permissions and hard-stop safety constraints
