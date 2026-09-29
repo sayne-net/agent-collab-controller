@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Releases adopt 80's and 90's arcade game names as optional release codenames.
 
+## [v1.5.1] — Galaga
+
+### Fixed
+- `Update-PhaseSelectionLock` is defined before Auto Step uses it. PowerShell does not load a function that appears later in the file.
+- The Auto Step checkbox is on the header row. Saving the board keeps one Alignment line per identical decision and renumbers `[A1]`.
+
+## [v1.5.0] — Galaga
+
+### Added
+- A Stats button opens a per-seat pop-out. The Board checkbox is gone. Copy Prompt increments `promptsCopied`.
+- Implementation Task sits between the seats, with Code and Submit GitHub Issues.
+- Enabled phases, implement mode, and bugs text are written on the blackboard. Alignment decisions are prefixed `[A1]` with a blank line between items.
+- With Auto Step off, a manual phase change sets the standard role pair. Auto-advance does not change roles. Human has no gate checkbox and stays required.
+
+## [v1.4.0] — Qbert
+
+### Added
+- Task presets set which phase badges are on and do not assign roles. Auto Step disables the phase dropdown.
+- Each seat has a sign-off gate switch. Human stays required. A None seat is excluded.
+- New Project Board carries the current objective. The GitHub + button uses selected Alignment text. Implement mode Issues tells the implement seat not to edit tracked files.
+- Objective, Alignment, notes, and response panes can be hidden. The bugs box under Alignment shows only while it has text.
+- Per-seat run stats are stored in `$HOME/.blackboard/stats.json`. Three unsigned test rollbacks ask before any role swap.
+
 ## [v1.3.0] — Joust
 
 ### Changed

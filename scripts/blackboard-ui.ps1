@@ -1,5 +1,5 @@
 # AI Collab Controller (WPF UI)
-# Version 1.3.0
+# Version 1.5.1
 # Standalone dual-session controller for multi-agent collaboration with human-in-the-loop steering.
 # SemVer tracks protocol and feature releases. Do not bump the patch on every local edit.
 
@@ -11,7 +11,9 @@ $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
 
-$script:AppVersion = "v1.3.0"
+$script:AppVersion = "v1.5.1"
+$script:EnabledPhases = @("pitch","discuss","plan","implement","review","test","closing","debrief")
+$script:UnsignedRollbackStreak = 0
 $script:ControllerRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $script:UserConfigDir = Join-Path $HOME ".blackboard"
 $script:UserConfigPath = Join-Path $script:UserConfigDir "config.json"
@@ -360,15 +362,12 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
 
             <!-- Phase Control Pair: Phase Presets & Current Phase -->
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                <TextBlock Text="⚡ Phase Presets:" FontWeight="Bold" FontSize="11" Foreground="#BAC2DE" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                <ComboBox Name="cbPresets" Width="135" SelectedIndex="0" Margin="0,0,10,0" ToolTip="Select workflow preset (auto-applies roles and sets phase)">
-                    <ComboBoxItem Content="💡 Pitch" Tag="Pitch"/>
-                    <ComboBoxItem Content="💬 Discuss" Tag="Discuss"/>
-                    <ComboBoxItem Content="📋 Plan" Tag="Plan"/>
-                    <ComboBoxItem Content="🛠️ Implement" Tag="Implement"/>
-                    <ComboBoxItem Content="🔍 Review" Tag="Review"/>
-                    <ComboBoxItem Content="🧪 Test" Tag="Test"/>
-                    <ComboBoxItem Content="📦 Inventory" Tag="Inventory"/>
+                <TextBlock Text="⚡ Task Preset:" FontWeight="Bold" FontSize="11" Foreground="#BAC2DE" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                <ComboBox Name="cbPresets" Width="150" SelectedIndex="0" Margin="0,0,10,0" ToolTip="Task preset sets which phase badges are on. It does not assign roles.">
+                    <ComboBoxItem Content="Full" Tag="Full" ToolTip="Phases on: pitch, discuss, plan, implement, review, test, closing, debrief"/>
+                    <ComboBoxItem Content="Hotfix" Tag="Hotfix" ToolTip="Phases on: implement, test, closing, debrief"/>
+                    <ComboBoxItem Content="Docs" Tag="Docs" ToolTip="Phases on: discuss, implement, test, debrief"/>
+                    <ComboBoxItem Content="RFC" Tag="RFC" ToolTip="Phases on: pitch, discuss, debrief"/>
                 </ComboBox>
                 <TextBlock Text="📍 Current Phase:" FontWeight="Bold" FontSize="11" Foreground="#BAC2DE" VerticalAlignment="Center" Margin="0,0,6,0"/>
                 <ComboBox Name="cbPhase" Width="175" SelectedIndex="0" ToolTip="Current project workflow phase step">
@@ -388,6 +387,12 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                 <CheckBox Name="chkEnableTooltips" Content="💡 Tooltips" IsChecked="True" Foreground="#BAC2DE" VerticalAlignment="Center" Margin="0,0,10,0"/>
                 <CheckBox Name="chkAudioCue" Content="🔔 Sound" IsChecked="False" Foreground="#BAC2DE" VerticalAlignment="Center" Margin="0,0,10,0" ToolTip="Play subtle audio chime when an agent responds or changes turn (default off)"/>
+                <CheckBox Name="chkShowObjective" Content="Objective" IsChecked="True" Foreground="#BAC2DE" Margin="0,0,6,0"/>
+                <CheckBox Name="chkShowAlignment" Content="Alignment" IsChecked="True" Foreground="#BAC2DE" Margin="0,0,6,0"/>
+                <CheckBox Name="chkShowNotes" Content="Notes" IsChecked="True" Foreground="#BAC2DE" Margin="0,0,6,0"/>
+                <CheckBox Name="chkShowResponses" Content="Responses" IsChecked="True" Foreground="#BAC2DE" Margin="0,0,6,0"/>
+                <CheckBox Name="chkAutoStep" Content="⚡ Auto Step" IsChecked="False" Foreground="#BAC2DE" VerticalAlignment="Center" Margin="0,0,8,0" ToolTip="Off by default. On: sign-offs advance one enabled phase badge and the phase dropdown locks. Roles stay as assigned."/>
+                <Button Name="btnStats" Content="📊 Stats" Background="#313244" Foreground="#F9E2AF" Margin="0,0,8,0" Padding="8,3" ToolTip="Open the per-seat stats window"/>
                 <Button Name="btnUpdateController" Content="🔄 Update App" Background="#313244" Foreground="#89B4FA" Margin="0,0,4,0" Padding="8,3" FontWeight="SemiBold"/>
                 <Button Name="btnRelaunch" Content="⏭️ Relaunch" Background="#313244" Foreground="#BAC2DE" Margin="0,0,8,0" Padding="8,3"/>
                 <Border Name="badgeTurn" Background="#45475A" CornerRadius="12" Padding="10,3">
@@ -418,7 +423,7 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                         <TextBlock Text="📋 Board: " FontSize="11" FontWeight="SemiBold" Foreground="#BAC2DE" VerticalAlignment="Center" Margin="0,0,4,0"/>
                         <ComboBox Name="cbRecentBoards" Width="145" Margin="0,0,6,0" ToolTip="Recent project boards (Select to switch)"/>
                         <TextBlock Name="txtBoardPath" Text="" FontSize="10" Foreground="#89B4FA" FontFamily="Consolas, monospace" VerticalAlignment="Center" ToolTip="Active Blackboard.md path (Click to copy)" Cursor="Hand" Margin="0,0,6,0"/>
-                        <Button Name="btnNewBoard" Content="➕ New" FontSize="10" Padding="5,1" Margin="0,0,3,0" Background="#313244" Foreground="#A6E3A1" FontWeight="SemiBold" ToolTip="Start a new board in a project folder"/>
+                        <Button Name="btnNewBoard" Content="➕ New Project Board" FontSize="10" Padding="5,1" Margin="0,0,3,0" Background="#313244" Foreground="#A6E3A1" FontWeight="SemiBold" ToolTip="Ask for a folder, create .ai/blackboard.md, and carry the current objective"/>
                         <Button Name="btnSwitchBoard" Content="📂 Browse" FontSize="10" Padding="5,1" Margin="0,0,3,0" Background="#313244" Foreground="#BAC2DE" ToolTip="Browse to select an existing blackboard.md file"/>
                         <Button Name="btnReloadBoard" Content="🔄 Reload" FontSize="10" Padding="5,1" Margin="0,0,0,0" Background="#313244" Foreground="#89B4FA" FontWeight="SemiBold" ToolTip="Force reload active blackboard from disk"/>
                     </StackPanel>
@@ -431,9 +436,10 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="1.1*"/>
-                    <ColumnDefinition Width="1.1*"/>
+                    <ColumnDefinition Width="1.2*"/>
+                    <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
 
                 <!-- AI 1 Role -->
@@ -458,8 +464,16 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                     </Grid>
                 </StackPanel>
 
+                <StackPanel Grid.Column="1" Margin="6,0" VerticalAlignment="Center">
+                    <TextBlock Text="Implementation Task" FontWeight="Bold" FontSize="11" Foreground="#CBA6F7" Margin="0,0,0,4"/>
+                    <ComboBox Name="cbImplementMode" Width="160" SelectedIndex="0">
+                        <ComboBoxItem Content="Code" ToolTip="Edits tracked files in the target repo."/>
+                        <ComboBoxItem Content="Submit GitHub Issues" ToolTip="Files GitHub issues and does not edit tracked files."/>
+                    </ComboBox>
+                </StackPanel>
+
                 <!-- AI 2 Role -->
-                <StackPanel Grid.Column="1" Margin="6,0,6,0">
+                <StackPanel Grid.Column="2" Margin="6,0,6,0">
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto"/>
@@ -481,19 +495,20 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                 </StackPanel>
 
                 <!-- Completion Sign-offs -->
-                <StackPanel Grid.Column="2" Margin="6,0,6,0">
+                <StackPanel Grid.Column="3" Margin="6,0,6,0">
                     <TextBlock Text="Project Sign-off" FontWeight="Bold" FontSize="11" Foreground="#F9E2AF" Margin="0,0,0,4"/>
                     <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                        <CheckBox Name="chkSignHuman" Content="Human" Margin="0,0,6,0"/>
-                        <CheckBox Name="chkSignCursor" Content="AI 1" Margin="0,0,6,0"/>
-                        <CheckBox Name="chkSignGemini" Content="AI 2" Margin="0,0,10,0"/>
-                        <CheckBox Name="chkAutoStep" Content="⚡ Auto Step" IsChecked="False" ToolTip="Off by default. On: all three sign-offs advance one phase badge. Roles stay as assigned."/>
+                        <CheckBox Name="chkSignHuman" Content="Human" Margin="0,0,8,0" ToolTip="Human stays required for Close Project"/>
+                        <CheckBox Name="chkSignCursor" Content="AI 1" Margin="0,0,4,0"/>
+                        <CheckBox Name="chkGateSeat1" Content="Gate" IsChecked="True" Margin="0,0,8,0" ToolTip="Seat 1 counts toward sign-off"/>
+                        <CheckBox Name="chkSignGemini" Content="AI 2" Margin="0,0,4,0"/>
+                        <CheckBox Name="chkGateSeat2" Content="Gate" IsChecked="True" Margin="0,0,8,0" ToolTip="Seat 2 counts toward sign-off"/>
                     </StackPanel>
                     <TextBlock Name="txtGitStatusSummary" Text="Git: clean" FontSize="10" Foreground="#A6ADC8" Margin="0,3,0,0" ToolTip="Read-only git status for active repository"/>
                 </StackPanel>
 
                 <!-- GitHub Issue Tracker -->
-                <StackPanel Grid.Column="3" Margin="6,0,0,0">
+                <StackPanel Grid.Column="4" Margin="6,0,0,0">
                     <TextBlock Text="GitHub Issue #" FontWeight="Bold" FontSize="11" Foreground="#BAC2DE" Margin="0,0,0,4"/>
                     <Grid>
                         <Grid.ColumnDefinitions>
@@ -519,7 +534,7 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
             </Grid.ColumnDefinitions>
 
             <!-- Objective & Prompt -->
-            <Border Grid.Column="0" Background="#1E1E2E" CornerRadius="8" Padding="10" Margin="0,0,4,0" BorderBrush="#313244" BorderThickness="1" VerticalAlignment="Stretch">
+            <Border Name="borderObjective" Grid.Column="0" Background="#1E1E2E" CornerRadius="8" Padding="10" Margin="0,0,4,0" BorderBrush="#313244" BorderThickness="1" VerticalAlignment="Stretch">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -533,21 +548,23 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
             </Border>
 
             <!-- Alignment & Constraints -->
-            <Border Grid.Column="1" Background="#1E1E2E" CornerRadius="8" Padding="10" Margin="4,0,4,0" BorderBrush="#313244" BorderThickness="1" VerticalAlignment="Stretch">
+            <Border Name="borderAlignment" Grid.Column="1" Background="#1E1E2E" CornerRadius="8" Padding="10" Margin="4,0,4,0" BorderBrush="#313244" BorderThickness="1" VerticalAlignment="Stretch">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
                     <TextBlock Grid.Row="0" Text="🤝 ALIGNMENT &amp; DECISIONS" FontWeight="Bold" FontSize="11" Foreground="#A6E3A1" Margin="0,0,0,6"/>
                     <TextBox Name="txtAlignment" Grid.Row="1" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
                              MinHeight="64" VerticalAlignment="Stretch"
                              Text="- Follow Windows WPF / PowerShell standards.&#x0a;- Maintain safety guard: max 1 implement agent.&#x0a;- Ephemeral snapshots in .ai/history/."/>
+                    <TextBox Name="txtBugs" Grid.Row="2" AcceptsReturn="True" TextWrapping="Wrap" Visibility="Collapsed" MinHeight="36" Margin="0,6,0,0" ToolTip="Bugs and problems. Hidden when empty."/>
                 </Grid>
             </Border>
 
             <!-- Human (Lead) Steering Notes -->
-            <Border Grid.Column="2" Background="#1E1E2E" CornerRadius="8" Padding="10" Margin="4,0,0,0" BorderBrush="#313244" BorderThickness="1" VerticalAlignment="Stretch">
+            <Border Name="borderNotes" Grid.Column="2" Background="#1E1E2E" CornerRadius="8" Padding="10" Margin="4,0,0,0" BorderBrush="#313244" BorderThickness="1" VerticalAlignment="Stretch">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -569,7 +586,7 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
         </Grid>
 
         <!-- 4: AI 1 | AI 2 last-response panes (#23) -->
-        <Grid Grid.Row="4" Margin="0,0,0,8">
+        <Grid Name="gridResponses" Grid.Row="4" Margin="0,0,0,8">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="*"/>
@@ -834,8 +851,13 @@ New board initialized.
                     }
                 }
                 
+                $carried = if ($txtPrompt) { $txtPrompt.Text } else { "" }
                 Set-ActiveBlackboardPath -targetPath $targetBlackboard
-                $txtStatus.Text = "Initialized active board at: $targetBlackboard"
+                if ($carried -and $txtPrompt) {
+                    $txtPrompt.Text = $carried
+                    Save-BlackboardContent
+                }
+                $txtStatus.Text = "New project board: $targetBlackboard"
             }
         } catch {
             $txtStatus.Text = "Error creating new board: $_"
@@ -919,6 +941,19 @@ $btnPromoteNotes       = $window.FindName("btnPromoteNotes")
 $btnOpenHistory        = $window.FindName("btnOpenHistory")
 $txtSafetyWarning      = $window.FindName("txtSafetyWarning")
 $txtStatus             = $window.FindName("txtStatus")
+$txtBugs               = $window.FindName("txtBugs")
+$cbImplementMode       = $window.FindName("cbImplementMode")
+$btnStats              = $window.FindName("btnStats")
+$chkGateSeat1          = $window.FindName("chkGateSeat1")
+$chkGateSeat2          = $window.FindName("chkGateSeat2")
+$chkShowObjective      = $window.FindName("chkShowObjective")
+$chkShowAlignment      = $window.FindName("chkShowAlignment")
+$chkShowNotes          = $window.FindName("chkShowNotes")
+$chkShowResponses      = $window.FindName("chkShowResponses")
+$borderObjective       = $window.FindName("borderObjective")
+$borderAlignment       = $window.FindName("borderAlignment")
+$borderNotes           = $window.FindName("borderNotes")
+$gridResponses         = $window.FindName("gridResponses")
 $txtLastSaved          = $window.FindName("txtLastSaved")
 $cbSeat1Client         = $window.FindName("cbSeat1Client")
 $cbSeat2Client         = $window.FindName("cbSeat2Client")
@@ -948,6 +983,7 @@ function Get-ClientConfiguration {
             "VS Code" = [PSCustomObject]@{ process = "Code"; description = "VS Code / GitHub Copilot" }
             "Terminal" = [PSCustomObject]@{ process = "WindowsTerminal"; description = "Windows Terminal (Claude Code, Aider, CLI)" }
             "Codex" = [PSCustomObject]@{ process = "ChatGPT"; description = "OpenAI Codex in the ChatGPT desktop app" }
+            "None" = [PSCustomObject]@{ process = ""; description = "Empty seat. Left out of kickoff and the sign-off gate." }
         }
     }
 
@@ -960,6 +996,9 @@ function Get-ClientConfiguration {
             if (-not $obj.PSObject.Properties['audioCue']) { $obj | Add-Member -NotePropertyName "audioCue" -NotePropertyValue $false -Force }
             if (-not $obj.PSObject.Properties['autoStep']) { $obj | Add-Member -NotePropertyName "autoStep" -NotePropertyValue $false -Force }
             if ($obj.profiles) {
+                if (-not $obj.profiles.PSObject.Properties['None']) {
+                    $obj.profiles | Add-Member -NotePropertyName "None" -NotePropertyValue ([PSCustomObject]@{ process = ""; description = "Empty seat. Left out of kickoff and the sign-off gate." }) -Force
+                }
                 if (-not $obj.profiles.PSObject.Properties['Codex']) {
                     $obj.profiles | Add-Member -NotePropertyName "Codex" -NotePropertyValue ([PSCustomObject]@{ process = "ChatGPT"; description = "OpenAI Codex in the ChatGPT desktop app" }) -Force
                 }
@@ -1741,18 +1780,28 @@ if ($chkAudioCue) {
     })
 }
 
+function Update-PhaseSelectionLock {
+    if ($cbPhase) {
+        $locked = ($chkAutoStep -and $chkAutoStep.IsChecked)
+        $cbPhase.IsEnabled = -not $locked
+    }
+}
+
 if ($chkAutoStep) {
     $initialAutoStep = if ($script:ClientConfig -and $null -ne $script:ClientConfig.autoStep) { [bool]$script:ClientConfig.autoStep } else { $false }
     $chkAutoStep.IsChecked = $initialAutoStep
     $chkAutoStep.add_Checked({
         Save-ClientConfiguration
-        $txtStatus.Text = "Auto step on. All three sign-offs advance one phase."
+        $txtStatus.Text = "Auto step on. Gated sign-offs advance one enabled phase badge. Manual phase selection is off."
+        Update-PhaseSelectionLock
         Check-PhaseAutoAdvance
     })
     $chkAutoStep.add_Unchecked({
         Save-ClientConfiguration
-        $txtStatus.Text = "Auto step off. The phase stays until you change it."
+        $txtStatus.Text = "Auto step off. You can change the phase."
+        Update-PhaseSelectionLock
     })
+    Update-PhaseSelectionLock
 }
 
 # Live Blackboard Text Viewer Window with Color/Diff Highlighting
@@ -2980,54 +3029,114 @@ function Set-RolesForPhase {
     param([string]$phaseName)
     if (-not $cbCursorRole -or -not $cbGeminiRole) { return }
     if ([string]::IsNullOrWhiteSpace($phaseName)) { return }
-    switch ($phaseName.Trim().ToLower()) {
-        "ready"     { $cbCursorRole.SelectedIndex = 5; $cbGeminiRole.SelectedIndex = 5 }
-        "pitch"     { $cbCursorRole.SelectedIndex = 2; $cbGeminiRole.SelectedIndex = 2 }
-        "discuss"   { $cbCursorRole.SelectedIndex = 2; $cbGeminiRole.SelectedIndex = 2 }
-        "advise"    { $cbCursorRole.SelectedIndex = 2; $cbGeminiRole.SelectedIndex = 2 }
-        "plan"      { $cbCursorRole.SelectedIndex = 4; $cbGeminiRole.SelectedIndex = 5 }
-        "implement" { $cbCursorRole.SelectedIndex = 1; $cbGeminiRole.SelectedIndex = 1 }
-        "review"    { $cbCursorRole.SelectedIndex = 1; $cbGeminiRole.SelectedIndex = 0 }
-        "test"      { $cbCursorRole.SelectedIndex = 1; $cbGeminiRole.SelectedIndex = 0 }
-        "closing"   { $cbCursorRole.SelectedIndex = 5; $cbGeminiRole.SelectedIndex = 5 }
-        "debrief"   { $cbCursorRole.SelectedIndex = 2; $cbGeminiRole.SelectedIndex = 2 }
-        "closed"    { $cbCursorRole.SelectedIndex = 5; $cbGeminiRole.SelectedIndex = 5 }
+    $pair = switch ($phaseName.Trim().ToLower()) {
+        "ready"     { "idle","idle" }
+        "pitch"     { "advise","advise" }
+        "discuss"   { "advise","advise" }
+        "advise"    { "advise","advise" }
+        "plan"      { "plan","idle" }
+        "implement" { "implement","review" }
+        "review"    { "review","review" }
+        "test"      { "review","review" }
+        "closing"   { "idle","idle" }
+        "debrief"   { "advise","advise" }
+        "closed"    { "idle","idle" }
+        default     { $null }
+    }
+    if (-not $pair) { return }
+    Set-ComboToRole $cbCursorRole $pair[0]
+    Set-ComboToRole $cbGeminiRole $pair[1]
+    if ((Get-NormalizedRole $cbCursorRole.Text) -eq "implement" -and (Get-NormalizedRole $cbGeminiRole.Text) -eq "implement") {
+        Set-ComboToRole $cbGeminiRole "review"
     }
 }
 
 function Set-Phase {
     param([string]$targetPhase)
     if ([string]::IsNullOrWhiteSpace($targetPhase)) { return }
-    $tgt = $targetPhase.Trim().ToLower()
-    if ($tgt -in @("pitch", "discuss", "implement", "test")) {
-        $script:ClosingSignoffsCompleted = $false
-    }
-    for ($i = 0; $i -lt $cbPhase.Items.Count; $i++) {
-        $itemText = [string]$cbPhase.Items[$i].Content
-        $token = ($itemText -split " ")[0].ToLower()
-        if ($token -eq $tgt -or ($tgt -eq "advise" -and $token -eq "discuss") -or ($tgt -eq "discuss" -and $token -eq "advise")) {
-            $cbPhase.SelectedIndex = $i
-            Sync-PresetFromPhase $tgt
-            return
+    $script:SuppressRoleDefault = $true
+    try {
+        $tgt = $targetPhase.Trim().ToLower()
+        if ($tgt -in @("pitch", "discuss", "implement", "test")) {
+            $script:ClosingSignoffsCompleted = $false
         }
+        for ($i = 0; $i -lt $cbPhase.Items.Count; $i++) {
+            $itemText = [string]$cbPhase.Items[$i].Content
+            $token = ($itemText -split " ")[0].ToLower()
+            if ($token -eq $tgt -or ($tgt -eq "advise" -and $token -eq "discuss") -or ($tgt -eq "discuss" -and $token -eq "advise")) {
+                $cbPhase.SelectedIndex = $i
+                Sync-PresetFromPhase $tgt
+                return
+            }
+        }
+    } finally {
+        $script:SuppressRoleDefault = $false
     }
 }
 
 function Get-NextPhase {
     param([string]$currentPhase)
-    switch ($currentPhase.ToLower()) {
-        "ready"     { return "ready" }
-        "pitch"     { return "discuss" }
-        "discuss"   { return "implement" }
-        "advise"    { return "implement" }
-        "plan"      { return "implement" }
-        "implement" { return "test" }
-        "review"    { return "test" }
-        "test"      { return "closing" }
-        "closing"   { return "debrief" }
-        "debrief"   { return "ready" }
-        "closed"    { return "ready" }
-        default     { return "ready" }
+    $ladder = @("pitch","discuss","plan","implement","review","test","closing","debrief","ready")
+    $cur = $currentPhase.ToLower()
+    if ($cur -eq "advise") { $cur = "discuss" }
+    if ($cur -eq "closed") { $cur = "ready" }
+    $start = [array]::IndexOf($ladder, $cur)
+    if ($start -lt 0) { $start = -1 }
+    for ($step = 1; $step -le $ladder.Count; $step++) {
+        $candidate = $ladder[($start + $step) % $ladder.Count]
+        if ($candidate -eq "ready" -or $script:EnabledPhases -contains $candidate) { return $candidate }
+    }
+    return "ready"
+}
+
+function Test-RequiredSignoffsMet {
+    $seat1 = Get-Seat1Client
+    $seat2 = Get-Seat2Client
+    $need1 = ($chkGateSeat1 -and $chkGateSeat1.IsChecked) -and ($seat1 -ne "None")
+    $need2 = ($chkGateSeat2 -and $chkGateSeat2.IsChecked) -and ($seat2 -ne "None")
+    if ($chkSignHuman -and -not $chkSignHuman.IsChecked) { return $false }
+    if ($need1 -and $chkSignCursor -and -not $chkSignCursor.IsChecked) { return $false }
+    if ($need2 -and $chkSignGemini -and -not $chkSignGemini.IsChecked) { return $false }
+    return $true
+}
+
+function Update-BugsVisibility {
+    if (-not $txtBugs) { return }
+    $has = -not [string]::IsNullOrWhiteSpace($txtBugs.Text)
+    $txtBugs.Visibility = if ($has) { [System.Windows.Visibility]::Visible } else { [System.Windows.Visibility]::Collapsed }
+}
+
+function Update-PanelVisibility {
+    if ($borderObjective -and $chkShowObjective) { $borderObjective.Visibility = if ($chkShowObjective.IsChecked) { [System.Windows.Visibility]::Visible } else { [System.Windows.Visibility]::Collapsed } }
+    if ($borderAlignment -and $chkShowAlignment) { $borderAlignment.Visibility = if ($chkShowAlignment.IsChecked) { [System.Windows.Visibility]::Visible } else { [System.Windows.Visibility]::Collapsed } }
+    if ($borderNotes -and $chkShowNotes) { $borderNotes.Visibility = if ($chkShowNotes.IsChecked) { [System.Windows.Visibility]::Visible } else { [System.Windows.Visibility]::Collapsed } }
+    if ($gridResponses -and $chkShowResponses) { $gridResponses.Visibility = if ($chkShowResponses.IsChecked) { [System.Windows.Visibility]::Visible } else { [System.Windows.Visibility]::Collapsed } }
+}
+
+function Add-SeatStat {
+    param([string]$seat, [string]$field, [int]$amount = 1)
+    if ([string]::IsNullOrWhiteSpace($seat) -or $seat -eq "None") { return }
+    $path = Join-Path $script:UserConfigDir "stats.json"
+    $stats = [PSCustomObject]@{}
+    if (Test-Path $path) {
+        try { $stats = Get-Content $path -Raw -Encoding UTF8 | ConvertFrom-Json } catch { $stats = [PSCustomObject]@{} }
+    }
+    if (-not $stats.PSObject.Properties[$seat]) {
+        $stats | Add-Member -NotePropertyName $seat -NotePropertyValue ([PSCustomObject]@{ runs = 0; reviewCatches = 0; linesAdded = 0; linesRemoved = 0; promptsCopied = 0 }) -Force
+    }
+    $row = $stats.$seat
+    $current = 0
+    if ($row.PSObject.Properties[$field]) { $current = [int]$row.$field }
+    $row | Add-Member -NotePropertyName $field -NotePropertyValue ($current + $amount) -Force
+    if (-not (Test-Path $script:UserConfigDir)) { New-Item -ItemType Directory -Force -Path $script:UserConfigDir | Out-Null }
+    [System.IO.File]::WriteAllText($path, ($stats | ConvertTo-Json -Depth 5), [System.Text.Encoding]::UTF8)
+}
+
+function Test-UnsafeObjective {
+    param([string]$text)
+    if ([string]::IsNullOrWhiteSpace($text)) { return }
+    if ($text -match '(?i)secret|password|private key|drop table|format c:|rm -rf /') {
+        if ($txtStatus) { $txtStatus.Text = "Safety: this objective mentions secrets or a destructive command. Keep secrets out of the board and out of git. You still decide." }
     }
 }
 
@@ -3039,7 +3148,7 @@ function Check-PhaseAutoAdvance {
 
     if ($script:PhaseAdvanceGateLatched) { return }
 
-    if (-not ($chkSignHuman.IsChecked -and $chkSignCursor.IsChecked -and $chkSignGemini.IsChecked)) {
+    if (-not (Test-RequiredSignoffsMet)) {
         return
     }
 
@@ -3101,6 +3210,17 @@ function Check-PhaseAutoAdvance {
         Save-SignoffBaseline
 
         Set-Phase $nextPhase
+        if ($nextPhase -eq "ready") {
+            $implSeat = if ($cbCursorRole -and $cbCursorRole.Text -eq "implement") { Get-Seat1Client } elseif ($cbGeminiRole -and $cbGeminiRole.Text -eq "implement") { Get-Seat2Client } else { "Human" }
+            Add-SeatStat -seat $implSeat -field "runs"
+            $num = @(git -C $script:RepoRoot diff --numstat HEAD 2>$null)
+            $added = 0; $removed = 0
+            foreach ($row in $num) {
+                if ($row -match '^(\d+)\s+(\d+)\s+') { $added += [int]$Matches[1]; $removed += [int]$Matches[2] }
+            }
+            if ($added -gt 0) { Add-SeatStat -seat $implSeat -field "linesAdded" -amount $added }
+            if ($removed -gt 0) { Add-SeatStat -seat $implSeat -field "linesRemoved" -amount $removed }
+        }
 
         if ($currentPhase -eq "debrief" -and $nextPhase -eq "ready") {
             $targetTag = if ($cbKickoffTarget -and $cbKickoffTarget.SelectedItem) { [string]$cbKickoffTarget.SelectedItem.Tag } else { "Both" }
@@ -3143,7 +3263,27 @@ function Invoke-UnsignedTestRollback {
         if ($chkSignCursor) { $chkSignCursor.IsChecked = $false }
         if ($chkSignGemini) { $chkSignGemini.IsChecked = $false }
         Set-Phase "implement"
-        if ($txtStatus) { $txtStatus.Text = "Auto step: an AI $phaseNow turn has no Sign-off [x]. Phase badge returned to implement. Roles were left as assigned." }
+        $script:UnsignedRollbackStreak++
+        if ($cbCursorRole -and $cbCursorRole.Text -eq "review") { Add-SeatStat -seat (Get-Seat1Client) -field "reviewCatches" }
+        if ($cbGeminiRole -and $cbGeminiRole.Text -eq "review") { Add-SeatStat -seat (Get-Seat2Client) -field "reviewCatches" }
+        if ($txtStatus) { $txtStatus.Text = "Auto step: an AI $phaseNow turn has no Sign-off [x]. Phase badge returned to implement. Roles were left as assigned. Streak $($script:UnsignedRollbackStreak)." }
+        if ($script:UnsignedRollbackStreak -ge 3) {
+            $swapAsk = [System.Windows.MessageBox]::Show(
+                "This run has rolled back from test or closing 3 times without a sign-off.`n`nSwap the implement seat to the other AI?",
+                "Swap implement seat?",
+                [System.Windows.MessageBoxButton]::YesNo,
+                [System.Windows.MessageBoxImage]::Question,
+                [System.Windows.MessageBoxResult]::No
+            )
+            $script:UnsignedRollbackStreak = 0
+            if ($swapAsk -eq [System.Windows.MessageBoxResult]::Yes -and $cbCursorRole -and $cbGeminiRole) {
+                $role1 = [string]$cbCursorRole.Text
+                $role2 = [string]$cbGeminiRole.Text
+                Set-ComboToRole $cbCursorRole $role2
+                Set-ComboToRole $cbGeminiRole $role1
+                if ($txtStatus) { $txtStatus.Text = "Implement seat swap confirmed by the operator." }
+            }
+        }
         Save-BlackboardContent
         Update-UiActiveTurn -keepOverride
     } finally {
@@ -3345,14 +3485,17 @@ $cbPhase.add_SelectionChanged({
     if (-not $script:SuppressPresetSync) {
         Sync-PresetFromPhase (Get-PhaseString)
     }
+    if (-not $script:SuppressRoleDefault -and $chkAutoStep -and -not $chkAutoStep.IsChecked) {
+        Set-RolesForPhase (Get-PhaseString)
+    }
     if (-not $script:SuppressAutoAdvanceLatchReset) {
         $script:PhaseAdvanceGateLatched = $false
         $script:PhaseAdvanceUncheckObserved = $false
     }
+    Ensure-PitchSeatsAdvise
     if (-not $script:SuppressPhaseAutoAdvance -and -not $script:SuppressFormDirty) {
         Clear-SignoffBoxesForPhaseChange
     }
-    Ensure-PitchSeatsAdvise
     Mark-FormDirty
 })
 $rbGo.add_Checked({ Update-UiActiveTurn; Mark-FormDirty })
@@ -3406,7 +3549,13 @@ $chkSignGemini.add_Unchecked({
     Update-UiActiveTurn
     Mark-FormDirty
 })
-$txtPrompt.add_TextChanged({ Mark-FormDirty })
+$txtPrompt.add_TextChanged({ Mark-FormDirty; Test-UnsafeObjective $txtPrompt.Text })
+if ($txtBugs) { $txtBugs.add_TextChanged({ Update-BugsVisibility; Mark-FormDirty }) }
+foreach ($hide in @($chkShowObjective, $chkShowAlignment, $chkShowNotes, $chkShowResponses)) {
+    if ($hide) { $hide.add_Click({ Update-PanelVisibility }) }
+}
+Update-PanelVisibility
+Update-BugsVisibility
 $txtAlignment.add_TextChanged({ Mark-FormDirty })
 $txtHumanNotes.add_TextChanged({ Mark-FormDirty })
 if ($rtbCursorLast) {
@@ -3737,7 +3886,13 @@ function Get-RoleGuidance {
         return "Project phase is PITCH. Suggest additions, improvements, updates, fixes, or alternatives to whatever is listed in the current objective. Human has the final say on what moves on to discussion. FORBIDDEN: editing tracked files, git operations. Propose options with trade-offs in your scratchpad. End your note with your proposals and phase sign-off when aligned."
     }
     switch (Get-NormalizedRole $role) {
-        "implement" { "You hold IMPLEMENT. Review objective and Alignment in '$boardPath', then land the change. Append progress under your scratchpad heading only. Do not edit the other agent's scratchpad or the Human Lead's notes." }
+        "implement" {
+            $modeNote = ""
+            if ($cbImplementMode -and $cbImplementMode.SelectedItem -and [string]$cbImplementMode.SelectedItem.Content -match 'Issue') {
+                $modeNote = " Implement mode is Submit GitHub Issues. File GitHub issues only. Do not edit tracked files."
+            }
+            "You hold IMPLEMENT. Review objective and Alignment in '$boardPath', then land the change. Append progress under your scratchpad heading only. Do not edit the other agent's scratchpad or the Human Lead's notes.$modeNote"
+        }
         "review"    { "You hold REVIEW. Read the implementer's notes and diff. Record findings in your scratchpad. FORBIDDEN: editing the same tracked files they are changing. GO does not make you implement." }
         "advise"    { "You hold ADVISE. Analyze and recommend in your scratchpad only. FORBIDDEN: editing tracked repo files, git commit/push, live infrastructure changes. REQUIRED: Edit '$boardPath' under your scratchpad heading. End your note with `- **Agreed**: <decision>` sentences, or a single `- **Agree**` if the other agent's scratchpad is already right, so consensus auto-promotes to Alignment." }
         "plan"      { "You hold PLAN. Propose approach and risks in your scratchpad. Do not edit tracked files unless the Human Lead says so." }
@@ -4312,6 +4467,79 @@ function Sync-SignoffCheckboxes {
     }
 }
 
+function Get-ImplementModeString {
+    if ($cbImplementMode -and $cbImplementMode.SelectedItem) { return [string]$cbImplementMode.SelectedItem.Content }
+    return "Code"
+}
+
+function Format-AlignmentIds {
+    param([string]$text)
+    if ([string]::IsNullOrWhiteSpace($text)) { return $text }
+    $lines = $text -split "`r?`n"
+    $blocks = New-Object System.Collections.Generic.List[string]
+    $buf = New-Object System.Collections.Generic.List[string]
+    foreach ($line in $lines) {
+        if ($line -match '^\s*---\s*$') { continue }
+        if ($line -match '^\s*-\s+\*\*Agreed\*\*' -and $buf.Count -gt 0) {
+            [void]$blocks.Add(($buf -join "`n").Trim())
+            $buf.Clear()
+        }
+        [void]$buf.Add($line)
+    }
+    if ($buf.Count -gt 0) { [void]$blocks.Add(($buf -join "`n").Trim()) }
+    $n = 0
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    $out = New-Object System.Collections.Generic.List[string]
+    foreach ($b in $blocks) {
+        if ([string]::IsNullOrWhiteSpace($b)) { continue }
+        if ($b -match '(?s)^\s*-\s+\*\*Agreed\*\*\s*:\s*(.*)$') {
+            $body = ($Matches[1] -replace '^\s*(\[A\d+\]|\[DEC-\d+\])\s*', '').Trim()
+            if (-not $seen.Add($body)) { continue }
+            $n++
+            [void]$out.Add("- **Agreed**: [A$n] $body")
+        } else {
+            [void]$out.Add($b.Trim())
+        }
+    }
+    return ($out -join "`n`n")
+}
+
+function Show-StatsWindow {
+    $path = Join-Path $script:UserConfigDir "stats.json"
+    $body = "No stats yet."
+    if (Test-Path $path) {
+        try {
+            $stats = Get-Content $path -Raw -Encoding UTF8 | ConvertFrom-Json
+            $lines = @()
+            foreach ($p in $stats.PSObject.Properties) {
+                $r = $p.Value
+                $lines += ("{0}: runs {1}, catches {2}, +{3}/-{4}, prompts {5}" -f $p.Name, $r.runs, $r.reviewCatches, $r.linesAdded, $r.linesRemoved, $r.promptsCopied)
+            }
+            if ($lines.Count -gt 0) { $body = $lines -join [Environment]::NewLine }
+        } catch {
+            $body = "Could not read stats.json."
+        }
+    }
+    $win = New-Object System.Windows.Window
+    $win.Title = "Per-seat stats"
+    $win.Width = 520
+    $win.Height = 320
+    $win.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#1E1E2E")
+    $box = New-Object System.Windows.Controls.TextBox
+    $box.Text = $body
+    $box.IsReadOnly = $true
+    $box.AcceptsReturn = $true
+    $box.TextWrapping = "Wrap"
+    $box.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#11111B")
+    $box.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F9E2AF")
+    $box.BorderThickness = 0
+    $box.Margin = New-Object System.Windows.Thickness(12)
+    $box.FontFamily = New-Object System.Windows.Media.FontFamily("Consolas")
+    $win.Content = $box
+    $win.Owner = $window
+    [void]$win.ShowDialog()
+}
+
 function Save-BlackboardContent {
     param([string]$customPath = $script:BlackboardPath, [switch]$clearScratchpads)
     
@@ -4383,6 +4611,8 @@ function Save-BlackboardContent {
         ("> **Project Phase**: " + $q + $phase + $q),
         ("> **Active Turn**: " + $txtActiveTurn.Text),
         ("> **GitHub Issue**: " + $issueRef),
+        ("> **Enabled Phases**: " + $q + ($script:EnabledPhases -join ",") + $q),
+        ("> **Implement Mode**: " + $q + (Get-ImplementModeString) + $q),
         ("> **Last Updated**: " + $timestamp),
         "",
         "---",
@@ -4408,7 +4638,13 @@ function Save-BlackboardContent {
         "",
         "## Alignment & Agreed Decisions",
         "",
-        (Remove-DanglingSeparators $txtAlignment.Text),
+        (Format-AlignmentIds (Remove-DanglingSeparators $txtAlignment.Text)),
+        "",
+        "---",
+        "",
+        "## Bugs",
+        "",
+        $(if ($txtBugs -and $txtBugs.Text.Trim()) { $txtBugs.Text.Trim() } else { "_None_" }),
         "",
         "---",
         "",
@@ -4643,57 +4879,13 @@ function Apply-SelectedWorkflowPreset {
         $preset = if ($item -and $item.Tag) { [string]$item.Tag } elseif ($item) { [string]$item.Content } else { "Discuss" }
 
         switch -Regex ($preset) {
-            "Pitch" {
-                $cbCursorRole.SelectedIndex = 2 # advise
-                $cbGeminiRole.SelectedIndex = 2 # advise
-                Set-Phase "pitch"
-                $script:FormDirty = $true
-                $txtStatus.Text = "Preset applied: Pitch Mode ($s1 advise + $s2 advise, phase pitch)"
-            }
-            "Discuss" {
-                $cbCursorRole.SelectedIndex = 2 # advise
-                $cbGeminiRole.SelectedIndex = 2 # advise
-                Set-Phase "discuss"
-                $script:FormDirty = $true
-                $txtStatus.Text = "Preset applied: Discussion Mode ($s1 advise + $s2 advise, phase discuss)"
-            }
-            "Plan" {
-                $cbCursorRole.SelectedIndex = 4 # plan
-                $cbGeminiRole.SelectedIndex = 5 # idle
-                Set-Phase "plan"
-                $script:FormDirty = $true
-                $txtStatus.Text = "Preset applied: Planning Mode ($s1 plan + $s2 idle, phase plan)"
-            }
-            "Implement" {
-                $cbCursorRole.SelectedIndex = 1 # review
-                $cbGeminiRole.SelectedIndex = 1 # implement
-                Set-Phase "implement"
-                $script:FormDirty = $true
-                $txtStatus.Text = "Preset applied: Implementation Mode ($s2 implement + $s1 review, phase implement)"
-            }
-            "Review" {
-                $cbCursorRole.SelectedIndex = 1 # review
-                $cbGeminiRole.SelectedIndex = 0 # review
-                Set-Phase "review"
-                $script:FormDirty = $true
-                $txtStatus.Text = "Preset applied: Review Mode ($s1 review + $s2 review, phase review)"
-                Show-ReviewDiffViewer
-            }
-            "Test" {
-                $cbCursorRole.SelectedIndex = 1 # review
-                $cbGeminiRole.SelectedIndex = 0 # review
-                Set-Phase "test"
-                $script:FormDirty = $true
-                $txtStatus.Text = "Preset applied: Test Mode ($s1 review + $s2 review, phase test)"
-            }
-            "Inventory" {
-                $cbCursorRole.SelectedIndex = 3 # inventory
-                $cbGeminiRole.SelectedIndex = 3 # inventory
-                Set-Phase "review"
-                $script:FormDirty = $true
-                $txtStatus.Text = "Preset applied: Inventory Mode ($s1 inventory + $s2 inventory)"
-            }
+            "Hotfix" { $script:EnabledPhases = @("implement","test","closing","debrief") }
+            "Docs"   { $script:EnabledPhases = @("discuss","implement","test","debrief") }
+            "RFC"    { $script:EnabledPhases = @("pitch","discuss","debrief") }
+            default  { $script:EnabledPhases = @("pitch","discuss","plan","implement","review","test","closing","debrief") }
         }
+        $script:FormDirty = $true
+        $txtStatus.Text = "Task preset applied: $preset. Roles were not changed. Enabled phases: $($script:EnabledPhases -join ', ')"
         Check-Safety
         Update-UiActiveTurn -keepOverride
     } finally {
@@ -4701,6 +4893,7 @@ function Apply-SelectedWorkflowPreset {
     }
 }
 
+if ($btnStats) { $btnStats.add_Click({ Show-StatsWindow }) }
 if ($cbPresets) {
     $cbPresets.add_SelectionChanged({
         if (-not $script:SuppressPresetSync) {
@@ -4733,11 +4926,13 @@ function Invoke-CopyKickoffPrompt {
             "Seat1" {
                 $kPrompt = Get-KickoffPromptForAgent -agentName $s1 -role $cbCursorRole.Text -seatId "seat1"
                 Safe-SetClipboard $kPrompt
+                Add-SeatStat -seat $s1 -field "promptsCopied"
                 $txtStatus.Text = "📋 Copied $s1 Kickoff Prompt (" + $cbCursorRole.Text + ") to clipboard."
             }
             "Seat2" {
                 $kPrompt = Get-KickoffPromptForAgent -agentName $s2 -role $cbGeminiRole.Text -seatId "seat2"
                 Safe-SetClipboard $kPrompt
+                Add-SeatStat -seat $s2 -field "promptsCopied"
                 $txtStatus.Text = "📋 Copied $s2 Kickoff Prompt (" + $cbGeminiRole.Text + ") to clipboard."
             }
             default {
@@ -4745,6 +4940,8 @@ function Invoke-CopyKickoffPrompt {
                 $pAgent2 = Get-KickoffPromptForAgent -agentName $s2 -role $cbGeminiRole.Text -seatId "seat2"
                 $combined = "=== [$($s1.ToUpper()) KICKOFF PROMPT] ===" + [Environment]::NewLine + $pAgent1 + [Environment]::NewLine + [Environment]::NewLine + "=== [$($s2.ToUpper()) KICKOFF PROMPT] ===" + [Environment]::NewLine + $pAgent2
                 Safe-SetClipboard $combined
+                Add-SeatStat -seat $s1 -field "promptsCopied"
+                Add-SeatStat -seat $s2 -field "promptsCopied"
                 $txtStatus.Text = "📋 Copied combined Kickoff prompts for both $s1 and $s2 to clipboard."
             }
         }
@@ -4872,6 +5069,7 @@ $btnNewIssue.add_Click({
         $title = [Microsoft.VisualBasic.Interaction]::InputBox("Enter GitHub Issue Title:", "Create Issue", "[agent] ")
         if ($title) {
             $body = $txtPrompt.Text
+            if ($txtAlignment -and $txtAlignment.SelectionLength -gt 0) { $body = $txtAlignment.SelectedText }
             try {
                 $targetRepo = Get-TargetGitHubRepo
                 $ghArgs = @("issue", "create", "--title", $title, "--body", $body, "--label", "agent-owned")
@@ -5238,6 +5436,18 @@ function Load-BlackboardIntoUI {
                     $txtIssueNum.Text = ""
                     $txtIssueTitle.Text = ""
                 }
+                if ($raw -match '>\s*\*\*Enabled Phases\*\*:\s*`([^`]+)`') {
+                    $script:EnabledPhases = @($matches[1].Split(",") | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+                }
+                if ($cbImplementMode -and $raw -match '>\s*\*\*Implement Mode\*\*:\s*`([^`]+)`') {
+                    $mode = $matches[1].Trim()
+                    for ($i = 0; $i -lt $cbImplementMode.Items.Count; $i++) {
+                        if ([string]$cbImplementMode.Items[$i].Content -eq $mode) {
+                            $cbImplementMode.SelectedIndex = $i
+                            break
+                        }
+                    }
+                }
                 
                 $s1 = Get-Seat1Client
                 $s2 = Get-Seat2Client
@@ -5323,8 +5533,13 @@ function Load-BlackboardIntoUI {
             
             if (-not $fromTimer) {
                 $txtPrompt.Text = Remove-DanglingSeparators (Get-LastMarkdownBody $raw '##\s+Current Objective\s*&\s*Prompt')
-                $alignLoaded = Remove-DanglingSeparators (Get-LastMarkdownBody $raw '##\s+Alignment\s*&\s*Agreed Decisions')
+                $alignLoaded = Format-AlignmentIds (Remove-DanglingSeparators (Get-LastMarkdownBody $raw '##\s+Alignment\s*&\s*Agreed Decisions'))
                 $txtAlignment.Text = $alignLoaded
+                $bugsLoaded = Remove-DanglingSeparators (Get-LastMarkdownBody $raw '##\s+Bugs')
+                if ($txtBugs) {
+                    if ($bugsLoaded -and $bugsLoaded.Trim() -ne "_None_") { $txtBugs.Text = $bugsLoaded.Trim() } else { $txtBugs.Text = "" }
+                    Update-BugsVisibility
+                }
                 $humanLoaded = Remove-DanglingSeparators (Get-LastMarkdownBody $raw '(?:###|##)\s+(?:Human(?:\s+\(Lead\))?|[^\r\n]+?\s+\(Lead\)|Lead)')
                 if ($humanLoaded) { $txtHumanNotes.Text = $humanLoaded }
                 $script:FormDirty = $false
@@ -5334,7 +5549,7 @@ function Load-BlackboardIntoUI {
                     if ($promptLoaded -and $promptLoaded -ne $txtPrompt.Text) {
                         $txtPrompt.Text = $promptLoaded
                     }
-                    $alignLoaded = Remove-DanglingSeparators (Get-LastMarkdownBody $raw '##\s+Alignment\s*&\s*Agreed Decisions')
+                    $alignLoaded = Format-AlignmentIds (Remove-DanglingSeparators (Get-LastMarkdownBody $raw '##\s+Alignment\s*&\s*Agreed Decisions'))
                     if ($alignLoaded -ne $txtAlignment.Text) {
                         $txtAlignment.Text = $alignLoaded
                     }
