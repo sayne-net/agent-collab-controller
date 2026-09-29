@@ -1,19 +1,21 @@
 # AI Collab Controller (WPF UI)
-# Version 1.5.3
+# Version 1.5.4
 # Standalone dual-session controller for multi-agent collaboration with human-in-the-loop steering.
 # SemVer tracks protocol and feature releases. Do not bump the patch on every local edit.
+# 1.5.4: headless UI test for Refresh, F5, Promote, Demote, reconcile, and control round-trip.
 # 1.5.3: strip multiline alignment indexes and drop repeated decisions.
 # 1.5.2: F5 refresh, none seats, debrief questions, AG indexes, item codes, reconcile.
 
 param(
-    [string]$TargetRepo = ""
+    [string]$TargetRepo = "",
+    [switch]$HeadlessTest
 )
 
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
 
-$script:AppVersion = "v1.5.3"
+$script:AppVersion = "v1.5.4"
 $script:EnabledPhases = @("pitch","discuss","plan","implement","review","test","closing","debrief")
 $script:UnsignedRollbackStreak = 0
 $script:PhaseBeforeReconcile = ""
@@ -3961,7 +3963,10 @@ function Get-RoleGuidance {
         return "Project phase is CLOSING. Your role is idle. Do not edit tracked files or start new work. Your one action is the final sign-off: write Sign-off: [x] on your top scratchpad bullet and mark your Agent Roles row [x] so the project can advance to debrief."
     }
     if ($phase -eq "test") {
-        return "Project phase is TEST. Verify the program/script/UI already landed. Exercise the live controller or script under test (do not relaunch a second blackboard-ui unless asked). Record pass/fail in your scratchpad. FORBIDDEN: new features. After a recorded pass (or N/A with why), set your Agent Roles Sign-off [x] and scratchpad Sign-off: [x]. GO does not mean implement."
+        return "Project phase is TEST. Run scripts/blackboard-ui-test.ps1. It uses a hidden window and does not attach to the already-open controller. Record its PASS or FAIL in your scratchpad. Do not start a second interactive controller. FORBIDDEN: new features. After a recorded pass (or N/A with why), set your Agent Roles Sign-off [x] and scratchpad Sign-off: [x]. GO does not mean implement."
+    }
+    if ($phase -eq "discuss") {
+        return "You hold ADVISE. The first discuss note includes one turn-parameter table with columns parameter, value, and who decided. Reconcile turns are five per occupied seat, not five shared. The other seat edits a cell or answers Agree. End your note with `- **Agreed**: <decision>` sentences, or a single `- **Agree** if the other agent's scratchpad is already right. FORBIDDEN: editing tracked repo files."
     }
     if ($phase -eq "pitch") {
         return "Project phase is PITCH. Suggest additions, improvements, updates, fixes, or alternatives to whatever is listed in the current objective. Human has the final say on what moves on to discussion. FORBIDDEN: editing tracked files, git operations. Propose options with trade-offs in your scratchpad. End your note with your proposals and phase sign-off when aligned."
@@ -6020,6 +6025,82 @@ if ($script:LaunchRepoRoot) {
 }
 if ($chkNewChatKickoff) { $chkNewChatKickoff.IsChecked = $false }
 Update-KickoffButtonTooltips
-Start-StartupUpdateCheck
+if (-not $HeadlessTest) { Start-StartupUpdateCheck }
+
+function Invoke-HeadlessUiTest {
+    $fails = New-Object System.Collections.Generic.List[string]
+    $log = Join-Path $env:TEMP "blackboard-ui-test-last.txt"
+    function Add-Fail([string]$msg) { [void]$fails.Add($msg); Add-Content $log "FAIL $msg"; Write-Output "FAIL $msg" }
+    function Add-Pass([string]$msg) { Add-Content $log "PASS $msg"; Write-Output "PASS $msg" }
+    $fixture = @"
+- **Agreed**: [A23] Disagreements jump to
+``reconcile`` later.
+
+- **Agreed**: [A1] is Cursor and [A2] is Antigravity.
+
+- **Agreed**: Keep the latest decision only.
+
+- **Agreed**: Keep the latest decision only.
+"@
+    $formatted = Format-AlignmentIds $fixture
+    if ($formatted -match '\[A23\]') { Add-Fail "wrapped [A23] survived" } else { Add-Pass "A23" }
+    if ($formatted -notmatch '\[A1\] is Cursor') { Add-Fail "seat id [A1] was dropped" } else { Add-Pass "SEAT" }
+    $latest = @($formatted -split "`n" | Where-Object { $_ -match 'latest decision' })
+    if ($latest.Count -ne 1) { Add-Fail "repeated Alignment line count $($latest.Count)" } else { Add-Pass "TRIM" }
+
+    $token = "ROUNDTRIP-" + [guid]::NewGuid().ToString("N").Substring(0, 8)
+    $txtPrompt.Text = $token
+    Save-BlackboardContent
+    $txtPrompt.Text = ""
+    Load-BlackboardIntoUI
+    if ($txtPrompt.Text -notmatch [regex]::Escape($token)) { Add-Fail "prompt did not round-trip" } else { Add-Pass "ROUNDTRIP" }
+
+    $diskToken = "DISK-" + [guid]::NewGuid().ToString("N").Substring(0, 8)
+    $raw = [System.IO.File]::ReadAllText($script:BlackboardPath)
+    $raw2 = $raw -replace [regex]::Escape($token), $diskToken
+    [System.IO.File]::WriteAllText($script:BlackboardPath, $raw2)
+    $script:FormDirty = $false
+    $btnReloadBoard.RaiseEvent((New-Object System.Windows.RoutedEventArgs ([System.Windows.Controls.Primitives.ButtonBase]::ClickEvent)))
+    if ($txtPrompt.Text -notmatch [regex]::Escape($diskToken)) { Add-Fail "Refresh click did not load disk" } else { Add-Pass "REFRESH" }
+
+    $f5Token = "F5-" + [guid]::NewGuid().ToString("N").Substring(0, 8)
+    $raw = [System.IO.File]::ReadAllText($script:BlackboardPath)
+    $raw3 = $raw -replace [regex]::Escape($diskToken), $f5Token
+    [System.IO.File]::WriteAllText($script:BlackboardPath, $raw3)
+    $script:FormDirty = $false
+    $src = [System.Windows.PresentationSource]::FromVisual($window)
+    if (-not $src) { Add-Fail "F5 has no presentation source" }
+    else {
+        $key = [System.Windows.Input.KeyEventArgs]::new([System.Windows.Input.Keyboard]::PrimaryDevice, $src, 0, [System.Windows.Input.Key]::F5)
+        $key.RoutedEvent = [System.Windows.Input.Keyboard]::PreviewKeyDownEvent
+        $window.RaiseEvent($key)
+        if ($txtPrompt.Text -notmatch [regex]::Escape($f5Token)) { Add-Fail "F5 did not reload disk" } else { Add-Pass "F5" }
+    }
+
+    $txtItemCode.Text = "CUR1"
+    $btnPromoteCode.RaiseEvent((New-Object System.Windows.RoutedEventArgs ([System.Windows.Controls.Primitives.ButtonBase]::ClickEvent)))
+    if ($txtAlignment.Text -notmatch 'CUR1') { Add-Fail "Promote did not add CUR1" } else { Add-Pass "PROMOTE" }
+    $btnDemoteCode.RaiseEvent((New-Object System.Windows.RoutedEventArgs ([System.Windows.Controls.Primitives.ButtonBase]::ClickEvent)))
+    if ($txtAlignment.Text -match 'CUR1') { Add-Fail "Demote left CUR1 in Alignment" } else { Add-Pass "DEMOTE" }
+
+    if ($chkAutoStep) { $chkAutoStep.IsChecked = $true }
+    $txtBugs.Text = "**Disagreed**: headless check"
+    Enter-ReconcilePhase
+    if ((Get-PhaseString) -ne "reconcile") { Add-Fail "Auto Step did not open reconcile" } else { Add-Pass "RECONCILE" }
+
+    if ($fails.Count -eq 0) { Add-Pass "ALL"; return 0 }
+    Add-Fail ("count " + $fails.Count)
+    return 1
+}
+
+if ($HeadlessTest) {
+    $window.WindowState = [System.Windows.WindowState]::Minimized
+    $window.ShowInTaskbar = $false
+    $window.Visibility = [System.Windows.Visibility]::Hidden
+    $window.Show()
+    $script:HeadlessExitCode = Invoke-HeadlessUiTest
+    $window.Close()
+    exit $script:HeadlessExitCode
+}
 
 $window.ShowDialog() | Out-Null
