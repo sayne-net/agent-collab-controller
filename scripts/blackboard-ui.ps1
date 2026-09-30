@@ -1,7 +1,9 @@
 # AI Collab Controller (WPF UI)
-# Version 1.5.4
+# Version 1.5.6
 # Standalone dual-session controller for multi-agent collaboration with human-in-the-loop steering.
 # SemVer tracks protocol and feature releases. Do not bump the patch on every local edit.
+# 1.5.6: kickoff and re-prompt no longer paste scratchpad excerpts or repeat the scratchpad rule.
+# 1.5.5: last-response panes show the whole scratchpad, not the first bold bullet.
 # 1.5.4: headless UI test for Refresh, F5, Promote, Demote, reconcile, and control round-trip.
 # 1.5.3: strip multiline alignment indexes and drop repeated decisions.
 # 1.5.2: F5 refresh, none seats, debrief questions, AG indexes, item codes, reconcile.
@@ -15,7 +17,7 @@ $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
 
-$script:AppVersion = "v1.5.4"
+$script:AppVersion = "v1.5.6"
 $script:EnabledPhases = @("pitch","discuss","plan","implement","review","test","closing","debrief")
 $script:UnsignedRollbackStreak = 0
 $script:PhaseBeforeReconcile = ""
@@ -4145,65 +4147,32 @@ function Get-KickoffPromptForAgent {
     $objective = $txtPrompt.Text.Trim()
     if (-not $objective) { $objective = "(Refer to $boardPath)" }
 
-    $hardStop = Get-NonImplementHardStop $normRole
     $alignBlock = Get-AlignmentBlock
-    $latestNotes = Get-LatestScratchpadSummary
     $roleGuidance = Get-RoleGuidance $normRole
     $signOffGuidance = Get-SignOffGuidance
-    $sNameEsc = [regex]::Escape($agentName)
-    $scratchpadSection = if ($seatId -eq "seat1" -or $agentName -match 'Cursor|Agent\s*1|AI\s*1') {
-        if ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### $sNameEsc Scratchpad" -Quiet)) { "### $agentName Scratchpad" }
-        elseif ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### AI 1 Scratchpad" -Quiet)) { "### AI 1 Scratchpad" }
-        elseif ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### Cursor Scratchpad" -Quiet)) { "### Cursor Scratchpad" }
-        elseif ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### Agent 1 Scratchpad" -Quiet)) { "### Agent 1 Scratchpad" }
-        else { "### $agentName Scratchpad" }
-    } else {
-        if ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### $sNameEsc Scratchpad" -Quiet)) { "### $agentName Scratchpad" }
-        elseif ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### AI 2 Scratchpad" -Quiet)) { "### AI 2 Scratchpad" }
-        elseif ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### Gemini \(Antigravity\) Scratchpad" -Quiet)) { "### Gemini (Antigravity) Scratchpad" }
-        elseif ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### Agent 2 Scratchpad" -Quiet)) { "### Agent 2 Scratchpad" }
-        else { "### $agentName Scratchpad" }
-    }
-
-    $mandatoryBlock = if ($normRole -eq "implement") {
-@"
-MANDATORY ACTION:
-1. Blackboard Updates: Edit '$boardPath' (targeted chunk/block replacement) to append your plan/progress under '$scratchpadSection' only. Never overwrite the entire blackboard; do NOT edit blackboard.example.md, .ai/history/, or .ai/saved/.
-2. Implementation: Land tracked repository changes, code, and documentation as required by the objective.
-3. Verification: Ensure the header (GitHub Issue and Objective) matches this prompt. If mismatched, halt and alert the user.
-4. Phase Sign-off: When your implementation work is complete and verified, include 'Sign-off: [x]' on your top scratchpad bullet and mark your row '[x]' in the Agent Roles table to advance to the next phase.
-Do not only reply in chat; all dual-session collaboration takes place through $boardPath.
-"@
-    } else {
-@"
-MANDATORY ACTION:
-1. Target File: '$boardPath' ONLY (do NOT edit blackboard.example.md, .ai/history/, or .ai/saved/).
-2. Edit Scope: Use your file editing tool (targeted chunk/block replacement) to update under '$scratchpadSection' only. Never overwrite the entire file.
-3. Verification: Ensure the header (GitHub Issue and Objective) matches this prompt. If mismatched, halt and alert the user.
-4. Phase Sign-off: When your advisory or review notes are complete, include 'Sign-off: [x]' on your top scratchpad bullet and mark your row '[x]' in the Agent Roles table to signal phase readiness.
-Do not only reply in chat; all dual-session collaboration takes place through $boardPath.
+    if ($normRole -eq "idle" -or $phase -eq "closing") {
+        return @"
+You hold IDLE on $script:ProjectName$issueText.
+Phase: $phase. Flow: $flow.
+Read $boardPath. Do not act and do not edit files.
 "@
     }
-
+    $writeRule = "Edit only your own scratchpad section on $boardPath. Do not overwrite the file or edit the other seat. Reply on the board, not only in chat."
     return @"
-You are collaborating on $script:ProjectName$issueText.
+Read $boardPath. Follow the blackboard skill. Open one other project skill only when this objective matches it. Do not paste skill bodies into chat.
 - Agent: $agentName
 - Assigned Role: $normRole
 - Project Phase: $phase
 - Flow Control: $flow
 - Canonical Blackboard: $boardPath
 
-$hardStop
 Current Objective:
 $objective
 $alignBlock
-$latestNotes
 
-Role Instructions:
 $roleGuidance
 $signOffGuidance
-
-$mandatoryBlock
+$writeRule
 "@
 }
 
@@ -4217,42 +4186,7 @@ function Get-RepromptPromptForAgent {
     $normRole = Get-NormalizedRole $role
     $flow = Get-FlowControlString
     $phase = Get-PhaseString
-    $hardStop = Get-NonImplementHardStop $normRole
-    $signOffGuidance = Get-SignOffGuidance
     $boardPath = $script:BlackboardPath
-    $sNameEsc = [regex]::Escape($agentName)
-    $scratchpadSection = if ($seatId -eq "seat1" -or $agentName -match 'Cursor|Agent\s*1|AI\s*1') {
-        if ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### $sNameEsc Scratchpad" -Quiet)) { "### $agentName Scratchpad" }
-        elseif ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### AI 1 Scratchpad" -Quiet)) { "### AI 1 Scratchpad" }
-        elseif ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### Cursor Scratchpad" -Quiet)) { "### Cursor Scratchpad" }
-        elseif ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### Agent 1 Scratchpad" -Quiet)) { "### Agent 1 Scratchpad" }
-        else { "### $agentName Scratchpad" }
-    } else {
-        if ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### $sNameEsc Scratchpad" -Quiet)) { "### $agentName Scratchpad" }
-        elseif ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### AI 2 Scratchpad" -Quiet)) { "### AI 2 Scratchpad" }
-        elseif ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### Gemini \(Antigravity\) Scratchpad" -Quiet)) { "### Gemini (Antigravity) Scratchpad" }
-        elseif ((Test-Path $boardPath) -and (Select-String -Path $boardPath -Pattern "### Agent 2 Scratchpad" -Quiet)) { "### Agent 2 Scratchpad" }
-        else { "### $agentName Scratchpad" }
-    }
-
-    $mandatoryBlock = if ($normRole -eq "implement") {
-@"
-MANDATORY ACTION:
-1. Blackboard Updates: Edit '$boardPath' (targeted chunk/block replacement) to append progress under '$scratchpadSection' only. Never overwrite the entire blackboard; do NOT edit blackboard.example.md, .ai/history/, or .ai/saved/.
-2. Implementation: Continue landing tracked repository changes and documentation for this objective.
-3. Verification: Ensure the header matches this turn.
-Do not only reply in chat. Do not create AI_COLLAB.md, TASKS.md, or .geminirules.
-"@
-    } else {
-@"
-MANDATORY ACTION:
-1. Target File: '$boardPath' ONLY (do NOT edit blackboard.example.md, .ai/history/, or .ai/saved/).
-2. Edit Scope: Use your file editing tool (targeted chunk/block replacement) to update under '$scratchpadSection' only. Never overwrite the entire file.
-3. Verification: Ensure the header matches this turn.
-Do not only reply in chat. Do not create AI_COLLAB.md, TASKS.md, or .geminirules.
-"@
-    }
-
     $leadDirective = if ($customDirective) {
         $customDirective
     } elseif ($phase -eq "pitch") {
@@ -4262,16 +4196,13 @@ Do not only reply in chat. Do not create AI_COLLAB.md, TASKS.md, or .geminirules
     } else {
         "Read $boardPath again and respond to the latest notes from the other agent or the Human Lead."
     }
+    if ($normRole -eq "idle" -or $phase -eq "closing") {
+        return "IDLE. Phase: $phase. Read $boardPath. Do not act and do not edit files."
+    }
     return @"
 $leadDirective
-- Agent: $agentName
-- Assigned Role: $normRole. Stay in that role.
-- Project Phase: $phase
-- Flow Control: $flow
-- Canonical Blackboard: $boardPath
-$hardStop
-$signOffGuidance
-$mandatoryBlock
+Stay in role $normRole. Phase: $phase. Flow: $flow.
+Read $boardPath again. Do not paste the scratchpad into chat.
 "@
 }
 
@@ -4389,13 +4320,8 @@ function Get-ScratchpadExcerpt {
             $topLevelIndices += $i
         }
     }
-    if ($topLevelIndices.Count -eq 0) {
-        for ($i = 0; $i -lt $cleanLines.Count; $i++) {
-            if ($cleanLines[$i] -match '^[-*]\s+\*\*') {
-                $topLevelIndices += $i
-            }
-        }
-    }
+    # Do not treat every "- **title**" bullet as a turn. That cut the pane to one line
+    # whenever a note used bold labels (SUG-01, Agree, Accept). Split only on Role/Phase headers.
 
     $startIdx = 0
     $endExclusive = $cleanLines.Count
@@ -4463,8 +4389,8 @@ function Update-LastResponsePanes {
     $s2 = Get-Seat2Client
     $cRole = if ($cbCursorRole.Text) { $cbCursorRole.Text } else { "" }
     $gRole = if ($cbGeminiRole.Text) { $cbGeminiRole.Text } else { "" }
-    $cText = if ($cursorPad) { Get-ScratchpadExcerpt $cursorPad -PreferRole $cRole } else { "(no $s1 scratchpad yet)" }
-    $gText = if ($geminiPad) { Get-ScratchpadExcerpt $geminiPad -PreferRole $gRole } else { "(no $s2 scratchpad yet)" }
+    $cText = if ($cursorPad) { Get-ScratchpadExcerpt $cursorPad -PreferRole $cRole -maxLines 120 -maxChars 12000 } else { "(no $s1 scratchpad yet)" }
+    $gText = if ($geminiPad) { Get-ScratchpadExcerpt $geminiPad -PreferRole $gRole -maxLines 120 -maxChars 12000 } else { "(no $s2 scratchpad yet)" }
     Set-LastResponseDocument $rtbCursorLast $cText
     Set-LastResponseDocument $rtbGeminiLast $gText
 }
