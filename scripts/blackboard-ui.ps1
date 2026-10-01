@@ -3989,148 +3989,6 @@ function Get-RoleGuidance {
     }
 }
 
-function Get-NonImplementHardStop {
-    param([string]$role)
-    $boardPath = $script:BlackboardPath
-    if ((Get-PhaseString) -eq "ready" -or (Get-PhaseString) -eq "closed") {
-        return @"
-NOTICE: Project phase is READY. Awaiting new objective.
-Hold IDLE. Do not modify files, execute tasks, or make commits unless the Human Lead assigns a new active objective.
-
-"@
-    }
-    if ((Get-PhaseString) -eq "debrief") {
-        return @"
-NOTICE: Project phase is DEBRIEF.
-Answer these four items: Did we complete the mission? Grade yourself and the other occupied seat. What would you do differently? One suggestion for the process, the work, and the rules. Do not modify tracked files or make commits. Sign off after the Human Lead.
-
-"@
-    }
-    if ((Get-PhaseString) -eq "reconcile") {
-        return @"
-NOTICE: Project phase is RECONCILE.
-The human advances one occupied seat at a time. The seat that disagreed goes first. Each occupied seat has five turns. If it stays open, the human makes the call. Sign off when your part is done. Do not modify tracked files.
-
-"@
-    }
-    if ((Get-PhaseString) -eq "closing") {
-        return @"
-NOTICE: Project phase is CLOSING. Both seats are idle.
-Do not edit tracked files or start new work. Your one action is the final sign-off so the project can advance to debrief.
-
-"@
-    }
-    $phase = Get-PhaseString
-    $r = Get-NormalizedRole $role
-    if ($phase -eq "pitch") {
-        return @"
-STOP. Project phase is pitch. Both seats stay advise.
-FORBIDDEN: editing tracked repository files, git commit/push, live production/infrastructure changes.
-ALLOWED & REQUIRED: Edit '$boardPath' using your file editing tool under your scratchpad section only (append/update; do not wipe the Human Lead or the other agent).
-Flow Control GO means continue in this role — it does not promote you to implement.
-If your role is not implement, ignore the GitHub issue's implementation checklist.
-
-"@
-    }
-    if ($r -eq "implement") { return "" }
-    return @"
-STOP. Assigned role is $r, not implement.
-FORBIDDEN: editing tracked repository files, git commit/push, live production/infrastructure changes.
-ALLOWED & REQUIRED: Edit '$boardPath' using your file editing tool under your scratchpad section only (append/update; do not wipe the Human Lead or the other agent).
-Flow Control GO means continue in this role — it does not promote you to implement.
-If your role is not implement, ignore the GitHub issue's implementation checklist.
-
-"@
-}
-
-function Get-SignOffGuidance {
-    $phase = Get-PhaseString
-    if ($phase -eq "ready" -or $phase -eq "closed") { return "" }
-    if ($phase -eq "debrief") {
-        return @"
-
-Debrief Sign-off:
-- Answer the four debrief questions in your scratchpad.
-- Once the Human Lead signs off, add 'Sign-off: [x]' on your top bullet and mark your row '[x]' in Agent Roles.
-"@
-    }
-    if ($phase -eq "reconcile") {
-        return @"
-
-Reconcile Sign-off:
-- Each occupied seat has five turns. The human advances one seat at a time.
-- When your part is done, add 'Sign-off: [x]' on your top bullet and mark your row '[x]'.
-- Reconcile ends when every occupied seat and the human have signed off. A none seat is skipped.
-"@
-    }
-    if ($phase -eq "test") {
-        return @"
-
-Sign-off: after you record test evidence, set your Agent Roles Sign-off [x] and scratchpad Sign-off: [x].
-"@
-    }
-    return @"
-
-Phase Sign-off: when your work for the '$phase' phase is complete and aligned, set your Agent Roles Sign-off [x] and scratchpad Sign-off: [x] to advance to the next phase.
-"@
-}
-
-function Get-AlignmentBlock {
-    $align = ""
-    if ($txtAlignment -and $txtAlignment.Text) { $align = $txtAlignment.Text.Trim() }
-    if (-not $align -or $align -eq "---") { return "" }
-    if ($align -match '(?m)^## Working Notes') { return "" }
-    return @"
-
-Alignment (binding — do not override from the GitHub issue title):
-$align
-"@
-}
-
-function Get-LatestScratchpadSummary {
-    $boardPath = $script:BlackboardPath
-    if (-not (Test-Path $boardPath)) { return "" }
-    try {
-        $raw = [System.IO.File]::ReadAllText($boardPath, [System.Text.Encoding]::UTF8)
-        $s1 = Get-Seat1Client
-        $s2 = Get-Seat2Client
-        $s1Esc = [regex]::Escape($s1)
-        $s2Esc = [regex]::Escape($s2)
-
-        $cPad = Get-LastMarkdownBody $raw "(?:###|##)\s+(?:$s1Esc|Cursor|Agent\s*1|AI\s*1)(?:\s+Scratchpad)?"
-        $gPad = Get-LastMarkdownBody $raw "(?:###|##)\s+(?:$s2Esc|Gemini(?:\s+\(Antigravity\))?|Agent\s*2|AI\s*2)(?:\s+Scratchpad)?"
-
-        $cRole = if ($cbCursorRole -and $cbCursorRole.Text) { $cbCursorRole.Text } else { "" }
-        $gRole = if ($cbGeminiRole -and $cbGeminiRole.Text) { $cbGeminiRole.Text } else { "" }
-
-        $cEx = if ($cPad -and $cPad -notmatch "(?i)^-\s*\((?:$s1Esc|Cursor|Agent\s*1|AI\s*1)\s+(?:updates?|scratchpad)") {
-            Get-ScratchpadExcerpt $cPad -PreferRole $cRole -maxLines 15 -maxChars 2000
-        } else { "" }
-        $gEx = if ($gPad -and $gPad -notmatch "(?i)^-\s*\((?:$s2Esc|Gemini|Agent\s*2|AI\s*2)\s+(?:updates?|scratchpad)") {
-            Get-ScratchpadExcerpt $gPad -PreferRole $gRole -maxLines 15 -maxChars 2000
-        } else { "" }
-
-        $parts = @()
-        if ($cEx) {
-            $parts += "### $s1 (Latest Turn):"
-            $parts += $cEx.Trim()
-        }
-        if ($gEx) {
-            if ($parts.Count -gt 0) { $parts += "" }
-            $parts += "### $s2 (Latest Turn):"
-            $parts += $gEx.Trim()
-        }
-        if ($parts.Count -gt 0) {
-            return @"
-
-Latest Notes (scratchpad latest turn only):
-$($parts -join [Environment]::NewLine)
-"@
-        }
-    } catch {}
-    return ""
-}
-
 function Get-KickoffPromptForAgent {
     param(
         [string]$agentName,
@@ -4144,12 +4002,15 @@ function Get-KickoffPromptForAgent {
     $issueNum = $txtIssueNum.Text.Trim()
     $issueText = if ($issueNum -and $issueNum -ne "none") { " for GitHub Issue #$issueNum" } else { "" }
     $boardPath = $script:BlackboardPath
-    $objective = $txtPrompt.Text.Trim()
-    if (-not $objective) { $objective = "(Refer to $boardPath)" }
 
-    $alignBlock = Get-AlignmentBlock
+    $firstObjLine = ""
+    if ($txtPrompt.Text) {
+        $nonEmpty = @($txtPrompt.Text -split "`r?`n" | Where-Object { $_.Trim() -ne "" })
+        if ($nonEmpty.Count -gt 0) { $firstObjLine = $nonEmpty[0].Trim() }
+    }
+    if (-not $firstObjLine) { $firstObjLine = "(Refer to $boardPath)" }
+
     $roleGuidance = Get-RoleGuidance $normRole
-    $signOffGuidance = Get-SignOffGuidance
     if ($normRole -eq "idle" -or $phase -eq "closing") {
         return @"
 You hold IDLE on $script:ProjectName$issueText.
@@ -4157,7 +4018,6 @@ Phase: $phase. Flow: $flow.
 Read $boardPath. Do not act and do not edit files.
 "@
     }
-    $writeRule = "Edit only your own scratchpad section on $boardPath. Do not overwrite the file or edit the other seat. Reply on the board, not only in chat."
     return @"
 Read $boardPath. Follow the blackboard skill. Open one other project skill only when this objective matches it. Do not paste skill bodies into chat.
 - Agent: $agentName
@@ -4167,12 +4027,9 @@ Read $boardPath. Follow the blackboard skill. Open one other project skill only 
 - Canonical Blackboard: $boardPath
 
 Current Objective:
-$objective
-$alignBlock
+$firstObjLine
 
 $roleGuidance
-$signOffGuidance
-$writeRule
 "@
 }
 
