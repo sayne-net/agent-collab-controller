@@ -5987,6 +5987,8 @@ function Invoke-HeadlessUiTest {
 
     # Isolate operator blackboard in `$env:TEMP` with pre/post SHA256 integrity hash verification
     $origBoardPath = $script:BlackboardPath
+    $origUserConfigDir = $script:UserConfigDir
+    $origUserConfigPath = $script:UserConfigPath
     $origHash = ""
     if ($origBoardPath -and (Test-Path $origBoardPath)) {
         $origHash = (Get-FileHash -Path $origBoardPath -Algorithm SHA256).Hash
@@ -5995,6 +5997,10 @@ function Invoke-HeadlessUiTest {
     $tempBoardDir = Join-Path $env:TEMP ("bb-test-" + [guid]::NewGuid().ToString("N"))
     New-Item -ItemType Directory -Path $tempBoardDir -Force | Out-Null
     $tempBoardPath = Join-Path $tempBoardDir "blackboard.md"
+    $tempUserConfigDir = Join-Path $tempBoardDir "user-config"
+    New-Item -ItemType Directory -Path $tempUserConfigDir -Force | Out-Null
+    $script:UserConfigDir = $tempUserConfigDir
+    $script:UserConfigPath = Join-Path $tempUserConfigDir "config.json"
 
     $templatePath = Join-Path $script:ControllerRoot ".ailackboard.example.md"
     if (Test-Path $templatePath) {
@@ -6158,23 +6164,68 @@ function Invoke-HeadlessUiTest {
             Add-Pass "MULTILINE_OBJECTIVE_PROMPT"
         }
 
-        # Stats Recording & Baseline Assert
-        $testSeat = "TestAgent"
-        Add-SeatStat -seat $testSeat -field "promptsCopied" -amount 2
+        # Stats Recording & Phase Ready Switch Assert
+        $testSeat = Get-Seat1Client
+        if (-not $testSeat -or $testSeat -eq "None") { $testSeat = "Cursor" }
+        Set-ComboToRole $cbCursorRole "implement"
+        Set-ComboToRole $cbGeminiRole "review"
+        # Manual index changes record a run only when Auto Step is Off.
+        Set-AutoStepMode "Off"
+        $script:SuppressRoleDefault = $false
+        $script:SuppressPhaseAutoAdvance = $false
+
+        # Switch to discuss first to establish non-ready baseline.
+        # Item text is "discuss (Discussion & Debate)", so match the first token.
+        for ($i = 0; $i -lt $cbPhase.Items.Count; $i++) {
+            $token = (([string]$cbPhase.Items[$i].Content) -split " ")[0].ToLower()
+            if ($token -eq "discuss") {
+                $cbPhase.SelectedIndex = $i
+                break
+            }
+        }
+        Set-ComboToRole $cbCursorRole "implement"
+
         $statsFile = Join-Path $script:UserConfigDir "stats.json"
+        $beforeRuns = 0
+        if (Test-Path $statsFile) {
+            try {
+                $p = Get-Content $statsFile -Raw -Encoding UTF8 | ConvertFrom-Json
+                if ($p.$testSeat -and $p.$testSeat.runs) { $beforeRuns = [int]$p.$testSeat.runs }
+            } catch {}
+        }
+
+        # Simulate manual $cbPhase.SelectedIndex switch to ready
+        $readyIndex = -1
+        for ($i = 0; $i -lt $cbPhase.Items.Count; $i++) {
+            $token = (([string]$cbPhase.Items[$i].Content) -split " ")[0].ToLower()
+            if ($token -eq "ready") {
+                $readyIndex = $i
+                break
+            }
+        }
+        if ($readyIndex -ge 0) {
+            $cbPhase.SelectedIndex = $readyIndex
+        } else {
+            Add-Fail "Could not find ready phase in cbPhase items"
+        }
+
         if (-not (Test-Path $statsFile)) {
-            Add-Fail "stats.json was not created by Add-SeatStat"
+            Add-Fail "stats.json was not created on switch to ready"
         } else {
             $parsedStats = Get-Content $statsFile -Raw -Encoding UTF8 | ConvertFrom-Json
-            if ($parsedStats.$testSeat.promptsCopied -lt 2) {
-                Add-Fail "stats.json did not record promptsCopied"
+            $afterRuns = if ($parsedStats.$testSeat -and $parsedStats.$testSeat.runs) { [int]$parsedStats.$testSeat.runs } else { 0 }
+            $delta = $afterRuns - $beforeRuns
+            if ($delta -ne 1) {
+                Add-Fail "Switching to ready did not increment runs by 1 for $testSeat (delta=$delta, before=$beforeRuns, after=$afterRuns)"
             } else {
-                Add-Pass "STATS_RECORDED"
+                Add-Pass "READY_PHASE_INCREMENTED_RUNS"
             }
         }
     }
     finally {
         $script:BlackboardPath = $origBoardPath
+        $script:UserConfigDir = $origUserConfigDir
+        $script:UserConfigPath = $origUserConfigPath
         if (Test-Path $tempBoardDir) {
             try {
                 if (Test-Path $tempBoardPath) { Remove-Item -Path $tempBoardPath -Force -ErrorAction SilentlyContinue }
@@ -6201,7 +6252,12 @@ if ($HeadlessTest) {
     $window.ShowInTaskbar = $false
     $window.Visibility = [System.Windows.Visibility]::Hidden
     $window.Show()
-    $script:HeadlessExitCode = Invoke-HeadlessUiTest
+    $headlessResult = @(Invoke-HeadlessUiTest)
+    $script:HeadlessExitCode = 1
+    if ($headlessResult.Count -gt 0) {
+        $last = $headlessResult[$headlessResult.Count - 1]
+        if ($last -eq 0 -or $last -eq 1) { $script:HeadlessExitCode = [int]$last }
+    }
     $window.Close()
     exit $script:HeadlessExitCode
 }
