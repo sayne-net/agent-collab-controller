@@ -1,7 +1,7 @@
 # AI Collab Controller 🎮
 
-> **Human-in-the-Loop Multi-Agent Workflow & Desktop Controller (AI Collab Coding)**<br/>
-> Pair-program with two AI agents (tested with Cursor & Gemini Antigravity) on a single working tree without collisions, divergence, or prompt chaos.
+> **Two Models Deliberate, You Decide (AI Collab Coding)**<br/>
+> Pair-program with two AI agents (tested with Cursor & Gemini Antigravity) on a single working tree with structured multi-agent deliberation, mutual exclusion safety, and human-in-the-loop steering.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20(PowerShell%20%2F%20WPF)-informational)]()
@@ -14,7 +14,7 @@
 ---
 
 ![AI Collab Controller - Active Dual-Session Cockpit](docs/images/controller-main-window.png)
-*Note: Screenshots shown are simulated UI captures for demonstration purposes.*
+*Note: Screenshots shown are UI captures demonstrating the dual-session cockpit.*
 
 ---
 
@@ -24,11 +24,14 @@ Running multiple autonomous AI coding agents in parallel usually leads to one of
 1. **The Merge Conflict Nightmare**: Two agents edit the same files concurrently, corrupting state and breaking the working tree.
 2. **The Runaway Loop**: Fully autonomous loops diverge from user intent, burning tokens on hallucinations or incorrect architectures.
 
-**AI Collab Controller** introduces a structured, human-guided dual-session paradigm:
-- 👑 **Human-in-the-Loop Steering**: You are `Human (Lead)`. You set current objectives, capture alignment decisions, and steer direction between turns.
-- 🔒 **Concurrency Safety**: Strict mutual exclusion—**only ONE agent holds `implement`** at any moment. The other agent reviews, advises, or idles.
-- ⚡ **Ephemeral Scratchpad vs. Durable Memory**: High-frequency coordination happens in a local, gitignored tape (`.ai/blackboard.md`). Permanent decisions live in GitHub Issues, commits, and your codebase docs.
-- 🖥️ **Native Desktop Controller**: A sleek, dark-themed WPF desktop app with:
+While git worktrees can isolate file modifications across branches, **worktrees alone do not provide deliberation**. 
+
+**AI Collab Controller** introduces structured, human-guided dual-session collaboration:
+- 👑 **Human-in-the-Loop Steering**: You are `Human (Lead)`. You set current objectives, capture alignment decisions, and arbitrate between turns.
+- 💬 **Structured Multi-Agent Deliberation**: Agents pitch, discuss trade-offs, and draft plans together before writing code (`pitch → discuss → plan → implement → review → test → debrief`).
+- 🔒 **Mechanical Concurrency Safety**: Strict mutual exclusion—**only ONE agent may hold `implement`** at any moment. Prompt dispatchers mechanically refuse dual-implement prompt generation.
+- ⚡ **Ephemeral Scratchpad vs. Durable Memory**: High-frequency turn coordination happens in a local, gitignored tape (`.ai/blackboard.md`). Permanent decisions live in GitHub Issues, commits, and your codebase docs.
+- 🖥️ **Native Desktop Cockpit**: A sleek, dark-themed WPF desktop app with:
   - 1-click tailored kickoff prompt copying & direct window focus paste.
   - Built-in Git Review Diff viewer (including untracked files).
   - GitHub Issue tracking and automatic issue closing via `gh` CLI.
@@ -37,23 +40,14 @@ Running multiple autonomous AI coding agents in parallel usually leads to one of
 
 ---
 
-## Current Build: v1.5.1 — Galaga
+## Architecture: Protocol & Cockpit
 
-- **Version**: `v1.5.1` in the window title. SemVer marks protocol and feature releases. Patch numbers are not a run counter.
-- **Auto Step**: The checkbox is on the header row. Turning it on locks the phase dropdown.
-- **Stats**: A header button opens the per-seat stats window. There is no Board checkbox.
-- **Implementation Scope**: The dropdown between the seats is Code or Submit GitHub Issues. Submit GitHub Issues does not edit tracked files.
-- **Manual phase roles**: With Auto Step off, changing the phase sets the standard role pair. Auto-advance does not change roles.
-- **Board state**: Enabled phases, implementation scope, and bugs text are saved on the blackboard. Alignment lines are numbered `[A1]`, `[A2]`, with a blank line between them. Copy Prompt counts `promptsCopied`.
-- **Task presets**: Full, Hotfix, Docs, and RFC choose which phase badges are on. They do not assign roles. Auto Step locks the phase dropdown.
-- **Phase badges**: The phase combo is `ready`, `pitch`, `discuss`, `plan`, `implement`, `review`, `test`, `closing`, `debrief`. Auto Step is off unless you turn it on, and it does not change seat roles.
-- **Debrief Preserved on Close Cycle**: Accepting 'Yes' to complete the close cycle during `closing` auto-advance ships allowlisted changes to git and proceeds directly into `debrief`. Session archiving and board reset to `ready` await completion of the debrief phase.
-- **Sign-off Latch Integrity**: An unsigned newest scratchpad turn leaves that seat's sign-off box open and rolls test/closing phases back to `implement`. Changing phases clears all three sign-off checkboxes.
-- **Close Project**: Confirms tracked dirty files in the target repo, refuses secrets and `.ai/`, and skips push while a refused path is still dirty. Optional `.ai/close-allow.json` can narrow which paths may be committed.
-- **Selection-Aware Promote to Prompt**: Highlighting notes in Human Notes and clicking **Promote** cleanly strips markdown bullet prefixes and appends the selection into Objective & Prompt without overwriting.
-- **Codex Safety Guard**: Codex seat profiles automatically clear and disable the New Chat checkbox with prominent manual guidance alerts to protect operator chats.
-- **Arcade Codenames**: Releases feature classic 80's & 90's arcade game codenames.
-- 📜 **[View Full Release History & Changelog](CHANGELOG.md)**
+The project is structured in two decoupled layers:
+
+1. **The Protocol (`docs/PROTOCOL.md`)**: A platform-neutral, zero-daemon coordination specification based on standard markdown (`.ai/blackboard.md`), phase ladders, role matrices, and sign-off contracts. Portable across any IDE or agent system (Cursor, Antigravity, Claude Code, Codex, CLI).
+2. **The Desktop Controller (`scripts/blackboard-ui.ps1`)**: A high-productivity reference cockpit built in PowerShell/WPF for Windows that automates prompt templating, window focusing, git diff inspection, test validation, and GitHub synchronization.
+
+For complete specification details, see [docs/PROTOCOL.md](docs/PROTOCOL.md).
 
 ---
 
@@ -86,7 +80,7 @@ pwsh $HOME\agent-collab-controller\scripts\install-desktop-shortcut.ps1 -TargetR
 2. **Assign Roles**:
    - Set **AI 1** (e.g. Cursor) to `implement`.
    - Set **AI 2** (e.g. Gemini Antigravity) to `review`.
-3. **Copy the kickoff**: Select Seat 1, Seat 2, or Both and click **Copy Prompt**. Paste that clipboard text into the agent chat. **Send (best-effort)** may focus the IDE, and it can miss the chat box.
+3. **Copy the kickoff**: Select Seat 1, Seat 2, or Both and click **Copy Prompt**. Paste that clipboard text into the agent chat. (*Send (best-effort)* can automatically focus and paste into supported IDEs).
 4. **Watch & Steer**:
    - The implementing agent writes code, updates progress in its scratchpad, and commits changes.
    - The reviewing agent tests and audits the diff.
@@ -94,7 +88,7 @@ pwsh $HOME\agent-collab-controller\scripts\install-desktop-shortcut.ps1 -TargetR
    - Review working tree changes instantly via the **🔍 Review Diff** button:
 
    ![Built-in Git Review Diff Viewer](docs/images/controller-diff-viewer.png)
-   *Note: Simulated screenshot demonstrating git diff and untracked file auditing.*
+   *Note: Demonstration of the git diff and untracked file auditor.*
 
 5. **Sign-off, Ship & Debrief**:
    - When implementation and test verification steps are complete, all 3 participants sign off (`[x]`) to reach `closing`.
@@ -102,7 +96,7 @@ pwsh $HOME\agent-collab-controller\scripts\install-desktop-shortcut.ps1 -TargetR
    - Once debrief completes (or upon manual Close Project click), the controller archives the session tape to `.ai/history/`, auto-closes associated GitHub issues, and resets the board to `ready`:
 
    ![3-Way Sign-off and Close Project](docs/images/controller-signoff-close.png)
-   *Note: Simulated screenshot demonstrating 3-way sign-off gating and session close.*
+   *Note: Demonstration of 3-way sign-off gating and session close.*
 
 > [!TIP]
 > **Click-to-Copy Board Path**: The top bar of the controller displays the active blackboard path (`📋 Board: ...`). Click it at any time to instantly copy the full path to your clipboard.
@@ -125,7 +119,7 @@ Place the included agent instruction files in your repository so your agents aut
 
 ### Option B: Zero Setup (Self-Contained Kickoff Prompts)
 Even without pre-configuring agent rules or skills, the controller works out of the box:
-1. In the controller UI, assign roles, select your target in the Kickoff dropdown, and click **Copy Prompt**. Paste into the agent chat. **Send (best-effort)** is optional and can miss the chat box.
+1. In the controller UI, assign roles, select your target in the Kickoff dropdown, and click **Copy Prompt**. Paste into the agent chat.
 2. The generated kickoff prompt injects all required protocol context:
    - Specific identity (`AI 1` or `AI 2`)
    - Assigned role permissions and hard-stop safety constraints
@@ -145,36 +139,48 @@ Even without pre-configuring agent rules or skills, the controller works out of 
 | `plan` | Architect | Outlines milestones and approaches before implementation approval. |
 | `idle` | Passive standby | Silent mode. Prevents race conditions. |
 
-For detailed protocol rules, see [docs/PROTOCOL.md](docs/PROTOCOL.md).
+---
+
+## Operator Reference & FAQ
+
+<details>
+<summary><strong>Expand Controller UI & Feature Reference</strong></summary>
+
+- **Auto Step**: Checkbox located on the header row. Enabling Auto Step locks the phase dropdown and advances phases automatically as required sign-offs complete.
+- **Stats Window**: The header Stats button displays session statistics (prompts copied, turns taken, completions) persisted locally at `$HOME/.blackboard/stats.json`.
+- **Implementation Scope**: The scope dropdown between seats specifies `Code` or `Submit GitHub Issues`. Selecting `Submit GitHub Issues` instructs agents to create issues without editing tracked repository files.
+- **Dual-Implement Safety**: If both seats are set to `implement`, the controller triggers a safety warning and blocks prompt copying/sending until roles are corrected.
+- **Task Presets**: Presets (`Full`, `Hotfix`, `Docs`, `RFC`) select standard enabled phase badges.
+- **Phase Badges**: Supported lifecycle ladder: `ready` → `pitch` → `discuss` → `plan` → `implement` → `review` → `test` → `closing` → `debrief`.
+- **Sign-off Latch Integrity**: An unconfirmed latest scratchpad turn leaves the sign-off box open and rolls test/closing phases back to `implement` until verified.
+- **Close Project**: Validates tracked dirty files, rejects secrets and `.ai/` files, and blocks push if non-allowlisted dirty paths remain.
+
+</details>
 
 ---
 
-## System Requirements
+## System Requirements & Testing
 - **OS**: Windows 10/11
 - **PowerShell**: PowerShell 7 (`pwsh`) recommended, or Windows PowerShell 5.1
+- **Automated Headless Testing**:
+  ```powershell
+  pwsh ./scripts/blackboard-ui-test.ps1
+  ```
 - **GitHub CLI** *(Optional)*: `gh` for fetching/creating/closing GitHub issues directly from the controller UI
 
 ---
 
 ## Contributing
 
-Contributions, feedback, and issue reports are welcome!
-
-1. **Issues**: Check existing issues or open a new one using the provided bug report or feature request templates.
-2. **Conventional Commits**: Format commit messages according to [Conventional Commits](https://www.conventionalcommits.org/) (e.g. `feat(ui): ...`, `fix(scripts): ...`, `docs: ...`).
-3. **Local Testing & Syntax Validation**: Before submitting a PR, verify all PowerShell scripts pass syntax checks:
+1. **Issues**: Check existing issues or open a new one using the provided templates.
+2. **Conventional Commits**: Format commit messages according to [Conventional Commits](https://www.conventionalcommits.org/) (e.g. `feat(controller): ...`, `test(ci): ...`, `docs: ...`).
+3. **Syntax & Headless Test Validation**: Before submitting a PR, verify all PowerShell scripts pass syntax checks and the headless UI test suite:
    ```powershell
-   Get-ChildItem -Path scripts/*.ps1 -Recurse | ForEach-Object {
-       $errs = $null
-       $null = [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$errs)
-       if ($errs) { throw "$($_.Name) has syntax errors" }
-   }
+   pwsh ./scripts/blackboard-ui-test.ps1
    ```
-4. **Pull Requests**: Open a pull request against `main`. Ensure all CI syntax checks pass and fill out the PR checklist.
 
 ---
 
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
-

@@ -3578,11 +3578,23 @@ function Get-ComboRoleText {
     return ""
 }
 
+function Test-DualImplementBlocked {
+    $r1 = Get-NormalizedRole (Get-ComboRoleText $cbCursorRole)
+    $r2 = Get-NormalizedRole (Get-ComboRoleText $cbGeminiRole)
+    if ($r1 -eq "implement" -and $r2 -eq "implement") {
+        if ($txtStatus) {
+            $txtStatus.Text = "🛑 Refused: Dual implement seats forbidden. Change one seat role before prompting."
+        }
+        return $true
+    }
+    return $false
+}
+
 function Check-Safety {
-    $cursor = Get-ComboRoleText $cbCursorRole
-    $gemini = Get-ComboRoleText $cbGeminiRole
+    $cursor = Get-NormalizedRole (Get-ComboRoleText $cbCursorRole)
+    $gemini = Get-NormalizedRole (Get-ComboRoleText $cbGeminiRole)
     if ($cursor -eq "implement" -and $gemini -eq "implement") {
-        $txtSafetyWarning.Text = "⚠️ SAFETY WARNING: Both agents set to implement! Conflict risk."
+        $txtSafetyWarning.Text = "🛑 SAFETY VIOLATION: Dual implement seats forbidden! Prompt dispatch is blocked."
         $txtSafetyWarning.Foreground = [System.Windows.Media.Brushes]::Salmon
     } elseif ($script:LastCodexTargeted) {
         $txtSafetyWarning.Text = "⚠️ New Chat unavailable for Codex: manually open a new chat in the Codex app."
@@ -5121,6 +5133,7 @@ function Invoke-CopyKickoffPrompt {
         [System.Windows.MessageBox]::Show("scripts/blackboard-ui.ps1 has been updated on disk.`n`nPrompt dispatching is locked until the controller is relaunched.", "Relaunch Required", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
         return
     }
+    if (Test-DualImplementBlocked) { return }
     try {
         Save-BlackboardContent
         $s1 = Get-Seat1Client
@@ -5184,6 +5197,7 @@ function Invoke-SendKickoffPrompt {
         [System.Windows.MessageBox]::Show("scripts/blackboard-ui.ps1 has been updated on disk.`n`nPrompt dispatching is locked until the controller is relaunched.", "Relaunch Required", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
         return
     }
+    if (Test-DualImplementBlocked) { return }
     try {
         Save-BlackboardContent
         $s1 = Get-Seat1Client
@@ -5344,6 +5358,7 @@ function Trigger-AgentReprompt {
         [System.Windows.MessageBox]::Show("scripts/blackboard-ui.ps1 has been updated on disk.`n`nPrompt dispatching is locked until the controller is relaunched.", "Relaunch Required", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
         return
     }
+    if (Test-DualImplementBlocked) { return }
 
     try {
         Save-BlackboardContent
@@ -5398,6 +5413,7 @@ function Trigger-CompareNotesReprompt {
         [System.Windows.MessageBox]::Show("scripts/blackboard-ui.ps1 has been updated on disk.`n`nPrompt dispatching is locked until the controller is relaunched.", "Relaunch Required", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
         return
     }
+    if (Test-DualImplementBlocked) { return }
     try {
         Save-BlackboardContent
         Show-CompareTurnsViewer
@@ -5917,7 +5933,30 @@ function Invoke-HeadlessUiTest {
     try { [System.IO.File]::WriteAllText($log, "") } catch {}
     function Add-Fail([string]$msg) { [void]$fails.Add($msg); Add-Content $log "FAIL $msg"; Write-Output "FAIL $msg" }
     function Add-Pass([string]$msg) { Add-Content $log "PASS $msg"; Write-Output "PASS $msg" }
-    $fixture = @"
+
+    # Isolate operator blackboard in `$env:TEMP` with pre/post SHA256 integrity hash verification
+    $origBoardPath = $script:BlackboardPath
+    $origHash = ""
+    if ($origBoardPath -and (Test-Path $origBoardPath)) {
+        $origHash = (Get-FileHash -Path $origBoardPath -Algorithm SHA256).Hash
+    }
+
+    $tempBoardDir = Join-Path $env:TEMP ("bb-test-" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Path $tempBoardDir -Force | Out-Null
+    $tempBoardPath = Join-Path $tempBoardDir "blackboard.md"
+
+    $templatePath = Join-Path $script:ControllerRoot ".ailackboard.example.md"
+    if (Test-Path $templatePath) {
+        Copy-Item -Path $templatePath -Destination $tempBoardPath -Force
+    } else {
+        [System.IO.File]::WriteAllText($tempBoardPath, "# Dual-Session Agent Blackboard`n`n> **Flow Control**: ``🟢 GO```n> **Project Phase**: ``ready```n> **Active Turn**: 👤 Waiting on Human (Lead)`n> **GitHub Issue**: none`n> **Enabled Phases**: ``pitch,discuss,plan,implement,review,test,closing,debrief```n> **Implementation Scope**: ``Code```n`n---`n`n## Agent Roles & Safety`n`n| Participant | Active Role | Status | Sign-off (Complete) |`n|---|---|---|---|`n| **Human (Lead)** | ``lead`` | Active | [ ] |`n| **Cursor** | ``idle`` | Active | [ ] |`n| **Antigravity** | ``idle`` | Active | [ ] |`n`n---`n`n## Current Objective & Prompt`n`n`n`n---`n`n## Alignment & Agreed Decisions`n`n`n`n---`n`n## Bugs`n`n`n`n---`n`n## Working Notes & Scratchpads`n`n### Human (Lead)`n- Active steering notes.`n`n### Cursor Scratchpad`n- (Cursor updates here)`n`n### Antigravity Scratchpad`n- (Antigravity updates here)`n")
+    }
+
+    $script:BlackboardPath = $tempBoardPath
+    Load-BlackboardIntoUI
+
+    try {
+        $fixture = @"
 - **Agreed**: [A23] Disagreements jump to
 ``reconcile`` later.
 
@@ -5927,121 +5966,155 @@ function Invoke-HeadlessUiTest {
 
 - **Agreed**: Keep the latest decision only.
 "@
-    $formatted = Format-AlignmentIds $fixture
-    if ($formatted -match '\[A23\]') { Add-Fail "wrapped [A23] survived" } else { Add-Pass "A23" }
-    if ($formatted -notmatch '\[A1\] is Cursor') { Add-Fail "seat id [A1] was dropped" } else { Add-Pass "SEAT" }
-    $latest = @($formatted -split "`n" | Where-Object { $_ -match 'latest decision' })
-    if ($latest.Count -ne 1) { Add-Fail "repeated Alignment line count $($latest.Count)" } else { Add-Pass "TRIM" }
+        $formatted = Format-AlignmentIds $fixture
+        if ($formatted -match '\[A23\]') { Add-Fail "wrapped [A23] survived" } else { Add-Pass "A23" }
+        if ($formatted -notmatch '\[A1\] is Cursor') { Add-Fail "seat id [A1] was dropped" } else { Add-Pass "SEAT" }
+        $latest = @($formatted -split "`n" | Where-Object { $_ -match 'latest decision' })
+        if ($latest.Count -ne 1) { Add-Fail "repeated Alignment line count $($latest.Count)" } else { Add-Pass "TRIM" }
 
-    $token = "ROUNDTRIP-" + [guid]::NewGuid().ToString("N").Substring(0, 8)
-    $txtPrompt.Text = $token
-    Save-BlackboardContent
-    $txtPrompt.Text = ""
-    Load-BlackboardIntoUI
-    if ($txtPrompt.Text -notmatch [regex]::Escape($token)) { Add-Fail "prompt did not round-trip" } else { Add-Pass "ROUNDTRIP" }
+        $token = "ROUNDTRIP-" + [guid]::NewGuid().ToString("N").Substring(0, 8)
+        $txtPrompt.Text = $token
+        Save-BlackboardContent
+        $txtPrompt.Text = ""
+        Load-BlackboardIntoUI
+        if ($txtPrompt.Text -notmatch [regex]::Escape($token)) { Add-Fail "prompt did not round-trip" } else { Add-Pass "ROUNDTRIP" }
 
-    $diskToken = "DISK-" + [guid]::NewGuid().ToString("N").Substring(0, 8)
-    $raw = [System.IO.File]::ReadAllText($script:BlackboardPath)
-    $raw2 = $raw -replace [regex]::Escape($token), $diskToken
-    [System.IO.File]::WriteAllText($script:BlackboardPath, $raw2)
-    $script:FormDirty = $false
-    $btnReloadBoard.RaiseEvent((New-Object System.Windows.RoutedEventArgs ([System.Windows.Controls.Primitives.ButtonBase]::ClickEvent)))
-    if ($txtPrompt.Text -notmatch [regex]::Escape($diskToken)) { Add-Fail "Refresh click did not load disk" } else { Add-Pass "REFRESH" }
+        $diskToken = "DISK-" + [guid]::NewGuid().ToString("N").Substring(0, 8)
+        $raw = [System.IO.File]::ReadAllText($script:BlackboardPath)
+        $raw2 = $raw -replace [regex]::Escape($token), $diskToken
+        [System.IO.File]::WriteAllText($script:BlackboardPath, $raw2)
+        $script:FormDirty = $false
+        $btnReloadBoard.RaiseEvent((New-Object System.Windows.RoutedEventArgs ([System.Windows.Controls.Primitives.ButtonBase]::ClickEvent)))
+        if ($txtPrompt.Text -notmatch [regex]::Escape($diskToken)) { Add-Fail "Refresh click did not load disk" } else { Add-Pass "REFRESH" }
 
-    $f5Token = "F5-" + [guid]::NewGuid().ToString("N").Substring(0, 8)
-    $raw = [System.IO.File]::ReadAllText($script:BlackboardPath)
-    $raw3 = $raw -replace [regex]::Escape($diskToken), $f5Token
-    [System.IO.File]::WriteAllText($script:BlackboardPath, $raw3)
-    $script:FormDirty = $false
-    $src = [System.Windows.PresentationSource]::FromVisual($window)
-    if (-not $src) { Add-Fail "F5 has no presentation source" }
-    else {
-        $key = [System.Windows.Input.KeyEventArgs]::new([System.Windows.Input.Keyboard]::PrimaryDevice, $src, 0, [System.Windows.Input.Key]::F5)
-        $key.RoutedEvent = [System.Windows.Input.Keyboard]::PreviewKeyDownEvent
-        $window.RaiseEvent($key)
-        if ($txtPrompt.Text -notmatch [regex]::Escape($f5Token)) { Add-Fail "F5 did not reload disk" } else { Add-Pass "F5" }
+        $f5Token = "F5-" + [guid]::NewGuid().ToString("N").Substring(0, 8)
+        $raw = [System.IO.File]::ReadAllText($script:BlackboardPath)
+        $raw3 = $raw -replace [regex]::Escape($diskToken), $f5Token
+        [System.IO.File]::WriteAllText($script:BlackboardPath, $raw3)
+        $script:FormDirty = $false
+        $src = [System.Windows.PresentationSource]::FromVisual($window)
+        if (-not $src) { Add-Fail "F5 has no presentation source" }
+        else {
+            $key = [System.Windows.Input.KeyEventArgs]::new([System.Windows.Input.Keyboard]::PrimaryDevice, $src, 0, [System.Windows.Input.Key]::F5)
+            $key.RoutedEvent = [System.Windows.Input.Keyboard]::PreviewKeyDownEvent
+            $window.RaiseEvent($key)
+            if ($txtPrompt.Text -notmatch [regex]::Escape($f5Token)) { Add-Fail "F5 did not reload disk" } else { Add-Pass "F5" }
+        }
+
+        $txtItemCode.Text = "CUR1"
+        $script:LastCursorPad = "- CUR1 test suggestion"
+        $btnPromoteCode.RaiseEvent((New-Object System.Windows.RoutedEventArgs ([System.Windows.Controls.Primitives.ButtonBase]::ClickEvent)))
+        if ($txtAlignment.Text -notmatch 'CUR1') { Add-Fail "Promote did not add CUR1" } else { Add-Pass "PROMOTE" }
+        $btnDemoteCode.RaiseEvent((New-Object System.Windows.RoutedEventArgs ([System.Windows.Controls.Primitives.ButtonBase]::ClickEvent)))
+        if ($txtAlignment.Text -match 'CUR1') { Add-Fail "Demote left CUR1 in Alignment" } else { Add-Pass "DEMOTE" }
+
+        # DeepSeek Profile Assert
+        $cfg = Get-ClientConfiguration
+        if (-not $cfg.profiles.DeepSeek -or $cfg.profiles.DeepSeek.description -notmatch "DeepSeek V4 Flash") {
+            Add-Fail "DeepSeek profile missing or invalid"
+        } else {
+            Add-Pass "DEEPSEEK_PROFILE"
+        }
+
+        # Implement Phase Default Roles Assert
+        Set-RolesForPhase "implement"
+        $r1 = Get-NormalizedRole $cbCursorRole.Text
+        $r2 = Get-NormalizedRole $cbGeminiRole.Text
+        if (-not ($r1 -eq "review" -and $r2 -eq "review")) {
+            Add-Fail "implement phase default roles invalid ($r1, $r2)"
+        } else {
+            Add-Pass "IMPLEMENT_DEFAULT_ROLES"
+        }
+
+        # Dual Implement Refusal Assert
+        Set-ComboToRole $cbCursorRole "implement"
+        Set-ComboToRole $cbGeminiRole "implement"
+        Check-Safety
+        if (-not (Test-DualImplementBlocked)) {
+            Add-Fail "Dual implement role combination not flagged as blocked"
+        } else {
+            Add-Pass "DUAL_IMPLEMENT_DETECTED"
+        }
+        Invoke-CopyKickoffPrompt
+        if ($txtStatus.Text -notmatch "Refused: Dual implement seats forbidden") {
+            Add-Fail "Invoke-CopyKickoffPrompt did not refuse dual implement prompt"
+        } else {
+            Add-Pass "DUAL_IMPLEMENT_COPY_REFUSED"
+        }
+
+        # Gate Persistence & Implementation Scope Roundtrip Assert
+        $origScope = [string]$cbImplementMode.Text
+        $testScope = if ($origScope -match "Issue") { "Code" } else { "Submit GitHub Issues" }
+        for ($i = 0; $i -lt $cbImplementMode.Items.Count; $i++) {
+            if ([string]$cbImplementMode.Items[$i].Content -eq $testScope) {
+                $cbImplementMode.SelectedIndex = $i
+                break
+            }
+        }
+        Set-ComboToRole $cbCursorRole "none"
+        Save-BlackboardContent
+        Load-BlackboardIntoUI
+        if ($chkGateSeat1.IsChecked -ne $false) { Add-Fail "GateSeat1 did not persist false for none role" } else { Add-Pass "GATE_PERSIST" }
+        if ([string]$cbImplementMode.Text -notmatch [regex]::Escape($testScope)) { Add-Fail "ImplementationScope did not roundtrip" } else { Add-Pass "SCOPE_ROUNDTRIP" }
+        Set-ComboToRole $cbCursorRole "review"
+        Set-ComboToRole $cbGeminiRole "review"
+        $chkGateSeat1.IsChecked = $true
+        $chkGateSeat2.IsChecked = $true
+        Save-BlackboardContent
+
+        # Auto Step L1-L3 Assert
+        $script:SuppressPhaseAutoAdvance = $true
+        try {
+            Set-AutoStepMode "L1"
+            if ((Get-AutoStepMode) -ne "L1") { Add-Fail "Set-AutoStepMode L1 failed" } else { Add-Pass "AUTOSTEP_L1_SET" }
+            $chkSignHuman.IsChecked = $true
+            $chkSignCursor.IsChecked = $false
+            $chkSignGemini.IsChecked = $false
+            if (-not (Test-RequiredSignoffsMet "L1")) { Add-Fail "L1 sign-off check failed with human signed" } else { Add-Pass "AUTOSTEP_L1_CHECK" }
+            if (Test-RequiredSignoffsMet "L2") { Add-Fail "L2 sign-off check should be false without Seat 1" } else { Add-Pass "AUTOSTEP_L2_CHECK_FALSE" }
+            $chkSignCursor.IsChecked = $true
+            if (-not (Test-RequiredSignoffsMet "L2")) { Add-Fail "L2 sign-off check failed with Seat 1 signed" } else { Add-Pass "AUTOSTEP_L2_CHECK_TRUE" }
+            if (Test-RequiredSignoffsMet "L3") { Add-Fail "L3 sign-off check should be false without Seat 2" } else { Add-Pass "AUTOSTEP_L3_CHECK_FALSE" }
+            $chkSignGemini.IsChecked = $true
+            if (-not (Test-RequiredSignoffsMet "L3")) { Add-Fail "L3 sign-off check failed with all signed" } else { Add-Pass "AUTOSTEP_L3_CHECK_TRUE" }
+        } finally {
+            $script:SuppressPhaseAutoAdvance = $false
+        }
+
+        # Kickoff Auto-Switch Assert
+        $chkAutoSwitchSeat.IsChecked = $true
+        $cbKickoffTarget.SelectedIndex = 0
+        Step-KickoffAutoSwitch
+        if ($cbKickoffTarget.SelectedIndex -ne 1) { Add-Fail "AutoSwitch did not switch 0 -> 1" } else { Add-Pass "AUTOSWITCH_0_TO_1" }
+        Step-KickoffAutoSwitch
+        if ($cbKickoffTarget.SelectedIndex -ne 0) { Add-Fail "AutoSwitch did not switch 1 -> 0" } else { Add-Pass "AUTOSWITCH_1_TO_0" }
+        $cbKickoffTarget.SelectedIndex = 2
+        Step-KickoffAutoSwitch
+        if ($cbKickoffTarget.SelectedIndex -ne 2) { Add-Fail "AutoSwitch modified Both (2)" } else { Add-Pass "AUTOSWITCH_BOTH_UNCHANGED" }
+
+        # Reconcile Auto Step Assert
+        Set-AutoStepMode "L3"
+        $txtBugs.Text = "**Disagreed**: headless check"
+        Enter-ReconcilePhase
+        if ((Get-PhaseString) -ne "reconcile") { Add-Fail "Auto Step did not open reconcile" } else { Add-Pass "RECONCILE" }
     }
-
-    $txtItemCode.Text = "CUR1"
-    $script:LastCursorPad = "- CUR1 test suggestion"
-    $btnPromoteCode.RaiseEvent((New-Object System.Windows.RoutedEventArgs ([System.Windows.Controls.Primitives.ButtonBase]::ClickEvent)))
-    if ($txtAlignment.Text -notmatch 'CUR1') { Add-Fail "Promote did not add CUR1" } else { Add-Pass "PROMOTE" }
-    $btnDemoteCode.RaiseEvent((New-Object System.Windows.RoutedEventArgs ([System.Windows.Controls.Primitives.ButtonBase]::ClickEvent)))
-    if ($txtAlignment.Text -match 'CUR1') { Add-Fail "Demote left CUR1 in Alignment" } else { Add-Pass "DEMOTE" }
-
-    # DeepSeek Profile Assert
-    $cfg = Get-ClientConfiguration
-    if (-not $cfg.profiles.DeepSeek -or $cfg.profiles.DeepSeek.description -notmatch "DeepSeek V4 Flash") {
-        Add-Fail "DeepSeek profile missing or invalid"
-    } else {
-        Add-Pass "DEEPSEEK_PROFILE"
-    }
-
-    # Implement Phase Default Roles Assert
-    Set-RolesForPhase "implement"
-    $r1 = Get-NormalizedRole $cbCursorRole.Text
-    $r2 = Get-NormalizedRole $cbGeminiRole.Text
-    if (-not ($r1 -eq "review" -and $r2 -eq "review")) {
-        Add-Fail "implement phase default roles invalid ($r1, $r2)"
-    } else {
-        Add-Pass "IMPLEMENT_DEFAULT_ROLES"
-    }
-
-    # Gate Persistence & Implementation Scope Roundtrip Assert
-    $origScope = [string]$cbImplementMode.Text
-    $testScope = if ($origScope -match "Issue") { "Code" } else { "Submit GitHub Issues" }
-    for ($i = 0; $i -lt $cbImplementMode.Items.Count; $i++) {
-        if ([string]$cbImplementMode.Items[$i].Content -eq $testScope) {
-            $cbImplementMode.SelectedIndex = $i
-            break
+    finally {
+        $script:BlackboardPath = $origBoardPath
+        if (Test-Path $tempBoardDir) {
+            try {
+                if (Test-Path $tempBoardPath) { Remove-Item -Path $tempBoardPath -Force -ErrorAction SilentlyContinue }
+                Remove-Item -Path $tempBoardDir -Recurse -Force -ErrorAction SilentlyContinue
+            } catch {}
+        }
+        if ($origHash -and (Test-Path $origBoardPath)) {
+            $postHash = (Get-FileHash -Path $origBoardPath -Algorithm SHA256).Hash
+            if ($origHash -ne $postHash) {
+                Add-Fail "LIVE_BOARD_MUTATED: Live blackboard file was modified during headless test execution!"
+            } else {
+                Add-Pass "LIVE_BOARD_INTEGRITY_VERIFIED"
+            }
         }
     }
-    Set-ComboToRole $cbCursorRole "none"
-    Save-BlackboardContent
-    Load-BlackboardIntoUI
-    if ($chkGateSeat1.IsChecked -ne $false) { Add-Fail "GateSeat1 did not persist false for none role" } else { Add-Pass "GATE_PERSIST" }
-    if ([string]$cbImplementMode.Text -notmatch [regex]::Escape($testScope)) { Add-Fail "ImplementationScope did not roundtrip" } else { Add-Pass "SCOPE_ROUNDTRIP" }
-    Set-ComboToRole $cbCursorRole "review"
-    Set-ComboToRole $cbGeminiRole "review"
-    $chkGateSeat1.IsChecked = $true
-    $chkGateSeat2.IsChecked = $true
-    Save-BlackboardContent
-
-    # Auto Step L1-L3 Assert
-    $script:SuppressPhaseAutoAdvance = $true
-    try {
-        Set-AutoStepMode "L1"
-        if ((Get-AutoStepMode) -ne "L1") { Add-Fail "Set-AutoStepMode L1 failed" } else { Add-Pass "AUTOSTEP_L1_SET" }
-        $chkSignHuman.IsChecked = $true
-        $chkSignCursor.IsChecked = $false
-        $chkSignGemini.IsChecked = $false
-        if (-not (Test-RequiredSignoffsMet "L1")) { Add-Fail "L1 sign-off check failed with human signed" } else { Add-Pass "AUTOSTEP_L1_CHECK" }
-        if (Test-RequiredSignoffsMet "L2") { Add-Fail "L2 sign-off check should be false without Seat 1" } else { Add-Pass "AUTOSTEP_L2_CHECK_FALSE" }
-        $chkSignCursor.IsChecked = $true
-        if (-not (Test-RequiredSignoffsMet "L2")) { Add-Fail "L2 sign-off check failed with Seat 1 signed" } else { Add-Pass "AUTOSTEP_L2_CHECK_TRUE" }
-        if (Test-RequiredSignoffsMet "L3") { Add-Fail "L3 sign-off check should be false without Seat 2" } else { Add-Pass "AUTOSTEP_L3_CHECK_FALSE" }
-        $chkSignGemini.IsChecked = $true
-        if (-not (Test-RequiredSignoffsMet "L3")) { Add-Fail "L3 sign-off check failed with all signed" } else { Add-Pass "AUTOSTEP_L3_CHECK_TRUE" }
-    } finally {
-        $script:SuppressPhaseAutoAdvance = $false
-    }
-
-    # Kickoff Auto-Switch Assert
-    $chkAutoSwitchSeat.IsChecked = $true
-    $cbKickoffTarget.SelectedIndex = 0
-    Step-KickoffAutoSwitch
-    if ($cbKickoffTarget.SelectedIndex -ne 1) { Add-Fail "AutoSwitch did not switch 0 -> 1" } else { Add-Pass "AUTOSWITCH_0_TO_1" }
-    Step-KickoffAutoSwitch
-    if ($cbKickoffTarget.SelectedIndex -ne 0) { Add-Fail "AutoSwitch did not switch 1 -> 0" } else { Add-Pass "AUTOSWITCH_1_TO_0" }
-    $cbKickoffTarget.SelectedIndex = 2
-    Step-KickoffAutoSwitch
-    if ($cbKickoffTarget.SelectedIndex -ne 2) { Add-Fail "AutoSwitch modified Both (2)" } else { Add-Pass "AUTOSWITCH_BOTH_UNCHANGED" }
-
-    # Reconcile Auto Step Assert
-    Set-AutoStepMode "L3"
-    $txtBugs.Text = "**Disagreed**: headless check"
-    Enter-ReconcilePhase
-    if ((Get-PhaseString) -ne "reconcile") { Add-Fail "Auto Step did not open reconcile" } else { Add-Pass "RECONCILE" }
 
     if ($fails.Count -eq 0) { Add-Pass "ALL"; return 0 }
     Add-Fail ("count " + $fails.Count)

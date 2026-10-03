@@ -46,3 +46,8 @@ jobs:
               throw "PSScriptAnalyzer detected $($results.Count) error-level violations."
           }
           Write-Host "PSScriptAnalyzer passed with 0 errors." -ForegroundColor Green
+
+      - name: Run Blackboard UI Headless Tests
+        shell: pwsh
+        run: |
+          ./scripts/blackboard-ui-test.ps1
