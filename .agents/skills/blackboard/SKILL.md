@@ -12,6 +12,8 @@ Use this skill when collaborating via the ephemeral blackboard (`.ai/blackboard.
 2. **Canonical Board Only**: Target the live gitignored `.ai/blackboard.md` on the active working tree. **Never** write to `blackboard.example.md` (template), `.ai/history/*` (archives), or `.ai/saved/*` (snapshots). Verify GitHub Issue and Objective match the kickoff prompt before editing.
 3. **Ephemeral tape**: Never commit `.ai/blackboard.md` to git. Durable truth belongs in GitHub issues and documentation.
 4. **No shadow project boards**: Do **not** create extraneous tracking files (`TASKS.md`, `ARCHITECTURE.md`, `AI_COLLAB.md`).
+5. **Constructive Pushback**: You are allowed and encouraged to push back on technical, architectural, or safety risks proposed by the Human Lead or the other agent. Record full reasoning in your scratchpad first, and summarize in a single concise line in chat.
+6. **Results-Only Chat**: Keep chat responses short, focused on final outcomes and actions. Deep reasoning, tables, and working notes belong in `.ai/blackboard.md`.
 
 ## Standard Dual-Session Roles
 

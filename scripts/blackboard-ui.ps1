@@ -401,7 +401,15 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                 <CheckBox Name="chkShowAlignment" Content="Alignment" IsChecked="True" Foreground="#BAC2DE" Margin="0,0,6,0"/>
                 <CheckBox Name="chkShowNotes" Content="Notes" IsChecked="True" Foreground="#BAC2DE" Margin="0,0,6,0"/>
                 <CheckBox Name="chkShowResponses" Content="Responses" IsChecked="True" Foreground="#BAC2DE" Margin="0,0,6,0"/>
-                <CheckBox Name="chkAutoStep" Content="⚡ Auto Step" IsChecked="False" Foreground="#BAC2DE" VerticalAlignment="Center" Margin="0,0,8,0" ToolTip="Off by default. On: sign-offs advance one enabled phase. A disagreement jumps to reconcile and returns after sign-off. Roles stay as assigned."/>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,8,0">
+                    <TextBlock Text="⚡ Auto Step:" FontWeight="Bold" FontSize="11" Foreground="#BAC2DE" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                    <ComboBox Name="cbAutoStepMode" Width="130" SelectedIndex="0" ToolTip="Auto Step modes: Off (no auto-advance), L1 (Lead only), L2 (Lead + Seat 1), L3 (Lead + both seats).">
+                        <ComboBoxItem Content="Off" Tag="Off"/>
+                        <ComboBoxItem Content="L1 (Lead)" Tag="L1"/>
+                        <ComboBoxItem Content="L2 (Lead + Seat 1)" Tag="L2"/>
+                        <ComboBoxItem Content="L3 (Lead + Both)" Tag="L3"/>
+                    </ComboBox>
+                </StackPanel>
                 <Button Name="btnStats" Content="📊 Stats" Background="#313244" Foreground="#F9E2AF" Margin="0,0,8,0" Padding="8,3" ToolTip="Open the per-seat stats window"/>
                 <Button Name="btnUpdateController" Content="🔄 Update App" Background="#313244" Foreground="#89B4FA" Margin="0,0,4,0" Padding="8,3" FontWeight="SemiBold"/>
                 <Button Name="btnRelaunch" Content="⏭️ Relaunch" Background="#313244" Foreground="#BAC2DE" Margin="0,0,8,0" Padding="8,3"/>
@@ -676,6 +684,7 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                         <ComboBoxItem Name="cbiKickoffSeat2" Content="AI 2" Tag="Seat2"/>
                         <ComboBoxItem Name="cbiKickoffBoth" Content="Both" Tag="Both"/>
                     </ComboBox>
+                    <CheckBox Name="chkAutoSwitchSeat" Content="⇄ Auto-Switch" IsChecked="False" Foreground="#BAC2DE" VerticalAlignment="Center" Margin="0,0,6,0" ToolTip="When on, automatically switches kickoff target between Seat 1 and Seat 2 after each prompt copy/send. Inactive when target is Both."/>
                     <Button Name="btnCopyKickoffPrompt" Content="📋 Copy Prompt" Background="#89B4FA" Foreground="#11111B" FontWeight="Bold" Margin="0,0,4,0" ToolTip="Canonical handoff. Copy the kickoff prompt to the clipboard."/>
                     <Button Name="btnSendKickoffPrompt" Content="Send (best-effort)" Background="#313244" Foreground="#BAC2DE" Margin="0,0,6,0" ToolTip="Best-effort only. Focus and SendKeys can miss Electron chats. The prompt is also copied to the clipboard."/>
                     <CheckBox Name="chkNewChatKickoff" Content="New Chat" IsChecked="False" VerticalAlignment="Center" Margin="4,0,4,0" Foreground="#A6E3A1" ToolTip="Optional one-shot on Kickoff. Cursor uses Chat: New Chat; Antigravity uses Ctrl+Shift+I then Ctrl+Shift+L. Codex New Chat is unavailable (desktop app limitation; open new chat manually in Codex). Re-prompt never opens a new chat."/>
@@ -929,7 +938,8 @@ $cbGeminiRole          = $window.FindName("cbGeminiRole")
 $chkSignHuman          = $window.FindName("chkSignHuman")
 $chkSignCursor         = $window.FindName("chkSignCursor")
 $chkSignGemini         = $window.FindName("chkSignGemini")
-$chkAutoStep           = $window.FindName("chkAutoStep")
+$cbAutoStepMode        = $window.FindName("cbAutoStepMode")
+$chkAutoStep           = $null  # Legacy compatibility
 $txtIssueNum           = $window.FindName("txtIssueNum")
 $txtIssueTitle         = $window.FindName("txtIssueTitle")
 $btnFetchIssue         = $window.FindName("btnFetchIssue")
@@ -946,6 +956,7 @@ $cbPresets             = $window.FindName("cbPresets")
 $btnApplyPreset        = $window.FindName("btnApplyPreset")
 $txtGitStatusSummary   = $window.FindName("txtGitStatusSummary")
 $cbKickoffTarget       = $window.FindName("cbKickoffTarget")
+$chkAutoSwitchSeat     = $window.FindName("chkAutoSwitchSeat")
 $cbiKickoffSeat1       = $window.FindName("cbiKickoffSeat1")
 $cbiKickoffSeat2       = $window.FindName("cbiKickoffSeat2")
 $cbiKickoffBoth        = $window.FindName("cbiKickoffBoth")
@@ -1024,7 +1035,8 @@ function Get-ClientConfiguration {
             if (-not $obj.PSObject.Properties['boardSeats']) { $obj | Add-Member -NotePropertyName "boardSeats" -NotePropertyValue ([PSCustomObject]@{}) -Force }
             if (-not $obj.PSObject.Properties['tooltips']) { $obj | Add-Member -NotePropertyName "tooltips" -NotePropertyValue $true -Force }
             if (-not $obj.PSObject.Properties['audioCue']) { $obj | Add-Member -NotePropertyName "audioCue" -NotePropertyValue $false -Force }
-            if (-not $obj.PSObject.Properties['autoStep']) { $obj | Add-Member -NotePropertyName "autoStep" -NotePropertyValue $false -Force }
+            if (-not $obj.PSObject.Properties['autoStep']) { $obj | Add-Member -NotePropertyName "autoStep" -NotePropertyValue "Off" -Force }
+            if (-not $obj.PSObject.Properties['autoSwitchSeat']) { $obj | Add-Member -NotePropertyName "autoSwitchSeat" -NotePropertyValue $false -Force }
             if ($obj.profiles) {
                 if (-not $obj.profiles.PSObject.Properties['None']) {
                     $obj.profiles | Add-Member -NotePropertyName "None" -NotePropertyValue ([PSCustomObject]@{ process = ""; description = "Empty seat. Left out of kickoff and the sign-off gate." }) -Force
@@ -1157,14 +1169,15 @@ function Save-ClientConfiguration {
         if (-not $cfg) { $cfg = Get-ClientConfiguration }
 
         $propsToEnsure = @{
-            "seat1"        = $s1
-            "seat2"        = $s2
-            "boardPath"    = $script:BlackboardPath
-            "tooltips"     = $true
-            "audioCue"     = $false
-            "autoStep"     = $false
-            "recentBoards" = @()
-            "boardSeats"   = [PSCustomObject]@{}
+            "seat1"          = $s1
+            "seat2"          = $s2
+            "boardPath"      = $script:BlackboardPath
+            "tooltips"       = $true
+            "audioCue"       = $false
+            "autoStep"       = "Off"
+            "autoSwitchSeat" = $false
+            "recentBoards"   = @()
+            "boardSeats"     = [PSCustomObject]@{}
         }
         foreach ($propName in $propsToEnsure.Keys) {
             if (-not $cfg.PSObject.Properties[$propName]) {
@@ -1179,8 +1192,10 @@ function Save-ClientConfiguration {
         $cfg.tooltips = $tooltipsVal
         $audioCueVal = if ($chkAudioCue) { [bool]$chkAudioCue.IsChecked } elseif ($null -ne $cfg.audioCue) { [bool]$cfg.audioCue } else { $false }
         $cfg.audioCue = $audioCueVal
-        $autoStepVal = if ($chkAutoStep) { [bool]$chkAutoStep.IsChecked } elseif ($null -ne $cfg.autoStep) { [bool]$cfg.autoStep } else { $false }
+        $autoStepVal = Get-AutoStepMode
         $cfg.autoStep = $autoStepVal
+        $autoSwitchVal = if ($chkAutoSwitchSeat) { [bool]$chkAutoSwitchSeat.IsChecked } elseif ($null -ne $cfg.autoSwitchSeat) { [bool]$cfg.autoSwitchSeat } else { $false }
+        $cfg.autoSwitchSeat = $autoSwitchVal
 
         if ($script:BlackboardPath) {
             $resolvedPath = (Resolve-Path $script:BlackboardPath -ErrorAction SilentlyContinue).Path
@@ -1210,16 +1225,17 @@ function Save-ClientConfiguration {
         $cfg.recentBoards = $recent
         $script:ClientConfig = $cfg
         $exportObj = [PSCustomObject]@{
-            '$schema' = "https://json-schema.org/draft/2020-12/schema"
-            seat1 = $s1
-            seat2 = $s2
-            boardPath = $script:BlackboardPath
-            recentBoards = $recent
-            boardSeats = $cfg.boardSeats
-            tooltips = $tooltipsVal
-            audioCue = $audioCueVal
-            autoStep = $autoStepVal
-            profiles = $cfg.profiles
+            '$schema'      = "https://json-schema.org/draft/2020-12/schema"
+            seat1          = $s1
+            seat2          = $s2
+            boardPath      = $script:BlackboardPath
+            recentBoards   = $recent
+            boardSeats     = $cfg.boardSeats
+            tooltips       = $tooltipsVal
+            audioCue       = $audioCueVal
+            autoStep       = $autoStepVal
+            autoSwitchSeat = $autoSwitchVal
+            profiles       = $cfg.profiles
         }
         $dir = Split-Path $script:ClientsConfigPath -Parent
         if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
@@ -1228,6 +1244,44 @@ function Save-ClientConfiguration {
     } catch {
         if ($txtStatus) { $txtStatus.Text = "Config save error: $($_.Exception.Message)" }
         Write-Warning "Save-ClientConfiguration failed: $_"
+    }
+}
+
+function Get-AutoStepMode {
+    if ($cbAutoStepMode -and $cbAutoStepMode.SelectedItem) {
+        $item = $cbAutoStepMode.SelectedItem
+        if ($item -is [System.Windows.Controls.ComboBoxItem] -and $item.Tag) {
+            return [string]$item.Tag
+        }
+        $val = [string]$item
+        if ($val -match "^L[123]") { return ($val -replace '\s.*$', '') }
+        if ($val -match "^Off") { return "Off" }
+        return $val
+    }
+    if ($script:ClientConfig -and $script:ClientConfig.autoStep) {
+        $val = $script:ClientConfig.autoStep
+        if ($val -is [bool]) { return if ($val) { "L3" } else { "Off" } }
+        return [string]$val
+    }
+    return "Off"
+}
+
+function Set-AutoStepMode {
+    param([string]$Mode)
+    if (-not $cbAutoStepMode) { return }
+    $targetTag = switch -Regex ($Mode) {
+        "^L1" { "L1" }
+        "^L2" { "L2" }
+        "^L3" { "L3" }
+        default { "Off" }
+    }
+    for ($i = 0; $i -lt $cbAutoStepMode.Items.Count; $i++) {
+        $item = $cbAutoStepMode.Items[$i]
+        $tag = if ($item -is [System.Windows.Controls.ComboBoxItem] -and $item.Tag) { [string]$item.Tag } else { [string]$item }
+        if ($tag -eq $targetTag) {
+            $cbAutoStepMode.SelectedIndex = $i
+            break
+        }
     }
 }
 
@@ -1825,26 +1879,41 @@ if ($chkAudioCue) {
 
 function Update-PhaseSelectionLock {
     if ($cbPhase) {
-        $locked = ($chkAutoStep -and $chkAutoStep.IsChecked)
+        $locked = (Get-AutoStepMode) -ne "Off"
         $cbPhase.IsEnabled = -not $locked
     }
 }
 
-if ($chkAutoStep) {
-    $initialAutoStep = if ($script:ClientConfig -and $null -ne $script:ClientConfig.autoStep) { [bool]$script:ClientConfig.autoStep } else { $false }
-    $chkAutoStep.IsChecked = $initialAutoStep
-    $chkAutoStep.add_Checked({
+if ($cbAutoStepMode) {
+    $initialAutoStep = if ($script:ClientConfig -and $null -ne $script:ClientConfig.autoStep) {
+        if ($script:ClientConfig.autoStep -is [bool]) {
+            if ($script:ClientConfig.autoStep) { "L3" } else { "Off" }
+        } else {
+            [string]$script:ClientConfig.autoStep
+        }
+    } else { "Off" }
+    Set-AutoStepMode $initialAutoStep
+    $cbAutoStepMode.add_SelectionChanged({
         Save-ClientConfiguration
-        $txtStatus.Text = "Auto step on. Gated sign-offs advance one enabled phase badge. Manual phase selection is off."
-        Update-PhaseSelectionLock
-        Check-PhaseAutoAdvance
-    })
-    $chkAutoStep.add_Unchecked({
-        Save-ClientConfiguration
-        $txtStatus.Text = "Auto step off. You can change the phase."
-        Update-PhaseSelectionLock
+        $mode = Get-AutoStepMode
+        if ($mode -ne "Off") {
+            $txtStatus.Text = "Auto step $mode. Gated sign-offs advance one enabled phase badge. Manual phase selection is off."
+            Update-PhaseSelectionLock
+            Check-PhaseAutoAdvance
+        } else {
+            $txtStatus.Text = "Auto step off. You can change the phase."
+            Update-PhaseSelectionLock
+        }
     })
     Update-PhaseSelectionLock
+}
+
+if ($chkAutoSwitchSeat) {
+    $initialAutoSwitch = if ($script:ClientConfig -and $null -ne $script:ClientConfig.autoSwitchSeat) { [bool]$script:ClientConfig.autoSwitchSeat } else { $false }
+    $chkAutoSwitchSeat.IsChecked = $initialAutoSwitch
+    $chkAutoSwitchSeat.add_Click({
+        Save-ClientConfiguration
+    })
 }
 
 # Live Blackboard Text Viewer Window with Color/Diff Highlighting
@@ -3160,12 +3229,21 @@ function Test-SeatRequired {
 }
 
 function Test-RequiredSignoffsMet {
+    param([string]$Mode = "")
+    if ([string]::IsNullOrWhiteSpace($Mode)) {
+        $Mode = Get-AutoStepMode
+    }
+    if ($chkSignHuman -and -not $chkSignHuman.IsChecked) { return $false }
+    if ($Mode -eq "L1") { return $true }
+
     $seat1 = Get-Seat1Client
     $seat2 = Get-Seat2Client
     $need1 = Test-SeatRequired $cbCursorRole $seat1 $chkGateSeat1
     $need2 = Test-SeatRequired $cbGeminiRole $seat2 $chkGateSeat2
-    if ($chkSignHuman -and -not $chkSignHuman.IsChecked) { return $false }
+
     if ($need1 -and $chkSignCursor -and -not $chkSignCursor.IsChecked) { return $false }
+    if ($Mode -eq "L2") { return $true }
+
     if ($need2 -and $chkSignGemini -and -not $chkSignGemini.IsChecked) { return $false }
     return $true
 }
@@ -3211,13 +3289,14 @@ function Test-UnsafeObjective {
 
 function Check-PhaseAutoAdvance {
     if ($script:SuppressPhaseAutoAdvance) { return }
-    if ($chkAutoStep -and -not $chkAutoStep.IsChecked) { return }
+    $mode = Get-AutoStepMode
+    if ($mode -eq "Off") { return }
     $flow = Get-FlowControlString
     if ($flow -match "STOP|PAUSE") { return }
 
     if ($script:PhaseAdvanceGateLatched) { return }
 
-    if (-not (Test-RequiredSignoffsMet)) {
+    if (-not (Test-RequiredSignoffsMet -Mode $mode)) {
         return
     }
 
@@ -3321,7 +3400,7 @@ function Invoke-UnsignedTestRollback {
     $script:PendingUnsignedRollback = $false
     $phaseNow = Get-PhaseString
     if ($phaseNow -ne "test" -and $phaseNow -ne "closing") { return }
-    if ($chkAutoStep -and -not $chkAutoStep.IsChecked) { return }
+    if ((Get-AutoStepMode) -eq "Off") { return }
     $flow = Get-FlowControlString
     if ($flow -match "STOP|PAUSE") { return }
 
@@ -3568,7 +3647,7 @@ $cbPhase.add_SelectionChanged({
     if (-not $script:SuppressPresetSync) {
         Sync-PresetFromPhase (Get-PhaseString)
     }
-    if (-not $script:SuppressRoleDefault -and $chkAutoStep -and -not $chkAutoStep.IsChecked) {
+    if (-not $script:SuppressRoleDefault -and (Get-AutoStepMode) -eq "Off") {
         Set-RolesForPhase (Get-PhaseString)
     }
     if (-not $script:SuppressAutoAdvanceLatchReset) {
@@ -4490,7 +4569,7 @@ function Test-DisagreementText {
 
 function Enter-ReconcilePhase {
     if ($script:SuppressPhaseAutoAdvance) { return }
-    if ($chkAutoStep -and -not $chkAutoStep.IsChecked) { return }
+    if ((Get-AutoStepMode) -eq "Off") { return }
     $flow = Get-FlowControlString
     if ($flow -match "STOP|PAUSE") { return }
     $cur = Get-PhaseString
@@ -5027,6 +5106,15 @@ if ($btnApplyPreset) {
 }
 
 # Kickoff Prompt Target & Button Handlers
+function Step-KickoffAutoSwitch {
+    if (-not $chkAutoSwitchSeat -or -not $chkAutoSwitchSeat.IsChecked -or -not $cbKickoffTarget) { return }
+    if ($cbKickoffTarget.SelectedIndex -eq 0) {
+        $cbKickoffTarget.SelectedIndex = 1
+    } elseif ($cbKickoffTarget.SelectedIndex -eq 1) {
+        $cbKickoffTarget.SelectedIndex = 0
+    }
+}
+
 function Invoke-CopyKickoffPrompt {
     if ($script:DiskScriptIsNewer) {
         if ($txtStatus) { $txtStatus.Text = "🔒 Controller script on disk is newer. Please click 'Relaunch' before prompting." }
@@ -5052,6 +5140,7 @@ function Invoke-CopyKickoffPrompt {
                 Safe-SetClipboard $kPrompt
                 Add-SeatStat -seat $s1 -field "promptsCopied"
                 $txtStatus.Text = "📋 Copied $s1 Kickoff Prompt (" + $cbCursorRole.Text + ") to clipboard."
+                Step-KickoffAutoSwitch
             }
             "Seat2" {
                 if (Test-RoleNone $cbGeminiRole.Text) {
@@ -5062,6 +5151,7 @@ function Invoke-CopyKickoffPrompt {
                 Safe-SetClipboard $kPrompt
                 Add-SeatStat -seat $s2 -field "promptsCopied"
                 $txtStatus.Text = "📋 Copied $s2 Kickoff Prompt (" + $cbGeminiRole.Text + ") to clipboard."
+                Step-KickoffAutoSwitch
             }
             default {
                 $skip1 = Test-RoleNone $cbCursorRole.Text
@@ -5125,6 +5215,7 @@ function Invoke-SendKickoffPrompt {
                 } else {
                     $txtStatus.Text = if ($doNew) { "⚠️ No new $s1 chat was confirmed; kickoff was not sent and New Chat remains armed." } else { "📋 Copied $s1 Kickoff to clipboard (IDE window not found). Focus $s1 and paste." }
                 }
+                Step-KickoffAutoSwitch
             }
             "Seat2" {
                 if (Test-RoleNone $cbGeminiRole.Text) {
@@ -5140,6 +5231,7 @@ function Invoke-SendKickoffPrompt {
                 } else {
                     $txtStatus.Text = if ($doNew) { "⚠️ No new $s2 chat was confirmed; kickoff was not sent and New Chat remains armed." } else { "📋 Copied $s2 Kickoff to clipboard (IDE window not found). Focus $s2 and paste." }
                 }
+                Step-KickoffAutoSwitch
             }
             default {
                 $skip1 = Test-RoleNone $cbCursorRole.Text
@@ -5656,7 +5748,7 @@ function Load-BlackboardIntoUI {
                 $script:ActiveTurnOverride = $null
             } else {
                 $turnChanged = $false
-                $autoOn = -not ($chkAutoStep -and -not $chkAutoStep.IsChecked)
+                $autoOn = (Get-AutoStepMode) -ne "Off"
                 $flowNow = Get-FlowControlString
                 if ($newCursorPad -ne $script:LastCursorPad -and $newCursorPad -notmatch "(?i)^-\s*\((?:$s1Esc|Cursor|Agent\s*1|AI\s*1)\s+(?:updates?|scratchpad)" -and $newCursorPad.Trim()) {
                     $script:LastCursorPad = $newCursorPad
@@ -5822,6 +5914,7 @@ if (-not $HeadlessTest) { Start-StartupUpdateCheck }
 function Invoke-HeadlessUiTest {
     $fails = New-Object System.Collections.Generic.List[string]
     $log = Join-Path $env:TEMP "blackboard-ui-test-last.txt"
+    try { [System.IO.File]::WriteAllText($log, "") } catch {}
     function Add-Fail([string]$msg) { [void]$fails.Add($msg); Add-Content $log "FAIL $msg"; Write-Output "FAIL $msg" }
     function Add-Pass([string]$msg) { Add-Content $log "PASS $msg"; Write-Output "PASS $msg" }
     $fixture = @"
@@ -5870,12 +5963,82 @@ function Invoke-HeadlessUiTest {
     }
 
     $txtItemCode.Text = "CUR1"
+    $script:LastCursorPad = "- CUR1 test suggestion"
     $btnPromoteCode.RaiseEvent((New-Object System.Windows.RoutedEventArgs ([System.Windows.Controls.Primitives.ButtonBase]::ClickEvent)))
     if ($txtAlignment.Text -notmatch 'CUR1') { Add-Fail "Promote did not add CUR1" } else { Add-Pass "PROMOTE" }
     $btnDemoteCode.RaiseEvent((New-Object System.Windows.RoutedEventArgs ([System.Windows.Controls.Primitives.ButtonBase]::ClickEvent)))
     if ($txtAlignment.Text -match 'CUR1') { Add-Fail "Demote left CUR1 in Alignment" } else { Add-Pass "DEMOTE" }
 
-    if ($chkAutoStep) { $chkAutoStep.IsChecked = $true }
+    # DeepSeek Profile Assert
+    $cfg = Get-ClientConfiguration
+    if (-not $cfg.profiles.DeepSeek -or $cfg.profiles.DeepSeek.description -notmatch "DeepSeek V4 Flash") {
+        Add-Fail "DeepSeek profile missing or invalid"
+    } else {
+        Add-Pass "DEEPSEEK_PROFILE"
+    }
+
+    # Implement Phase Default Roles Assert
+    Set-RolesForPhase "implement"
+    $r1 = Get-NormalizedRole $cbCursorRole.Text
+    $r2 = Get-NormalizedRole $cbGeminiRole.Text
+    if (-not ($r1 -eq "review" -and $r2 -eq "review")) {
+        Add-Fail "implement phase default roles invalid ($r1, $r2)"
+    } else {
+        Add-Pass "IMPLEMENT_DEFAULT_ROLES"
+    }
+
+    # Gate Persistence & Implementation Scope Roundtrip Assert
+    $origScope = [string]$cbImplementMode.Text
+    $testScope = if ($origScope -match "Issue") { "Code" } else { "Submit GitHub Issues" }
+    for ($i = 0; $i -lt $cbImplementMode.Items.Count; $i++) {
+        if ([string]$cbImplementMode.Items[$i].Content -eq $testScope) {
+            $cbImplementMode.SelectedIndex = $i
+            break
+        }
+    }
+    Set-ComboToRole $cbCursorRole "none"
+    Save-BlackboardContent
+    Load-BlackboardIntoUI
+    if ($chkGateSeat1.IsChecked -ne $false) { Add-Fail "GateSeat1 did not persist false for none role" } else { Add-Pass "GATE_PERSIST" }
+    if ([string]$cbImplementMode.Text -notmatch [regex]::Escape($testScope)) { Add-Fail "ImplementationScope did not roundtrip" } else { Add-Pass "SCOPE_ROUNDTRIP" }
+    Set-ComboToRole $cbCursorRole "review"
+    Set-ComboToRole $cbGeminiRole "review"
+    $chkGateSeat1.IsChecked = $true
+    $chkGateSeat2.IsChecked = $true
+    Save-BlackboardContent
+
+    # Auto Step L1-L3 Assert
+    $script:SuppressPhaseAutoAdvance = $true
+    try {
+        Set-AutoStepMode "L1"
+        if ((Get-AutoStepMode) -ne "L1") { Add-Fail "Set-AutoStepMode L1 failed" } else { Add-Pass "AUTOSTEP_L1_SET" }
+        $chkSignHuman.IsChecked = $true
+        $chkSignCursor.IsChecked = $false
+        $chkSignGemini.IsChecked = $false
+        if (-not (Test-RequiredSignoffsMet "L1")) { Add-Fail "L1 sign-off check failed with human signed" } else { Add-Pass "AUTOSTEP_L1_CHECK" }
+        if (Test-RequiredSignoffsMet "L2") { Add-Fail "L2 sign-off check should be false without Seat 1" } else { Add-Pass "AUTOSTEP_L2_CHECK_FALSE" }
+        $chkSignCursor.IsChecked = $true
+        if (-not (Test-RequiredSignoffsMet "L2")) { Add-Fail "L2 sign-off check failed with Seat 1 signed" } else { Add-Pass "AUTOSTEP_L2_CHECK_TRUE" }
+        if (Test-RequiredSignoffsMet "L3") { Add-Fail "L3 sign-off check should be false without Seat 2" } else { Add-Pass "AUTOSTEP_L3_CHECK_FALSE" }
+        $chkSignGemini.IsChecked = $true
+        if (-not (Test-RequiredSignoffsMet "L3")) { Add-Fail "L3 sign-off check failed with all signed" } else { Add-Pass "AUTOSTEP_L3_CHECK_TRUE" }
+    } finally {
+        $script:SuppressPhaseAutoAdvance = $false
+    }
+
+    # Kickoff Auto-Switch Assert
+    $chkAutoSwitchSeat.IsChecked = $true
+    $cbKickoffTarget.SelectedIndex = 0
+    Step-KickoffAutoSwitch
+    if ($cbKickoffTarget.SelectedIndex -ne 1) { Add-Fail "AutoSwitch did not switch 0 -> 1" } else { Add-Pass "AUTOSWITCH_0_TO_1" }
+    Step-KickoffAutoSwitch
+    if ($cbKickoffTarget.SelectedIndex -ne 0) { Add-Fail "AutoSwitch did not switch 1 -> 0" } else { Add-Pass "AUTOSWITCH_1_TO_0" }
+    $cbKickoffTarget.SelectedIndex = 2
+    Step-KickoffAutoSwitch
+    if ($cbKickoffTarget.SelectedIndex -ne 2) { Add-Fail "AutoSwitch modified Both (2)" } else { Add-Pass "AUTOSWITCH_BOTH_UNCHANGED" }
+
+    # Reconcile Auto Step Assert
+    Set-AutoStepMode "L3"
     $txtBugs.Text = "**Disagreed**: headless check"
     Enter-ReconcilePhase
     if ((Get-PhaseString) -ne "reconcile") { Add-Fail "Auto Step did not open reconcile" } else { Add-Pass "RECONCILE" }

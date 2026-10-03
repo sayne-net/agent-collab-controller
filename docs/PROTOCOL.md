@@ -49,7 +49,7 @@ Install the controller once (for example `$HOME/agent-collab-controller`). Launc
 
 ### Phase Progression Ladder
 
-Phases are status badges. They do not assign seat roles. **Auto Step** is off unless the operator turns it on. When it is on, three sign-offs advance the badge one step and leave the role dropdowns alone. The operator, or a workflow preset the operator selects, sets roles. Pitch still forces both seats to `advise`. At most one seat may be `implement`.
+Phases are status badges. They do not assign seat roles. **Auto Step** mode defaults to `Off`. When active, gated sign-offs advance the badge one step and leave the role dropdowns alone. The operator, or a workflow preset the operator selects, sets roles. Pitch still forces both seats to `advise`. At most one seat may be `implement`.
 
 The phase combo is:
 
@@ -58,15 +58,40 @@ The phase combo is:
 `debrief` returns to `ready` when that badge advances. `plan`, `review`, and `closing` are real badges, not aliases of the shorter pitch/discuss/implement/test list.
 
 1. **Pitch**: Agents suggest options without touching code. Both seats are `advise`.
-2. **Discuss**: Agents debate trade-offs. Consensus lines can promote to Alignment.
+2. **Discuss**: Agents debate trade-offs. Consensus lines can promote to Alignment before exiting discuss.
 3. **Plan**: Architecture notes. Roles stay as the operator set them.
 4. **Implement**: Entering implement defaults both seats to `review`; Human Lead assigns the implementer. Exactly one agent writes code. The other reviews, advises, or idles.
-5. **Review** and **Test**: Verification notes. Roles are not rewritten when the badge changes.
+5. **Review** and **Test**: Verification notes. Roles are not rewritten when the badge changes. In test phase, implementer sign-off is gated on `pwsh .\scripts\blackboard-ui-test.ps1` printing `PASS`.
 6. **Closing** and **Debrief**: Human Lead uses **Close Project** to audit the **target** repo, confirm tracked files, and optionally push. Secrets and `.ai/` are refused. Push waits until refused paths are gone. Snapshots stay in that repo's `.ai/history/`.
 
-### Phase Sign-Off & Advancement
+### Auto Step Modes & Sign-Off Advancement
 
-- Each phase uses the three sign-off checkboxes (`Human`, `AI 1`, `AI 2`). A scratchpad counts as signed off only when the latest top-level note says `Sign-off: [x]`. Older `[x]` lines in that pad do not carry into the next phase.
-- When all 3 participants mark sign-off complete (`[x]`) while Flow Control is `🟢 GO` and **Auto Step** is on, the controller clears the checkboxes, saves them unchecked, and auto-advances one phase badge without changing roles. Auto Step sits next to the three sign-off boxes and defaults to off. When it is off, the phase stays where it is. A new latest scratchpad note that says `Sign-off: [x]` checks that seat even when the role table is still `[ ]`. A note already present at the last auto-advance does not check it again. Loading the board does not auto-advance unless that new sign-off arrived.
-- Unchecking a box never moves backward. Auto-advance is blocked during `🟡 PAUSE` or `🔴 ALL STOP`.
-- Intermediate advances do not commit or push git; final shipping remains safely on the **Close Project** button.
+Auto Step supports four modes via the header dropdown (`cbAutoStepMode`):
+- `Off`: Auto-advance is disabled. Phase selection remains fully manual.
+- `L1 (Lead)`: Advances the phase badge when Human (Lead) sign-off is checked.
+- `L2 (Lead + Seat 1)`: Advances when Human Lead and Seat 1 (if active/gated) sign-offs are checked.
+- `L3 (Lead + Both)`: Advances when Human Lead and both active/gated seats are checked.
+
+Each phase uses the sign-off checkboxes (`Human`, `AI 1`, `AI 2`). A scratchpad counts as signed off only when the latest top-level note says `Sign-off: [x]`. Older `[x]` lines in that pad do not carry into the next phase.
+
+When required sign-offs for the active Auto Step mode are complete while Flow Control is `🟢 GO`, the controller clears the checkboxes, saves them unchecked, and auto-advances one phase badge without changing roles.
+
+Unchecking a box never moves backward. Auto-advance is blocked during `🟡 PAUSE` or `🔴 ALL STOP`.
+Intermediate advances do not commit or push git; final shipping remains safely on the **Close Project** button.
+
+### Kickoff Auto-Switch
+
+The Kickoff panel includes an **⇄ Auto-Switch** checkbox (`chkAutoSwitchSeat`, default off). When enabled, successfully copying or sending a prompt to `Seat 1` automatically flips the target dropdown to `Seat 2`, and vice versa. When the target is set to `Both`, Auto-Switch remains inactive.
+
+### Pushback & Chat Brevity
+
+1. **Constructive Pushback**: Agents are permitted to push back against the Lead when technical correctness or project safety is at stake. Put the full argument and justification into your scratchpad note first, then output at most one concise line in chat summarizing the pushback.
+2. **Chat Brevity**: Chat responses must remain concise results only (status, key findings, or one-line pushback). All detailed proposals, tables, code snippets, and analysis belong in the blackboard scratchpad.
+
+### Automated UI & Workflow Verification
+
+Run the headless verification suite:
+```powershell
+pwsh .\scripts\blackboard-ui-test.ps1
+```
+This tests Alignment item code extraction, prompt roundtrips, F5 / Refresh disk reloading, DeepSeek profile integration, default phase role assignments, gate persistence, Implementation Scope roundtrip, Auto Step modes L1–L3, Kickoff Auto-Switch, and reconcile auto-transitions. Implementer sign-off is gated on this command printing `PASS`.
