@@ -1,7 +1,8 @@
 # AI Collab Controller (WPF UI)
-# Version 1.5.6
+# Version 1.5.7
 # Standalone dual-session controller for multi-agent collaboration with human-in-the-loop steering.
 # SemVer tracks protocol and feature releases. Do not bump the patch on every local edit.
+# 1.5.7: single-issue objective input box with HUMn codes, retain objective in debrief, DeepSeek Harness profile, strict 3-signoff close.
 # 1.5.6: kickoff and re-prompt no longer paste scratchpad excerpts or repeat the scratchpad rule.
 # 1.5.5: last-response panes show the whole scratchpad, not the first bold bullet.
 # 1.5.4: headless UI test for Refresh, F5, Promote, Demote, reconcile, and control round-trip.
@@ -17,7 +18,7 @@ $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
 
-$script:AppVersion = "v1.5.6"
+$script:AppVersion = "v1.5.7"
 $script:EnabledPhases = @("pitch","discuss","plan","implement","review","test","closing","debrief")
 $script:UnsignedRollbackStreak = 0
 $script:LastImplementerSeat = $null
@@ -559,10 +560,19 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
                     <TextBlock Grid.Row="0" Text="📝 CURRENT OBJECTIVE &amp; PROMPT" FontWeight="Bold" FontSize="11" Foreground="#89B4FA" Margin="0,0,0,6"/>
-                    <TextBox Name="txtPrompt" Grid.Row="1" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
+                    <Grid Grid.Row="1" Margin="0,0,0,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBox Name="txtNewObjectiveItem" Grid.Column="0" ToolTip="Enter a single objective/issue to append as next HUMn item" Height="24" Padding="4,2" Margin="0,0,4,0"/>
+                        <Button Name="btnSubmitObjectiveItem" Grid.Column="1" Content="➕ Add" Background="#313244" Foreground="#89B4FA" FontWeight="SemiBold" Padding="8,2" FontSize="10" ToolTip="Append issue to Current Objective with next HUMn code"/>
+                    </Grid>
+                    <TextBox Name="txtPrompt" Grid.Row="2" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
                              MinHeight="64" VerticalAlignment="Stretch"
                              Text="Implement proposed quality-of-life and automation enhancements to the Dual-Session Blackboard Controller."/>
                 </Grid>
@@ -946,6 +956,8 @@ $txtIssueTitle         = $window.FindName("txtIssueTitle")
 $btnFetchIssue         = $window.FindName("btnFetchIssue")
 $btnNewIssue           = $window.FindName("btnNewIssue")
 $txtPrompt             = $window.FindName("txtPrompt")
+$txtNewObjectiveItem    = $window.FindName("txtNewObjectiveItem")
+$btnSubmitObjectiveItem = $window.FindName("btnSubmitObjectiveItem")
 $txtAlignment          = $window.FindName("txtAlignment")
 $txtHumanNotes         = $window.FindName("txtHumanNotes")
 $chkEnableTooltips     = $window.FindName("chkEnableTooltips")
@@ -1024,7 +1036,7 @@ function Get-ClientConfiguration {
             "VS Code" = [PSCustomObject]@{ process = "Code"; description = "VS Code / GitHub Copilot" }
             "Terminal" = [PSCustomObject]@{ process = "WindowsTerminal"; description = "Windows Terminal (Claude Code, Aider, CLI)" }
             "Codex" = [PSCustomObject]@{ process = "ChatGPT"; description = "OpenAI Codex in the ChatGPT desktop app" }
-            "DeepSeek" = [PSCustomObject]@{ process = "harness"; description = "DeepSeek V4 Flash (DeepSeek Harness IDE)" }
+            "DeepSeek" = [PSCustomObject]@{ process = "DeepSeek Harness"; description = "DeepSeek V4 Flash (DeepSeek Harness IDE)" }
             "None" = [PSCustomObject]@{ process = ""; description = "Empty seat. Left out of kickoff and the sign-off gate." }
         }
     }
@@ -1046,9 +1058,9 @@ function Get-ClientConfiguration {
                     $obj.profiles | Add-Member -NotePropertyName "Codex" -NotePropertyValue ([PSCustomObject]@{ process = "ChatGPT"; description = "OpenAI Codex in the ChatGPT desktop app" }) -Force
                 }
                 if (-not $obj.profiles.PSObject.Properties['DeepSeek']) {
-                    $obj.profiles | Add-Member -NotePropertyName "DeepSeek" -NotePropertyValue ([PSCustomObject]@{ process = "harness"; description = "DeepSeek V4 Flash (DeepSeek Harness IDE)" }) -Force
-                } elseif (-not $obj.profiles.DeepSeek.process) {
-                    $obj.profiles.DeepSeek.process = "harness"
+                    $obj.profiles | Add-Member -NotePropertyName "DeepSeek" -NotePropertyValue ([PSCustomObject]@{ process = "DeepSeek Harness"; description = "DeepSeek V4 Flash (DeepSeek Harness IDE)" }) -Force
+                } elseif (-not $obj.profiles.DeepSeek.process -or $obj.profiles.DeepSeek.process -eq "harness") {
+                    $obj.profiles.DeepSeek.process = "DeepSeek Harness"
                 }
                 if ($obj.profiles.PSObject.Properties['ChatGPT']) {
                     $obj.profiles.PSObject.Properties.Remove('ChatGPT')
@@ -1120,6 +1132,8 @@ $script:MasterTooltips = @{
 
     # Prompt, Alignment & Steering Notes
     "txtPrompt"            = "Enter primary task objective, requirements, and acceptance criteria"
+    "txtNewObjectiveItem"  = "Enter a single objective issue or task to append as next sequential HUMn item"
+    "btnSubmitObjectiveItem" = "Append single issue to Current Objective with next sequential HUMn item code"
     "txtAlignment"         = "Key design rules, architectural constraints, and agreed decisions"
     "txtHumanNotes"        = "Active steering notes and directives from the Human Lead"
     "btnPromoteNotes"      = "Draft a Prompt from these steering notes (appends to Current Objective)"
@@ -3991,6 +4005,22 @@ function Invoke-CloseProjectWorkflow {
     $allSigned = ($signHuman -and $signCursor -and $signGemini) -or $script:ClosingSignoffsCompleted
     $phaseNow = Get-PhaseString
 
+    $s1 = Get-Seat1Client
+    $s2 = Get-Seat2Client
+
+    if (-not $allSigned) {
+        if ($promptConfirm) {
+            [System.Windows.MessageBox]::Show(
+                "Cannot close project: All three participant sign-offs (Human, $s1, $s2) must be checked ([x]).`n`nPlease ensure all sign-offs are completed before closing.",
+                "Sign-offs Incomplete",
+                [System.Windows.MessageBoxButton]::OK,
+                [System.Windows.MessageBoxImage]::Warning
+            ) | Out-Null
+        }
+        if ($txtStatus) { $txtStatus.Text = "Close Project blocked: Human, $s1, and $s2 sign-offs must all be checked." }
+        return $false
+    }
+
     if ($promptConfirm) {
         if ($phaseNow -ne "test" -and $phaseNow -ne "closing" -and $phaseNow -ne "debrief" -and $phaseNow -ne "ready" -and $phaseNow -ne "closed") {
             $testWarn = [System.Windows.MessageBox]::Show(
@@ -4004,14 +4034,7 @@ function Invoke-CloseProjectWorkflow {
             }
         }
 
-        $s1 = Get-Seat1Client
-        $s2 = Get-Seat2Client
-        $confirmMsg = if ($allSigned) {
-            "All participants (Human, $s1, $s2) have signed off.`n`nClose this project, archive session history, and reset board to idle?"
-        } else {
-            "Not all sign-offs are complete.`n`nAre you sure you want to close and archive this project anyway?"
-        }
-
+        $confirmMsg = "All participants (Human, $s1, $s2) have signed off.`n`nClose this project, archive session history, and reset board to idle?"
         $result = [System.Windows.MessageBox]::Show($confirmMsg, "Close Project", [System.Windows.MessageBoxButton]::YesNo, [System.Windows.MessageBoxImage]::Question)
         if ($result -ne [System.Windows.MessageBoxResult]::Yes) {
             return $false
@@ -4080,7 +4103,7 @@ function Get-RoleGuidance {
         return "This project/objective is READY. All sign-offs complete. Hold IDLE. Do not modify files or execute tasks unless a new active objective is assigned."
     }
     if ($phase -eq "debrief") {
-        return "Project phase is DEBRIEF. Answer these four items for this run: Did we complete the mission? Give a short grade for yourself and for the other occupied seat. What would you do differently? Give one suggestion covering the process, the work, and the rules. Do not modify tracked files. Sign off after the Human Lead."
+        return "Project phase is DEBRIEF. Retain objective text on the board until debrief answers are written. Answer these four items for this run: Did we complete the mission? Give a short grade for yourself and for the other occupied seat. What would you do differently? Give suggestions covering the process, the work, and the rules (unbounded list with at least one Process, one Work, and one Rules line). Do not modify tracked files. Sign off after the Human Lead."
     }
     if ($phase -eq "reconcile") {
         return "Project phase is RECONCILE. The human advances one occupied seat at a time. The seat that disagreed goes first and states why. Each occupied seat has five turns, not five shared. If it is still open after those turns, the human makes the call. Reconcile ends when every occupied seat and the human have signed off. Do not modify tracked files."
@@ -4660,6 +4683,39 @@ function Find-SuggestionLineByCode {
     return ""
 }
 
+function Invoke-SubmitObjectiveItem {
+    if (-not $txtNewObjectiveItem) { return }
+    $text = $txtNewObjectiveItem.Text
+    if ([string]::IsNullOrWhiteSpace($text)) { return }
+    
+    $max = 0
+    $allText = ""
+    if ($txtPrompt) { $allText += "$($txtPrompt.Text)`n" }
+    if ($txtAlignment) { $allText += "$($txtAlignment.Text)`n" }
+    if ($txtHumanNotes) { $allText += "$($txtHumanNotes.Text)`n" }
+    if ($script:LastCursorPad) { $allText += "$($script:LastCursorPad)`n" }
+    if ($script:LastGeminiPad) { $allText += "$($script:LastGeminiPad)`n" }
+    $codeMatches = [regex]::Matches($allText, '(?i)\bHUM-?(\d+)\b')
+    foreach ($m in $codeMatches) {
+        $num = [int]$m.Groups[1].Value
+        if ($num -gt $max) { $max = $num }
+    }
+    $nextCode = "HUM$($max + 1)"
+    $line = "$($nextCode): $($text.Trim())"
+    
+    if ($txtPrompt) {
+        if ([string]::IsNullOrWhiteSpace($txtPrompt.Text)) {
+            $txtPrompt.Text = $line
+        } else {
+            $txtPrompt.Text = "$($txtPrompt.Text.TrimEnd())`r`n$line"
+        }
+    }
+    $txtNewObjectiveItem.Text = ""
+    Mark-FormDirty
+    Save-BlackboardContent
+    if ($txtStatus) { $txtStatus.Text = "Added objective item $nextCode." }
+}
+
 function Invoke-PromoteItemCode {
     $code = Get-ItemCodeToken $(if ($txtItemCode) { $txtItemCode.Text } else { "" })
     if (-not $code) {
@@ -5170,6 +5226,16 @@ function Apply-SelectedWorkflowPreset {
 }
 
 if ($btnStats) { $btnStats.add_Click({ Show-StatsWindow }) }
+if ($btnSubmitObjectiveItem) { $btnSubmitObjectiveItem.add_Click({ Invoke-SubmitObjectiveItem }) }
+if ($txtNewObjectiveItem) {
+    $txtNewObjectiveItem.add_KeyDown({
+        param($s, $e)
+        if ($e.Key -eq [System.Windows.Input.Key]::Enter) {
+            Invoke-SubmitObjectiveItem
+            $e.Handled = $true
+        }
+    })
+}
 if ($btnPromoteCode) { $btnPromoteCode.add_Click({ Invoke-PromoteItemCode }) }
 if ($btnDemoteCode) { $btnDemoteCode.add_Click({ Invoke-DemoteItemCode }) }
 Register-ItemCodeClick $rtbCursorLast
@@ -6095,11 +6161,27 @@ function Invoke-HeadlessUiTest {
 
         # DeepSeek Profile Assert
         $cfg = Get-ClientConfiguration
-        if (-not $cfg.profiles.DeepSeek -or $cfg.profiles.DeepSeek.description -notmatch "DeepSeek V4 Flash" -or $cfg.profiles.DeepSeek.process -ne "harness") {
+        if (-not $cfg.profiles.DeepSeek -or $cfg.profiles.DeepSeek.description -notmatch "DeepSeek V4 Flash" -or $cfg.profiles.DeepSeek.process -ne "DeepSeek Harness") {
             Add-Fail "DeepSeek profile missing or invalid"
         } else {
             Add-Pass "DEEPSEEK_PROFILE"
         }
+
+        # Objective Submit & Item Code Generation Assert
+        $txtPrompt.Text = ""
+        $txtNewObjectiveItem.Text = "First human issue"
+        $btnSubmitObjectiveItem.RaiseEvent((New-Object System.Windows.RoutedEventArgs ([System.Windows.Controls.Primitives.ButtonBase]::ClickEvent)))
+        if ($txtPrompt.Text -notmatch 'HUM1:\s*First human issue') { Add-Fail "Objective submit did not add HUM1" } else { Add-Pass "OBJ_SUBMIT_1" }
+        $txtNewObjectiveItem.Text = "Second human issue"
+        $btnSubmitObjectiveItem.RaiseEvent((New-Object System.Windows.RoutedEventArgs ([System.Windows.Controls.Primitives.ButtonBase]::ClickEvent)))
+        if ($txtPrompt.Text -notmatch 'HUM2:\s*Second human issue') { Add-Fail "Objective submit did not add HUM2" } else { Add-Pass "OBJ_SUBMIT_2" }
+
+        # Close Project 3-Signoff Guard Assert
+        $chkSignHuman.IsChecked = $false
+        $chkSignCursor.IsChecked = $true
+        $chkSignGemini.IsChecked = $true
+        $closeRes = Invoke-CloseProjectWorkflow -promptConfirm $false
+        if ($closeRes -ne $false) { Add-Fail "Close Project permitted close without all 3 sign-offs" } else { Add-Pass "CLOSE_3SIGNOFF_GUARD" }
 
         # Implement Phase Default Roles Assert
         Set-RolesForPhase "implement"
