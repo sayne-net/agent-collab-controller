@@ -98,7 +98,7 @@ if ($Preset) {
             $currentFlow = "$([char]::ConvertFromUtf32(0x1F7E2)) GO"
         }
         'implement' {
-            $currentAgent1 = 'implement'
+            $currentAgent1 = 'review'
             $currentAgent2 = 'review'
             $currentPhase = 'implement'
             $currentFlow = "$([char]::ConvertFromUtf32(0x1F7E2)) GO"
@@ -147,7 +147,7 @@ if ($Promote) {
     if ($currentAlign) {
         $currentPrompt = "Promoted Alignment Decision:" + [Environment]::NewLine + $currentAlign
         $currentPhase = 'implement'
-        $currentAgent1 = 'implement'
+        $currentAgent1 = 'review'
         $currentAgent2 = 'review'
         $currentFlow = "$([char]::ConvertFromUtf32(0x1F7E2)) GO"
         $currentHuman = '- Active steering notes.'

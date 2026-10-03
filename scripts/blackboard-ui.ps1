@@ -476,7 +476,7 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                 </StackPanel>
 
                 <StackPanel Grid.Column="1" Margin="6,0" VerticalAlignment="Center">
-                    <TextBlock Text="Implementation Task" FontWeight="Bold" FontSize="11" Foreground="#CBA6F7" Margin="0,0,0,4"/>
+                    <TextBlock Text="Implementation Scope" FontWeight="Bold" FontSize="11" Foreground="#CBA6F7" Margin="0,0,0,4"/>
                     <ComboBox Name="cbImplementMode" Width="160" SelectedIndex="0">
                         <ComboBoxItem Content="Code" ToolTip="Edits tracked files in the target repo."/>
                         <ComboBoxItem Content="Submit GitHub Issues" ToolTip="Files GitHub issues and does not edit tracked files."/>
@@ -1012,6 +1012,7 @@ function Get-ClientConfiguration {
             "VS Code" = [PSCustomObject]@{ process = "Code"; description = "VS Code / GitHub Copilot" }
             "Terminal" = [PSCustomObject]@{ process = "WindowsTerminal"; description = "Windows Terminal (Claude Code, Aider, CLI)" }
             "Codex" = [PSCustomObject]@{ process = "ChatGPT"; description = "OpenAI Codex in the ChatGPT desktop app" }
+            "DeepSeek" = [PSCustomObject]@{ process = ""; description = "DeepSeek V4 Flash (DeepSeek Harness IDE)" }
             "None" = [PSCustomObject]@{ process = ""; description = "Empty seat. Left out of kickoff and the sign-off gate." }
         }
     }
@@ -1030,6 +1031,9 @@ function Get-ClientConfiguration {
                 }
                 if (-not $obj.profiles.PSObject.Properties['Codex']) {
                     $obj.profiles | Add-Member -NotePropertyName "Codex" -NotePropertyValue ([PSCustomObject]@{ process = "ChatGPT"; description = "OpenAI Codex in the ChatGPT desktop app" }) -Force
+                }
+                if (-not $obj.profiles.PSObject.Properties['DeepSeek']) {
+                    $obj.profiles | Add-Member -NotePropertyName "DeepSeek" -NotePropertyValue ([PSCustomObject]@{ process = ""; description = "DeepSeek V4 Flash (DeepSeek Harness IDE)" }) -Force
                 }
                 if ($obj.profiles.PSObject.Properties['ChatGPT']) {
                     $obj.profiles.PSObject.Properties.Remove('ChatGPT')
@@ -1555,7 +1559,7 @@ function Populate-SeatClientDropdowns {
     $script:ClientConfig = Get-ClientConfiguration
     $profileNames = @($script:ClientConfig.profiles.PSObject.Properties | ForEach-Object { $_.Name })
     if ($profileNames.Count -eq 0) {
-        $profileNames = @("AI 1", "AI 2", "Cursor", "Antigravity", "Windsurf", "VS Code", "Terminal", "Codex")
+        $profileNames = @("AI 1", "AI 2", "Cursor", "Antigravity", "Windsurf", "VS Code", "Terminal", "Codex", "DeepSeek", "None")
     }
 
     $boardSeat1 = $null
@@ -3078,7 +3082,7 @@ function Set-RolesForPhase {
         "discuss"   { "advise","advise" }
         "advise"    { "advise","advise" }
         "plan"      { "plan","idle" }
-        "implement" { "implement","review" }
+        "implement" { "review","review" }
         "review"    { "review","review" }
         "test"      { "review","review" }
         "closing"   { "idle","idle" }
@@ -4719,7 +4723,7 @@ function Save-BlackboardContent {
         ("> **Active Turn**: " + $txtActiveTurn.Text),
         ("> **GitHub Issue**: " + $issueRef),
         ("> **Enabled Phases**: " + $q + ($script:EnabledPhases -join ",") + $q),
-        ("> **Implement Mode**: " + $q + (Get-ImplementModeString) + $q),
+        ("> **Implementation Scope**: " + $q + (Get-ImplementModeString) + $q),
         ("> **Last Updated**: " + $timestamp),
         "",
         "---",
@@ -4913,6 +4917,11 @@ function Send-AgentChatPaste {
             Start-Sleep -Milliseconds 150
             Safe-SendKeys "{ENTER}"
             return $true
+        }
+        "DeepSeek" {
+            # DeepSeek Harness: safe fallback (window focused if found, blind keystrokes skipped).
+            # Return $false to prompt manual clipboard paste.
+            return $false
         }
         default {
             return $false
@@ -5585,7 +5594,7 @@ function Load-BlackboardIntoUI {
                 if ($raw -match '>\s*\*\*Enabled Phases\*\*:\s*`([^`]+)`') {
                     $script:EnabledPhases = @($matches[1].Split(",") | ForEach-Object { $_.Trim() } | Where-Object { $_ })
                 }
-                if ($cbImplementMode -and $raw -match '>\s*\*\*Implement Mode\*\*:\s*`([^`]+)`') {
+                if ($cbImplementMode -and $raw -match '>\s*\*\*(?:Implementation Scope|Implement Mode)\*\*:\s*`([^`]+)`') {
                     $mode = $matches[1].Trim()
                     for ($i = 0; $i -lt $cbImplementMode.Items.Count; $i++) {
                         if ([string]$cbImplementMode.Items[$i].Content -eq $mode) {

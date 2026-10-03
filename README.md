@@ -42,9 +42,9 @@ Running multiple autonomous AI coding agents in parallel usually leads to one of
 - **Version**: `v1.5.1` in the window title. SemVer marks protocol and feature releases. Patch numbers are not a run counter.
 - **Auto Step**: The checkbox is on the header row. Turning it on locks the phase dropdown.
 - **Stats**: A header button opens the per-seat stats window. There is no Board checkbox.
-- **Implementation Task**: The dropdown between the seats is Code or Submit GitHub Issues. Submit GitHub Issues does not edit tracked files.
+- **Implementation Scope**: The dropdown between the seats is Code or Submit GitHub Issues. Submit GitHub Issues does not edit tracked files.
 - **Manual phase roles**: With Auto Step off, changing the phase sets the standard role pair. Auto-advance does not change roles.
-- **Board state**: Enabled phases, implement mode, and bugs text are saved on the blackboard. Alignment lines are numbered `[A1]`, `[A2]`, with a blank line between them. Copy Prompt counts `promptsCopied`.
+- **Board state**: Enabled phases, implementation scope, and bugs text are saved on the blackboard. Alignment lines are numbered `[A1]`, `[A2]`, with a blank line between them. Copy Prompt counts `promptsCopied`.
 - **Task presets**: Full, Hotfix, Docs, and RFC choose which phase badges are on. They do not assign roles. Auto Step locks the phase dropdown.
 - **Phase badges**: The phase combo is `ready`, `pitch`, `discuss`, `plan`, `implement`, `review`, `test`, `closing`, `debrief`. Auto Step is off unless you turn it on, and it does not change seat roles.
 - **Debrief Preserved on Close Cycle**: Accepting 'Yes' to complete the close cycle during `closing` auto-advance ships allowlisted changes to git and proceeds directly into `debrief`. Session archiving and board reset to `ready` await completion of the debrief phase.
