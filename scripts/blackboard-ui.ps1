@@ -22,6 +22,7 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
 $script:HeadlessTest = [bool]$HeadlessTest
 $script:AppVersion = "v1.5.8"
 $script:ShipBranch = "main"
+$script:SuppressConfigSave = $false
 $script:EnabledPhases = @("pitch","discuss","plan","implement","review","test","debrief")
 $script:UnsignedRollbackStreak = 0
 $script:LastImplementerSeat = $null
@@ -125,6 +126,10 @@ function Get-TargetGitHubRepo {
 }
 $script:ControllerAiDir = Join-Path $script:ControllerRoot ".ai"
 $script:ClientsConfigPath = Join-Path $script:ControllerAiDir "clients.json"
+# The live config is captured before any startup path can save, so the headless guard
+# covers the whole run (startup, test, and the window-close save), not just the close.
+$script:LiveClientsConfigPath = $script:ClientsConfigPath
+$script:HeadlessConfigHashBefore = if ($script:HeadlessTest -and (Test-Path -LiteralPath $script:LiveClientsConfigPath)) { (Get-FileHash -LiteralPath $script:LiveClientsConfigPath -Algorithm SHA256).Hash } else { "" }
 $script:SignoffBaselinePath = Join-Path $script:ControllerAiDir "signoff-baseline.json"
 $script:ClientsExamplePath = Join-Path $script:ControllerAiDir "clients.example.json"
 
@@ -361,10 +366,11 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
             <RowDefinition Height="Auto"/> <!-- 1: Stoplight & Phase -->
             <RowDefinition Height="Auto"/> <!-- 2: Roles & Issue Tracker -->
             <RowDefinition Height="*" MinHeight="120"/> <!-- 3: Objective, Alignment & Human Steering Notes -->
-            <RowDefinition Height="*" MinHeight="240"/> <!-- 4: Cursor | Gemini last-response panes -->
-            <RowDefinition Height="Auto"/> <!-- 5: Agent Kickoff & Re-prompting -->
-            <RowDefinition Height="Auto"/> <!-- 6: Actions -->
-            <RowDefinition Height="Auto"/> <!-- 7: Status -->
+            <RowDefinition Height="Auto"/> <!-- 4: Resize grip between the notes area and the response panes -->
+            <RowDefinition Height="*" MinHeight="240"/> <!-- 5: Cursor | Gemini last-response panes -->
+            <RowDefinition Height="Auto"/> <!-- 6: Agent Kickoff & Re-prompting -->
+            <RowDefinition Height="Auto"/> <!-- 7: Actions -->
+            <RowDefinition Height="Auto"/> <!-- 8: Status -->
         </Grid.RowDefinitions>
 
         <!-- 0: Header Bar & Synced Phase Controls Pair -->
@@ -628,11 +634,15 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
         </Grid>
 
         <!-- 4: AI 1 | AI 2 last-response panes (#23) -->
-        <Grid Name="gridResponses" Grid.Row="4" Margin="0,0,0,8">
+        <GridSplitter Grid.Row="4" Height="6" HorizontalAlignment="Stretch" VerticalAlignment="Center" Background="#313244" ResizeBehavior="PreviousAndNext" ResizeDirection="Rows" Margin="0,2,0,2" ToolTip="Drag to resize the notes area and the response panes"/>
+
+        <Grid Name="gridResponses" Grid.Row="5" Margin="0,0,0,8">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
+            <GridSplitter Grid.Column="1" Width="6" HorizontalAlignment="Center" VerticalAlignment="Stretch" Background="#313244" ResizeBehavior="PreviousAndNext" ResizeDirection="Columns" ToolTip="Drag to resize the two response panes"/>
             <Border Grid.Column="0" Background="#181825" CornerRadius="8" Padding="10" Margin="0,0,4,0" BorderBrush="#313244" BorderThickness="1" VerticalAlignment="Stretch">
                 <Grid>
                     <Grid.RowDefinitions>
@@ -654,7 +664,7 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                              FontFamily="Segoe UI" FontSize="13"/>
                 </Grid>
             </Border>
-            <Border Grid.Column="1" Background="#181825" CornerRadius="8" Padding="10" Margin="4,0,0,0" BorderBrush="#313244" BorderThickness="1" VerticalAlignment="Stretch">
+            <Border Grid.Column="2" Background="#181825" CornerRadius="8" Padding="10" Margin="4,0,0,0" BorderBrush="#313244" BorderThickness="1" VerticalAlignment="Stretch">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -678,7 +688,7 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
         </Grid>
 
         <!-- 5: Agent Kickoff & Prompt Automation Card -->
-        <Border Grid.Row="5" Background="#1E1E2E" CornerRadius="8" Padding="10,8" Margin="0,0,0,8" BorderBrush="#313244" BorderThickness="1">
+        <Border Grid.Row="6" Background="#1E1E2E" CornerRadius="8" Padding="10,8" Margin="0,0,0,8" BorderBrush="#313244" BorderThickness="1">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
@@ -720,7 +730,7 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
         </Border>
 
         <!-- 6: Action Controls -->
-        <Grid Grid.Row="6" Margin="0,0,0,8">
+        <Grid Grid.Row="7" Margin="0,0,0,8">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
@@ -741,7 +751,7 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
         </Grid>
 
         <!-- 7: Status Bar -->
-        <Border Grid.Row="7" Background="#11111B" CornerRadius="4" Padding="8,4" Margin="0,2,0,0">
+        <Border Grid.Row="8" Background="#11111B" CornerRadius="4" Padding="8,4" Margin="0,2,0,0">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
@@ -843,6 +853,10 @@ if ($btnNewBoard) {
                     if ($templateSource) {
                         Copy-Item -Path $templateSource -Destination $targetBlackboard -Force
                     } else {
+                        $newSeat1 = [string](Get-Seat1Client)
+                        if ([string]::IsNullOrWhiteSpace($newSeat1) -or $newSeat1 -eq "None") { $newSeat1 = "AI 1" }
+                        $newSeat2 = [string](Get-Seat2Client)
+                        if ([string]::IsNullOrWhiteSpace($newSeat2) -or $newSeat2 -eq "None") { $newSeat2 = "AI 2" }
                         $initContent = @"
 # Dual-Session Agent Blackboard
 
@@ -859,8 +873,8 @@ if ($btnNewBoard) {
 | Participant | Active Role | Status | Sign-off (Complete) |
 |-------------|-------------|--------|---------------------|
 | **Human (Lead)** | `lead` | Active | [ ] |
-| **Cursor** | `advise` | Active | [ ] |
-| **Antigravity** | `advise` | Active | [ ] |
+| **$newSeat1** | `advise` | Active | [ ] |
+| **$newSeat2** | `advise` | Active | [ ] |
 
 > [!NOTE]
 > **Safety Guard**: Only ONE agent may hold the `implement` role at any time. When one implements, the other must be `review`, `advise`, or `idle`.
@@ -884,11 +898,11 @@ New board initialized.
 ### Human (Lead)
 - Active steering notes.
 
-### Cursor Scratchpad
-- (Cursor updates here)
+### $newSeat1 Scratchpad
+- ($newSeat1 updates here)
 
-### Antigravity Scratchpad
-- (Antigravity updates here)
+### $newSeat2 Scratchpad
+- ($newSeat2 updates here)
 "@
                         [System.IO.File]::WriteAllText($targetBlackboard, $initContent, [System.Text.Encoding]::UTF8)
                     }
@@ -1182,6 +1196,10 @@ function Set-ControllerTooltips {
 }
 
 function Save-ClientConfiguration {
+    if ($script:SuppressConfigSave) { return }
+    # A headless run must never write the live config, at startup or at close. Saves that
+    # target the redirected temp path still run, so test semantics are unchanged.
+    if ($script:HeadlessTest -and (Test-SameFullPath $script:ClientsConfigPath $script:LiveClientsConfigPath)) { return }
     try {
         $s1 = Get-Seat1Client
         $s2 = Get-Seat2Client
@@ -1251,9 +1269,31 @@ function Save-ClientConfiguration {
             }
             $cfg.boardSeats = $keptSeats
         }
-        $workspaces = @()
+        # One authoritative workspace list. Paths come from the recent list; the seat memory
+        # comes from boardSeats, and a remembered board counts as a workspace even when it is
+        # not among the most recent. recentBoards and boardSeats are exported as derived
+        # mirrors so an older build can still read the file.
+        $workspacePaths = New-Object System.Collections.Generic.List[string]
         foreach ($board in $recent) {
-            $workspaces += [PSCustomObject]@{ name = [System.IO.Path]::GetFileName($board); boardPath = $board }
+            if ($board -and -not $workspacePaths.Contains($board)) { [void]$workspacePaths.Add($board) }
+        }
+        if ($cfg.boardSeats) {
+            foreach ($prop in @($cfg.boardSeats.PSObject.Properties)) {
+                if (-not $prop.Name) { continue }
+                if (Test-DisposableBoardPath $prop.Name) { continue }
+                if (-not (Test-Path -LiteralPath $prop.Name)) { continue }
+                if (-not $workspacePaths.Contains($prop.Name)) { [void]$workspacePaths.Add($prop.Name) }
+            }
+        }
+        $workspaces = @()
+        foreach ($board in $workspacePaths) {
+            $seatInfo = if ($cfg.boardSeats -and $cfg.boardSeats.$board) { $cfg.boardSeats.$board } else { $null }
+            $workspaces += [PSCustomObject]@{
+                name      = [System.IO.Path]::GetFileName($board)
+                boardPath = $board
+                seat1     = if ($seatInfo) { [string]$seatInfo.seat1 } else { "" }
+                seat2     = if ($seatInfo) { [string]$seatInfo.seat2 } else { "" }
+            }
         }
         $cfg | Add-Member -NotePropertyName "workspaces" -NotePropertyValue $workspaces -Force
         $script:ClientConfig = $cfg
@@ -1263,6 +1303,7 @@ function Save-ClientConfiguration {
             seat2          = $s2
             boardPath      = $script:BlackboardPath
             workspaces     = $workspaces
+            shipBranch     = $script:ShipBranch
             recentBoards   = $recent
             boardSeats     = $cfg.boardSeats
             tooltips       = $tooltipsVal
@@ -1655,6 +1696,9 @@ function Update-SeatClientLabels {
 function Populate-SeatClientDropdowns {
     param([switch]$forceFromBoard)
     $script:ClientConfig = Get-ClientConfiguration
+    if ($script:ClientConfig -and $script:ClientConfig.PSObject.Properties['shipBranch'] -and -not [string]::IsNullOrWhiteSpace([string]$script:ClientConfig.shipBranch)) {
+        $script:ShipBranch = [string]$script:ClientConfig.shipBranch
+    }
     $profileNames = @($script:ClientConfig.profiles.PSObject.Properties | ForEach-Object { $_.Name })
     if ($profileNames.Count -eq 0) {
         $profileNames = @("AI 1", "AI 2", "Cursor", "Antigravity", "Windsurf", "VS Code", "Terminal", "Codex", "DeepSeek", "None")
@@ -1664,7 +1708,14 @@ function Populate-SeatClientDropdowns {
     $boardSeat2 = $null
     if ($script:BlackboardPath) {
         $resolvedActive = (Resolve-Path $script:BlackboardPath -ErrorAction SilentlyContinue).Path
-        if ($resolvedActive -and $script:ClientConfig.boardSeats -and $script:ClientConfig.boardSeats.$resolvedActive) {
+        $wsSeat = $null
+        if ($resolvedActive -and $script:ClientConfig.workspaces) {
+            $wsSeat = @($script:ClientConfig.workspaces | Where-Object { $_ -and $_.boardPath -and (Test-SameFullPath $_.boardPath $resolvedActive) }) | Select-Object -First 1
+        }
+        if ($wsSeat -and (-not [string]::IsNullOrWhiteSpace([string]$wsSeat.seat1) -or -not [string]::IsNullOrWhiteSpace([string]$wsSeat.seat2))) {
+            $boardSeat1 = [string]$wsSeat.seat1
+            $boardSeat2 = [string]$wsSeat.seat2
+        } elseif ($resolvedActive -and $script:ClientConfig.boardSeats -and $script:ClientConfig.boardSeats.$resolvedActive) {
             $boardSeat1 = [string]$script:ClientConfig.boardSeats.$resolvedActive.seat1
             $boardSeat2 = [string]$script:ClientConfig.boardSeats.$resolvedActive.seat2
         }
@@ -1738,10 +1789,13 @@ function Populate-RecentBoardsDropdown {
         $cfg = $script:ClientConfig
         if (-not $cfg) { $cfg = Get-ClientConfiguration }
         $recent = @()
-        if ($cfg.recentBoards) {
-            $recent = @($cfg.recentBoards | Where-Object { $_ -and (Test-Path $_) })
+        if ($cfg.workspaces) {
+            $recent = @($cfg.workspaces | Where-Object { $_ -and $_.boardPath -and -not (Test-DisposableBoardPath $_.boardPath) -and (Test-Path $_.boardPath) } | ForEach-Object { [string]$_.boardPath })
         }
-        if ($script:BlackboardPath -and (Test-Path $script:BlackboardPath)) {
+        if (-not $recent -and $cfg.recentBoards) {
+            $recent = @($cfg.recentBoards | Where-Object { $_ -and -not (Test-DisposableBoardPath $_) -and (Test-Path $_) })
+        }
+        if ($script:BlackboardPath -and (Test-Path $script:BlackboardPath) -and -not (Test-DisposableBoardPath $script:BlackboardPath)) {
             $activeResolved = (Resolve-Path $script:BlackboardPath -ErrorAction SilentlyContinue).Path
             if ($activeResolved -and -not ($recent | Where-Object { (Resolve-Path $_ -ErrorAction SilentlyContinue).Path -eq $activeResolved })) {
                 $recent = @($activeResolved) + $recent
@@ -4020,19 +4074,19 @@ function Invoke-CloseProjectGitShip {
             $txtStatus.Text = "Pre-flight check: $behindCount commits behind origin/main."
         }
     } elseif ($aheadCount -gt 0) {
-        $pushPrompt = [System.Windows.MessageBox]::Show("Pre-flight dry-run PASSED: Clean fast-forward verified (0 behind, $aheadCount ahead).`n`nPush to origin/main now?", "Upload to GitHub (Pre-flight Passed)", [System.Windows.MessageBoxButton]::YesNo, [System.Windows.MessageBoxImage]::Question)
+        $pushPrompt = [System.Windows.MessageBox]::Show("Pre-flight dry-run PASSED: Clean fast-forward verified (0 behind, $aheadCount ahead).`n`nPush to origin/$script:ShipBranch now?", "Upload to GitHub (Pre-flight Passed)", [System.Windows.MessageBoxButton]::YesNo, [System.Windows.MessageBoxImage]::Question)
         if ($pushPrompt -eq [System.Windows.MessageBoxResult]::Yes) {
-            $txtStatus.Text = "Pushing to origin/main..."
-            git -C $script:RepoRoot push origin main
+            $txtStatus.Text = "Pushing to origin/$script:ShipBranch..."
+            git -C $script:RepoRoot push origin $script:ShipBranch
             if ($LASTEXITCODE -eq 0) {
-                $txtStatus.Text = "Pushed to origin/main."
+                $txtStatus.Text = "Pushed to origin/$script:ShipBranch."
             } else {
                 [System.Windows.MessageBox]::Show("git push failed (exit $LASTEXITCODE). Archive will still run. Pull/rebase if needed.", "Push failed", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
                 $txtStatus.Text = "Warning: push failed (exit $LASTEXITCODE)."
             }
         }
     } else {
-        $txtStatus.Text = "Pre-flight check: Local is synchronized with origin/main (0 ahead, 0 behind)."
+        $txtStatus.Text = "Pre-flight check: Local is synchronized with origin/$script:ShipBranch (0 ahead, 0 behind)."
     }
 }
 
@@ -6159,7 +6213,7 @@ function Invoke-HeadlessUiTest {
     if (Test-Path $templatePath) {
         Copy-Item -Path $templatePath -Destination $tempBoardPath -Force
     } else {
-        [System.IO.File]::WriteAllText($tempBoardPath, "# Dual-Session Agent Blackboard`n`n> **Flow Control**: ``🟢 GO```n> **Project Phase**: ``ready```n> **Active Turn**: 👤 Waiting on Human (Lead)`n> **GitHub Issue**: none`n> **Enabled Phases**: ``pitch,discuss,plan,implement,review,test,debrief```n> **Implementation Scope**: ``Code```n`n---`n`n## Agent Roles & Safety`n`n| Participant | Active Role | Status | Sign-off (Complete) |`n|---|---|---|---|`n| **Human (Lead)** | ``lead`` | Active | [ ] |`n| **Cursor** | ``idle`` | Active | [ ] |`n| **Antigravity** | ``idle`` | Active | [ ] |`n`n---`n`n## Current Objective & Prompt`n`n`n`n---`n`n## Alignment & Agreed Decisions`n`n`n`n---`n`n## Bugs`n`n`n`n---`n`n## Working Notes & Scratchpads`n`n### Human (Lead)`n- Active steering notes.`n`n### Cursor Scratchpad`n- (Cursor updates here)`n`n### Antigravity Scratchpad`n- (Antigravity updates here)`n")
+        [System.IO.File]::WriteAllText($tempBoardPath, "# Dual-Session Agent Blackboard`n`n> **Flow Control**: ``🟢 GO```n> **Project Phase**: ``ready```n> **Active Turn**: 👤 Waiting on Human (Lead)`n> **GitHub Issue**: none`n> **Enabled Phases**: ``pitch,discuss,plan,implement,review,test,debrief```n> **Implementation Scope**: ``Code```n`n---`n`n## Agent Roles & Safety`n`n| Participant | Active Role | Status | Sign-off (Complete) |`n|---|---|---|---|`n| **Human (Lead)** | ``lead`` | Active | [ ] |`n| **Cursor** | ``idle`` | Active | [ ] |`n| **AI 2** | ``idle`` | Active | [ ] |`n`n---`n`n## Current Objective & Prompt`n`n`n`n---`n`n## Alignment & Agreed Decisions`n`n`n`n---`n`n## Bugs`n`n`n`n---`n`n## Working Notes & Scratchpads`n`n### Human (Lead)`n- Active steering notes.`n`n### Cursor Scratchpad`n- (Cursor updates here)`n`n### AI 2 Scratchpad`n- (AI 2 updates here)`n")
     }
 
     $script:BlackboardPath = $tempBoardPath
@@ -6450,6 +6504,15 @@ function Invoke-HeadlessUiTest {
                 Add-Pass "READY_PHASE_INCREMENTED_RUNS"
             }
         }
+
+        # AG-5: layout and pop-out wiring assertions
+        $gridR = $window.FindName("gridResponses")
+        if (-not $gridR -or $gridR.ColumnDefinitions.Count -ne 3) { Add-Fail "Response pane splitter column missing" } else { Add-Pass "SPLITTER_COLUMN" }
+        $popItems = @()
+        if ($txtPrompt -and $txtPrompt.ContextMenu) {
+            $popItems = @($txtPrompt.ContextMenu.Items | Where-Object { $_ -is [System.Windows.Controls.MenuItem] -and [string]$_.Header -eq "Open in resizable window" })
+        }
+        if ($popItems.Count -ne 1) { Add-Fail "Objective pop-out menu item missing" } else { Add-Pass "POPOUT_MENU" }
     }
     finally {
         $script:BlackboardPath = $origBoardPath
@@ -6477,18 +6540,128 @@ function Invoke-HeadlessUiTest {
     return 1
 }
 
+# --- AG-5: pop-out text surfaces -------------------------------------------------------------
+# A pop-out hosts the SAME control instance: it is moved into a resizable window and returned to
+# its original grid cell when that window closes. Nothing is copied, so there is still a single
+# source of truth and every getter that reads these controls keeps working while it is open.
+$script:PopoutWindows = @{}
+function Open-ControlPopout {
+    param($Control, [string]$Title)
+    if (-not $Control) { return }
+    $key = if ($Control.Name) { [string]$Control.Name } else { [guid]::NewGuid().ToString("N") }
+    if ($script:PopoutWindows.ContainsKey($key)) {
+        $open = $script:PopoutWindows[$key]
+        if ($open -and $open.IsVisible) { $open.Activate(); return }
+    }
+    $parent = $Control.Parent
+    if (-not $parent) { return }
+    $origMargin = $Control.Margin
+    if ($parent -is [System.Windows.Controls.Panel]) { [void]$parent.Children.Remove($Control) }
+    elseif ($parent -is [System.Windows.Controls.Decorator]) { $parent.Child = $null }
+
+    $pop = New-Object System.Windows.Window
+    $pop.Title = "AI Collab Controller - $Title"
+    $pop.Width = 820
+    $pop.Height = 500
+    $pop.MinWidth = 360
+    $pop.MinHeight = 220
+    $pop.WindowStartupLocation = [System.Windows.WindowStartupLocation]::CenterScreen
+    $pop.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#181825")
+
+    $dock = New-Object System.Windows.Controls.DockPanel
+    $btnReturn = New-Object System.Windows.Controls.Button
+    $btnReturn.Content = "Return to controller"
+    $btnReturn.Padding = New-Object System.Windows.Thickness(10,4,10,4)
+    $btnReturn.Margin = New-Object System.Windows.Thickness(8,8,8,4)
+    $btnReturn.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Left
+    [System.Windows.Controls.DockPanel]::SetDock($btnReturn, [System.Windows.Controls.Dock]::Top)
+    $btnReturn.add_Click({ $pop.Close() }.GetNewClosure())
+    [void]$dock.Children.Add($btnReturn)
+
+    $Control.Margin = New-Object System.Windows.Thickness(8,0,8,8)
+    [void]$dock.Children.Add($Control)
+    $pop.Content = $dock
+
+    $pop.add_Closing({
+        try {
+            [void]$dock.Children.Remove($Control)
+            $Control.Margin = $origMargin
+            if ($parent -is [System.Windows.Controls.Panel]) { [void]$parent.Children.Add($Control) }
+            elseif ($parent -is [System.Windows.Controls.Decorator]) { $parent.Child = $Control }
+        } catch {}
+        [void]$script:PopoutWindows.Remove($key)
+    }.GetNewClosure())
+
+    $script:PopoutWindows[$key] = $pop
+    $pop.Show()
+}
+
+function Add-PopoutMenu {
+    param($Control, [string]$Title)
+    if (-not $Control) { return }
+    $menu = New-Object System.Windows.Controls.ContextMenu
+    foreach ($entry in @(
+            @{ Header = "Cut";        Command = [System.Windows.Input.ApplicationCommands]::Cut },
+            @{ Header = "Copy";       Command = [System.Windows.Input.ApplicationCommands]::Copy },
+            @{ Header = "Paste";      Command = [System.Windows.Input.ApplicationCommands]::Paste },
+            @{ Header = "Select All"; Command = [System.Windows.Input.ApplicationCommands]::SelectAll })) {
+        $mi = New-Object System.Windows.Controls.MenuItem
+        $mi.Header = $entry.Header
+        $mi.Command = $entry.Command
+        [void]$menu.Items.Add($mi)
+    }
+    [void]$menu.Items.Add((New-Object System.Windows.Controls.Separator))
+    $popItem = New-Object System.Windows.Controls.MenuItem
+    $popItem.Header = "Open in resizable window"
+    $target = $Control
+    $label = $Title
+    $popItem.add_Click({ Open-ControlPopout -Control $target -Title $label }.GetNewClosure())
+    [void]$menu.Items.Add($popItem)
+    $Control.ContextMenu = $menu
+}
+
+# The standard edit items are re-added because assigning a ContextMenu replaces the built-in one.
+try {
+    Add-PopoutMenu -Control $txtPrompt     -Title "Objective & Prompt"
+    Add-PopoutMenu -Control $txtAlignment  -Title "Alignment & Decisions"
+    Add-PopoutMenu -Control $txtBugs       -Title "Bugs / disagreement"
+    Add-PopoutMenu -Control $txtHumanNotes -Title "Human Steering Notes"
+    Add-PopoutMenu -Control ($window.FindName("rtbCursorLast")) -Title "Seat 1 last response"
+    Add-PopoutMenu -Control ($window.FindName("rtbGeminiLast")) -Title "Seat 2 last response"
+} catch {
+    Write-Warning "Pop-out menu registration failed: $_"
+}
+
 if ($HeadlessTest) {
     $window.WindowState = [System.Windows.WindowState]::Minimized
     $window.ShowInTaskbar = $false
     $window.Visibility = [System.Windows.Visibility]::Hidden
     $window.Show()
+    $cfgGuardPath = $script:LiveClientsConfigPath
+    $cfgHashBefore = $script:HeadlessConfigHashBefore
     $headlessResult = @(Invoke-HeadlessUiTest)
     $script:HeadlessExitCode = 1
     if ($headlessResult.Count -gt 0) {
         $last = $headlessResult[$headlessResult.Count - 1]
         if ($last -eq 0 -or $last -eq 1) { $script:HeadlessExitCode = [int]$last }
     }
+    # The window's Closing handler saves the client config. The in-memory config was built
+    # against the redirected temp path, so suppress that save and never let it reach the live file.
+    $script:SuppressConfigSave = $true
     $window.Close()
+    $script:SuppressConfigSave = $false
+    $liveLog = Join-Path $env:TEMP "blackboard-ui-test-last.txt"
+    if ($cfgGuardPath -and (Test-Path -LiteralPath $cfgGuardPath)) {
+        $cfgHashAfter = (Get-FileHash -LiteralPath $cfgGuardPath -Algorithm SHA256).Hash
+        if ($cfgHashBefore -ne $cfgHashAfter) {
+            Add-Content -LiteralPath $liveLog -Value "FAIL LIVE_CONFIG_MUTATED: Live clients.json was modified during headless test execution!"
+            Write-Output "FAIL LIVE_CONFIG_MUTATED"
+            $script:HeadlessExitCode = 1
+        } else {
+            Add-Content -LiteralPath $liveLog -Value "PASS LIVE_CONFIG_INTEGRITY_VERIFIED"
+            Write-Output "PASS LIVE_CONFIG_INTEGRITY_VERIFIED"
+        }
+    }
     exit $script:HeadlessExitCode
 }
 
