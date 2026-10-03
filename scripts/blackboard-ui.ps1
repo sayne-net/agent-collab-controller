@@ -1,8 +1,8 @@
 # AI Collab Controller (WPF UI)
-# Version 1.5.8
+# Version 1.6.0
 # Standalone dual-session controller for multi-agent collaboration with human-in-the-loop steering.
 # SemVer tracks protocol and feature releases. Do not bump the patch on every local edit.
-# 1.5.8: replace closing phase with debrief, AI sign-off gates check across all phases and close, Refactor preset.
+# 1.6.0: project registry (projects.json), UNC canonical paths, offline rows stay disabled in the existing switcher.
 # 1.5.7: single-issue objective input box with HUMn codes, retain objective in debrief, DeepSeek Harness profile, strict 3-signoff close.
 # 1.5.6: kickoff and re-prompt no longer paste scratchpad excerpts or repeat the scratchpad rule.
 # 1.5.5: last-response panes show the whole scratchpad, not the first bold bullet.
@@ -20,7 +20,7 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
 [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
 
 $script:HeadlessTest = [bool]$HeadlessTest
-$script:AppVersion = "v1.5.8"
+$script:AppVersion = "v1.6.0"
 $script:ShipBranch = "main"
 $script:SuppressConfigSave = $false
 $script:EnabledPhases = @("pitch","discuss","plan","implement","review","test","debrief")
@@ -32,6 +32,14 @@ $script:ReconcileTurns2 = 0
 $script:ControllerRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $script:UserConfigDir = Join-Path $HOME ".blackboard"
 $script:UserConfigPath = Join-Path $script:UserConfigDir "config.json"
+$script:ProjectsRegistryPath = Join-Path $script:UserConfigDir "projects.json"
+$script:DriveUncMap = @{}
+# Counts real Win32_LogicalDisk lookups so a test can prove memoization actually happens.
+$script:DriveUncQueryCount = 0
+# Reachability cache: one TCP probe per server per interval, not one per project.
+$script:UncServerUp = @{}
+$script:UncServerProbeUtc = @{}
+$script:UncServerProbeSeconds = 30
 
 function Test-SameFullPath {
     param([string]$left, [string]$right)
@@ -43,6 +51,274 @@ function Test-SameFullPath {
     } catch {
         return $false
     }
+}
+
+function Get-CanonicalProjectPath {
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return "" }
+    $p = $Path.Trim().TrimEnd('\', '/')
+    if ($p -match '^([A-Za-z]):[\\/]') {
+        $drive = $Matches[1].ToUpper() + ":"
+        if (-not $script:DriveUncMap.ContainsKey($drive)) {
+            $script:DriveUncQueryCount++
+            $provider = $null
+            try {
+                $disk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$drive'" -ErrorAction Stop
+                if ($disk) { $provider = [string]$disk.ProviderName }
+            } catch { }
+            $script:DriveUncMap[$drive] = if ($provider) { $provider.TrimEnd('\', '/') } else { "" }
+        }
+        $unc = [string]$script:DriveUncMap[$drive]
+        if ($unc) { $p = $unc + $p.Substring(2) }
+    }
+    return $p
+}
+
+function Get-ProjectRootFromTarget {
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return "" }
+    $p = $Path.Trim().TrimEnd('\', '/')
+    if ($p -match '(?i)[\\/]\.ai[\\/]blackboard\.md$') {
+        $ai = Split-Path $p -Parent
+        return (Split-Path $ai -Parent)
+    }
+    return $p
+}
+
+function Get-ProjectBoardPath {
+    param([string]$ProjectRoot)
+    return (Join-Path $ProjectRoot ".ai\blackboard.md")
+}
+
+function Test-UncServerUp {
+    param([string]$Server)
+    if ([string]::IsNullOrWhiteSpace($Server)) { return $false }
+    $key = $Server.ToLowerInvariant()
+    $now = [DateTime]::UtcNow
+    if ($script:UncServerUp.ContainsKey($key)) {
+        if (($now - $script:UncServerProbeUtc[$key]).TotalSeconds -lt $script:UncServerProbeSeconds) {
+            return [bool]$script:UncServerUp[$key]
+        }
+    }
+    $up = $false
+    $client = New-Object System.Net.Sockets.TcpClient
+    try {
+        # ConnectAsync plus a blocking Wait: no AsyncCallback, so no managed callback can
+        # still be pending when the runtime tears down.
+        $task = $client.ConnectAsync($Server, 445)
+        if ($task.Wait(300) -and $client.Connected) { $up = $true }
+    } catch {
+        $up = $false
+    } finally {
+        try { $client.Close() } catch { }
+    }
+    $script:UncServerUp[$key] = $up
+    $script:UncServerProbeUtc[$key] = $now
+    return $up
+}
+
+# Defined here, before Test-PathQuick, because Resolve-LaunchRepoRoot reaches
+# Import-LegacyProjectsIntoRegistry during script load, and that function calls this one.
+# While it lived further down the file the call failed with "not recognized", so every
+# legacy board was skipped and migration silently imported nothing.
+function Test-DisposableBoardPath {
+    param([string]$path)
+    if ([string]::IsNullOrWhiteSpace($path)) { return $true }
+    $n = $path -replace '\\', '/'
+    if ($n -match '(?i)/bb-test-') { return $true }
+    $temp = if ($env:TEMP) { ($env:TEMP -replace '\\', '/').TrimEnd('/') } else { "" }
+    if ($temp -and $n.ToLower().StartsWith($temp.ToLower() + "/")) { return $true }
+    return $false
+}
+
+function Test-PathQuick {
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+    $unc = $Path.StartsWith("\\") -or $Path.StartsWith("//")
+    if ($unc) {
+        if ($script:HeadlessTest) { return $false }
+        if ($Path -notmatch '^\\\\([^\\]+)\\') { return $false }
+        # One probe per server per interval, so populating the switcher cannot cost
+        # 300 ms per network project on the UI thread.
+        if (-not (Test-UncServerUp -Server $Matches[1])) { return $false }
+    }
+    try { return [bool](Test-Path -LiteralPath $Path) } catch { return $false }
+}
+
+function Get-EmptyProjectRegistry {
+    return [PSCustomObject]@{
+        schemaVersion   = 1
+        activeProjectId = ""
+        projects        = @()
+    }
+}
+
+function Save-ProjectRegistry {
+    param($Registry)
+    if ($script:SuppressConfigSave) { return }
+    if ($script:HeadlessTest -and (Test-SameFullPath $script:ProjectsRegistryPath $script:LiveProjectsRegistryPath)) { return }
+    if ([string]::IsNullOrWhiteSpace($script:ProjectsRegistryPath)) { return }
+    $dir = Split-Path $script:ProjectsRegistryPath -Parent
+    if (-not (Test-Path -LiteralPath $dir)) {
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    }
+    $json = $Registry | ConvertTo-Json -Depth 6
+    $tmp = $script:ProjectsRegistryPath + ".tmp"
+    $bak = $script:ProjectsRegistryPath + ".bak"
+    [System.IO.File]::WriteAllText($tmp, $json, [System.Text.Encoding]::UTF8)
+    try {
+        if (Test-Path -LiteralPath $script:ProjectsRegistryPath) {
+            [System.IO.File]::Replace($tmp, $script:ProjectsRegistryPath, $bak)
+        } else {
+            [System.IO.File]::Move($tmp, $script:ProjectsRegistryPath)
+        }
+    } catch {
+        if (Test-Path -LiteralPath $script:ProjectsRegistryPath) {
+            [System.IO.File]::Delete($script:ProjectsRegistryPath)
+        }
+        if (Test-Path -LiteralPath $tmp) {
+            [System.IO.File]::Move($tmp, $script:ProjectsRegistryPath)
+        }
+    }
+}
+
+function Import-LegacyProjectsIntoRegistry {
+    param($Registry)
+    $seen = @{}
+    foreach ($existing in @($Registry.projects)) {
+        if ($existing.path) { $seen[$existing.path.ToLowerInvariant()] = $true }
+    }
+    $boards = @()
+    $seatMap = @{}
+    # Resolve the legacy config path here instead of relying on $script:ClientsConfigPath:
+    # Resolve-LaunchRepoRoot reaches this function during script load, before that variable is
+    # assigned. A $null path raised a non-terminating Test-Path error and migration silently
+    # did nothing, leaving projects.json unseeded.
+    $legacyConfigPath = $script:ClientsConfigPath
+    if ([string]::IsNullOrWhiteSpace($legacyConfigPath)) {
+        $legacyConfigPath = Join-Path (Join-Path $script:ControllerRoot ".ai") "clients.json"
+    }
+    if (Test-Path -LiteralPath $legacyConfigPath) {
+        try {
+            $clients = Get-Content -LiteralPath $legacyConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($clients.recentBoards) { $boards += @($clients.recentBoards) }
+            if ($clients.workspaces) {
+                foreach ($ws in @($clients.workspaces)) {
+                    if ($ws.boardPath) { $boards += [string]$ws.boardPath }
+                }
+            }
+            if ($clients.boardSeats) {
+                foreach ($prop in @($clients.boardSeats.PSObject.Properties)) {
+                    $seatMap[$prop.Name] = $prop.Value
+                }
+            }
+            $bak = Join-Path (Split-Path $legacyConfigPath -Parent) "clients.v1.bak.json"
+            if (-not (Test-Path -LiteralPath $bak)) {
+                Copy-Item -LiteralPath $legacyConfigPath -Destination $bak -Force
+            }
+        } catch { }
+    }
+    $projects = @($Registry.projects)
+    foreach ($board in $boards) {
+        if ([string]::IsNullOrWhiteSpace([string]$board)) { continue }
+        if (Test-DisposableBoardPath $board) { continue }
+        $root = Get-CanonicalProjectPath (Get-ProjectRootFromTarget $board)
+        if ([string]::IsNullOrWhiteSpace($root)) { continue }
+        $key = $root.ToLowerInvariant()
+        if ($seen.ContainsKey($key)) { continue }
+        $seen[$key] = $true
+        $seats = $null
+        if ($seatMap.ContainsKey([string]$board)) { $seats = $seatMap[[string]$board] }
+        $kind = "folder"
+        $gitDir = Join-Path $root ".git"
+        if (-not ($root.StartsWith("\\") -or $root.StartsWith("//"))) {
+            try { if (Test-Path -LiteralPath $gitDir) { $kind = "git" } } catch { }
+        }
+        $projects += [PSCustomObject]@{
+            id            = [guid]::NewGuid().ToString()
+            name          = [System.IO.Path]::GetFileName($root)
+            path          = $root
+            kind          = $kind
+            pinned        = $false
+            lastOpenedUtc = ""
+            seats         = [PSCustomObject]@{
+                seat1 = if ($seats -and $seats.seat1) { [string]$seats.seat1 } else { "" }
+                seat2 = if ($seats -and $seats.seat2) { [string]$seats.seat2 } else { "" }
+            }
+        }
+    }
+    $Registry.projects = @($projects)
+    return $Registry
+}
+
+function Get-ProjectRegistry {
+    $empty = Get-EmptyProjectRegistry
+    if ($script:HeadlessTest -and (Test-SameFullPath $script:ProjectsRegistryPath $script:LiveProjectsRegistryPath)) {
+        return $empty
+    }
+    if ([string]::IsNullOrWhiteSpace($script:ProjectsRegistryPath) -or -not (Test-Path -LiteralPath $script:ProjectsRegistryPath)) {
+        $imported = Import-LegacyProjectsIntoRegistry $empty
+        if (@($imported.projects).Count -gt 0) { Save-ProjectRegistry $imported }
+        return $imported
+    }
+    try {
+        $json = Get-Content -LiteralPath $script:ProjectsRegistryPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if (-not $json) { return $empty }
+        if (-not $json.PSObject.Properties['schemaVersion']) { $json | Add-Member -NotePropertyName "schemaVersion" -NotePropertyValue 1 -Force }
+        if (-not $json.PSObject.Properties['activeProjectId']) { $json | Add-Member -NotePropertyName "activeProjectId" -NotePropertyValue "" -Force }
+        if (-not $json.PSObject.Properties['projects'] -or $null -eq $json.projects) { $json | Add-Member -NotePropertyName "projects" -NotePropertyValue @() -Force }
+        $json.projects = @($json.projects)
+        return $json
+    } catch {
+        return $empty
+    }
+}
+
+function Register-Project {
+    param(
+        [string]$Path,
+        [string]$Seat1 = "",
+        [string]$Seat2 = ""
+    )
+    $root = Get-CanonicalProjectPath (Get-ProjectRootFromTarget $Path)
+    if ([string]::IsNullOrWhiteSpace($root)) { return $null }
+    if (Test-DisposableBoardPath (Get-ProjectBoardPath $root)) { return $null }
+    $reg = Get-ProjectRegistry
+    $key = $root.ToLowerInvariant()
+    $found = $null
+    foreach ($p in @($reg.projects)) {
+        if ($p.path -and ($p.path.ToLowerInvariant() -eq $key)) { $found = $p; break }
+    }
+    if (-not $found) {
+        $kind = "folder"
+        $gitDir = Join-Path $root ".git"
+        if (Test-PathQuick $gitDir) { $kind = "git" }
+        $found = [PSCustomObject]@{
+            id            = [guid]::NewGuid().ToString()
+            name          = [System.IO.Path]::GetFileName($root)
+            path          = $root
+            kind          = $kind
+            pinned        = $false
+            lastOpenedUtc = ""
+            seats         = [PSCustomObject]@{ seat1 = $Seat1; seat2 = $Seat2 }
+        }
+        $reg.projects = @($reg.projects) + $found
+    } else {
+        if ($Seat1) { $found.seats.seat1 = $Seat1 }
+        if ($Seat2) { $found.seats.seat2 = $Seat2 }
+    }
+    $found.lastOpenedUtc = [DateTime]::UtcNow.ToString("o")
+    $reg.activeProjectId = [string]$found.id
+    Save-ProjectRegistry $reg
+    return $found
+}
+
+function Unregister-Project {
+    param([string]$Id)
+    $reg = Get-ProjectRegistry
+    $reg.projects = @($reg.projects | Where-Object { [string]$_.id -ne $Id })
+    if ([string]$reg.activeProjectId -eq $Id) { $reg.activeProjectId = "" }
+    Save-ProjectRegistry $reg
 }
 
 function Get-UserBlackboardConfig {
@@ -83,6 +359,14 @@ function Resolve-LaunchRepoRoot {
             return (Resolve-Path -LiteralPath $TargetRepo).Path
         }
         Write-Warning "TargetRepo not found: $TargetRepo"
+    }
+    if (-not $script:HeadlessTest) {
+        $reg = Get-ProjectRegistry
+        $active = @($reg.projects) | Where-Object { [string]$_.id -eq [string]$reg.activeProjectId } | Select-Object -First 1
+        if ($active -and $active.path) {
+            $board = Get-ProjectBoardPath $active.path
+            if (Test-PathQuick $board) { return [string]$active.path }
+        }
     }
     $saved = [string](Get-UserBlackboardConfig).lastOpenedRepo
     if ($saved -and (Test-Path -LiteralPath $saved)) {
@@ -130,6 +414,8 @@ $script:ClientsConfigPath = Join-Path $script:ControllerAiDir "clients.json"
 # covers the whole run (startup, test, and the window-close save), not just the close.
 $script:LiveClientsConfigPath = $script:ClientsConfigPath
 $script:HeadlessConfigHashBefore = if ($script:HeadlessTest -and (Test-Path -LiteralPath $script:LiveClientsConfigPath)) { (Get-FileHash -LiteralPath $script:LiveClientsConfigPath -Algorithm SHA256).Hash } else { "" }
+$script:LiveProjectsRegistryPath = $script:ProjectsRegistryPath
+$script:HeadlessProjectsHashBefore = if ($script:HeadlessTest -and (Test-Path -LiteralPath $script:LiveProjectsRegistryPath)) { (Get-FileHash -LiteralPath $script:LiveProjectsRegistryPath -Algorithm SHA256).Hash } else { "" }
 $script:SignoffBaselinePath = Join-Path $script:ControllerAiDir "signoff-baseline.json"
 $script:ClientsExamplePath = Join-Path $script:ControllerAiDir "clients.example.json"
 
@@ -1236,7 +1522,12 @@ function Save-ClientConfiguration {
         $cfg.autoSwitchSeat = $autoSwitchVal
 
         if ($script:BlackboardPath) {
-            $resolvedPath = (Resolve-Path $script:BlackboardPath -ErrorAction SilentlyContinue).Path
+            $resolvedPath = if ($script:BlackboardPath.StartsWith("\\") -or $script:BlackboardPath.StartsWith("//")) {
+                [System.IO.Path]::GetFullPath($script:BlackboardPath)
+            } else {
+                $rp = (Resolve-Path $script:BlackboardPath -ErrorAction SilentlyContinue).Path
+                if ($rp) { $rp } else { [System.IO.Path]::GetFullPath($script:BlackboardPath) }
+            }
             if ($resolvedPath) {
                 $boardSeatObj = [PSCustomObject]@{
                     seat1 = $s1
@@ -1248,26 +1539,70 @@ function Save-ClientConfiguration {
 
         $recent = @()
         if ($cfg.recentBoards) {
-            $recent = @($cfg.recentBoards | Where-Object { $_ -and -not (Test-DisposableBoardPath $_) -and (Test-Path $_) })
+            $recent = @($cfg.recentBoards | Where-Object { $_ -and -not (Test-DisposableBoardPath $_) })
         }
-        if ($script:BlackboardPath -and (Test-Path $script:BlackboardPath) -and -not (Test-DisposableBoardPath $script:BlackboardPath)) {
-            $resolvedActive = (Resolve-Path $script:BlackboardPath -ErrorAction SilentlyContinue).Path
+        if ($script:BlackboardPath -and -not (Test-DisposableBoardPath $script:BlackboardPath)) {
+            $resolvedActive = if ($script:BlackboardPath.StartsWith("\\") -or $script:BlackboardPath.StartsWith("//")) {
+                [System.IO.Path]::GetFullPath($script:BlackboardPath)
+            } else {
+                $ra = (Resolve-Path $script:BlackboardPath -ErrorAction SilentlyContinue).Path
+                if ($ra) { $ra } else { [System.IO.Path]::GetFullPath($script:BlackboardPath) }
+            }
             if ($resolvedActive) {
                 $recent = @($resolvedActive) + @($recent | Where-Object {
-                    $r = (Resolve-Path $_ -ErrorAction SilentlyContinue).Path
+                    $itemPath = [string]$_
+                    $r = if ($itemPath.StartsWith("\\") -or $itemPath.StartsWith("//")) {
+                        [System.IO.Path]::GetFullPath($itemPath)
+                    } else {
+                        $ri = (Resolve-Path $itemPath -ErrorAction SilentlyContinue).Path
+                        if ($ri) { $ri } else { [System.IO.Path]::GetFullPath($itemPath) }
+                    }
                     $r -and ($r -ne $resolvedActive)
                 })
-                if ($recent.Count -gt 8) { $recent = $recent[0..7] }
             }
         }
         $cfg.recentBoards = $recent
         if ($cfg.boardSeats) {
             $keptSeats = [PSCustomObject]@{}
             foreach ($prop in @($cfg.boardSeats.PSObject.Properties)) {
-                if ((Test-DisposableBoardPath $prop.Name) -or -not (Test-Path -LiteralPath $prop.Name)) { continue }
+                if (Test-DisposableBoardPath $prop.Name) { continue }
                 $keptSeats | Add-Member -NotePropertyName $prop.Name -NotePropertyValue $prop.Value -Force
             }
             $cfg.boardSeats = $keptSeats
+        }
+        if ((Test-Path -LiteralPath $script:ProjectsRegistryPath) -and -not ($script:HeadlessTest -and (Test-SameFullPath $script:ProjectsRegistryPath $script:LiveProjectsRegistryPath))) {
+            $regMirror = Get-ProjectRegistry
+            $mirrorProjects = @($regMirror.projects | Where-Object { $_ -and $_.path })
+            if ($mirrorProjects.Count -gt 0) {
+                # Union, do not replace. Replacing dropped any board present in clients.json
+                # but not yet in projects.json (a partial migration, or after
+                # Unregister-Project), truncating recentBoards and losing board memory.
+                $union = New-Object System.Collections.Generic.List[string]
+                foreach ($b in @($recent)) {
+                    if ($b -and -not $union.Contains([string]$b)) { [void]$union.Add([string]$b) }
+                }
+                $mirrorSeats = [PSCustomObject]@{}
+                if ($cfg.boardSeats) {
+                    foreach ($prop in @($cfg.boardSeats.PSObject.Properties)) {
+                        $mirrorSeats | Add-Member -NotePropertyName $prop.Name -NotePropertyValue $prop.Value -Force
+                    }
+                }
+                foreach ($proj in $mirrorProjects) {
+                    $board = Get-ProjectBoardPath ([string]$proj.path)
+                    if (Test-DisposableBoardPath $board) { continue }
+                    if (-not $union.Contains($board)) { [void]$union.Add($board) }
+                    $seat1 = if ($proj.seats) { [string]$proj.seats.seat1 } else { "" }
+                    $seat2 = if ($proj.seats) { [string]$proj.seats.seat2 } else { "" }
+                    # Registry seats win, but only when the registry actually has something to
+                    # say: a blank registry seat must not erase a seat learned from clients.json.
+                    if ($seat1 -or $seat2) {
+                        $mirrorSeats | Add-Member -NotePropertyName $board -NotePropertyValue ([PSCustomObject]@{ seat1 = $seat1; seat2 = $seat2 }) -Force
+                    }
+                }
+                $recent = @($union)
+                $cfg.recentBoards = $recent
+                $cfg.boardSeats = $mirrorSeats
+            }
         }
         # One authoritative workspace list. Paths come from the recent list; the seat memory
         # comes from boardSeats, and a remembered board counts as a workspace even when it is
@@ -1281,7 +1616,6 @@ function Save-ClientConfiguration {
             foreach ($prop in @($cfg.boardSeats.PSObject.Properties)) {
                 if (-not $prop.Name) { continue }
                 if (Test-DisposableBoardPath $prop.Name) { continue }
-                if (-not (Test-Path -LiteralPath $prop.Name)) { continue }
                 if (-not $workspacePaths.Contains($prop.Name)) { [void]$workspacePaths.Add($prop.Name) }
             }
         }
@@ -1320,16 +1654,6 @@ function Save-ClientConfiguration {
         if ($txtStatus) { $txtStatus.Text = "Config save error: $($_.Exception.Message)" }
         Write-Warning "Save-ClientConfiguration failed: $_"
     }
-}
-
-function Test-DisposableBoardPath {
-    param([string]$path)
-    if ([string]::IsNullOrWhiteSpace($path)) { return $true }
-    $n = $path -replace '\\', '/'
-    if ($n -match '(?i)/bb-test-') { return $true }
-    $temp = if ($env:TEMP) { ($env:TEMP -replace '\\', '/').TrimEnd('/') } else { "" }
-    if ($temp -and $n.ToLower().StartsWith($temp.ToLower() + "/")) { return $true }
-    return $false
 }
 
 function Get-AutoStepMode {
@@ -1786,41 +2110,28 @@ function Populate-RecentBoardsDropdown {
     $script:SuppressBoardSwitch = $true
     try {
         $cbRecentBoards.Items.Clear()
-        $cfg = $script:ClientConfig
-        if (-not $cfg) { $cfg = Get-ClientConfiguration }
-        $recent = @()
-        if ($cfg.workspaces) {
-            $recent = @($cfg.workspaces | Where-Object { $_ -and $_.boardPath -and -not (Test-DisposableBoardPath $_.boardPath) -and (Test-Path $_.boardPath) } | ForEach-Object { [string]$_.boardPath })
-        }
-        if (-not $recent -and $cfg.recentBoards) {
-            $recent = @($cfg.recentBoards | Where-Object { $_ -and -not (Test-DisposableBoardPath $_) -and (Test-Path $_) })
-        }
-        if ($script:BlackboardPath -and (Test-Path $script:BlackboardPath) -and -not (Test-DisposableBoardPath $script:BlackboardPath)) {
-            $activeResolved = (Resolve-Path $script:BlackboardPath -ErrorAction SilentlyContinue).Path
-            if ($activeResolved -and -not ($recent | Where-Object { (Resolve-Path $_ -ErrorAction SilentlyContinue).Path -eq $activeResolved })) {
-                $recent = @($activeResolved) + $recent
-            }
-        }
+        $reg = Get-ProjectRegistry
+        $projects = @($reg.projects | Where-Object { $_ -and $_.path -and -not (Test-DisposableBoardPath (Get-ProjectBoardPath $_.path)) })
+        $projects = @($projects | Sort-Object @{ Expression = { -not [bool]$_.pinned } }, @{ Expression = { [string]$_.lastOpenedUtc }; Descending = $true })
 
         $selectedIdx = -1
         $currentIdx = 0
-        foreach ($bPath in $recent) {
-            $rPath = (Resolve-Path $bPath -ErrorAction SilentlyContinue).Path
-            if (-not $rPath) { continue }
-            $pDir = Split-Path $rPath -Parent
-            $isAi = ((Split-Path $pDir -Leaf) -eq ".ai")
-            $projName = if ($isAi) { Split-Path (Split-Path $pDir -Parent) -Leaf } else { Split-Path $pDir -Leaf }
-            $fileName = Split-Path $rPath -Leaf
-
-            $itemText = if ($fileName -eq "blackboard.md") { $projName } else { "$projName ($fileName)" }
+        $activeRoot = ""
+        if ($script:RepoRoot) { $activeRoot = (Get-CanonicalProjectPath $script:RepoRoot).ToLowerInvariant() }
+        foreach ($proj in $projects) {
+            $board = Get-ProjectBoardPath $proj.path
+            $reachable = Test-PathQuick $board
             $item = New-Object System.Windows.Controls.ComboBoxItem
-            $item.Content = $itemText
-            $item.Tag = $rPath
-            $item.ToolTip = $rPath
+            $label = [string]$proj.name
+            if (-not $reachable) {
+                $item.IsEnabled = $false
+                $label = "⛔ $label (offline)"
+            }
+            $item.Content = $label
+            $item.Tag = $board
+            $item.ToolTip = [string]$proj.path
             $cbRecentBoards.Items.Add($item) | Out-Null
-
-            $activeBb = (Resolve-Path $script:BlackboardPath -ErrorAction SilentlyContinue).Path
-            if ($activeBb -and ($activeBb -eq $rPath)) {
+            if ($activeRoot -and ([string]$proj.path).ToLowerInvariant() -eq $activeRoot) {
                 $selectedIdx = $currentIdx
             }
             $currentIdx++
@@ -1862,6 +2173,7 @@ function Set-ActiveBlackboardPath {
         $script:ExamplePath = Join-Path $script:AiDir "blackboard.example.md"
         $script:GitHubRepo = $null
         Save-LastOpenedRepo -repoPath $script:RepoRoot
+        Register-Project -Path $script:RepoRoot | Out-Null
 
         foreach ($dir in @($script:AiDir, $script:HistoryDir, $script:SavedDir)) {
             if (-not (Test-Path $dir)) {
@@ -6209,6 +6521,8 @@ function Invoke-HeadlessUiTest {
 
     $origClientsConfigPath = $script:ClientsConfigPath
     $script:ClientsConfigPath = Join-Path $tempUserConfigDir "clients.json"
+    $origProjectsRegistryPath = $script:ProjectsRegistryPath
+    $script:ProjectsRegistryPath = Join-Path $tempUserConfigDir "projects.json"
     $templatePath = Join-Path $script:ControllerRoot ".ai\blackboard.example.md"
     if (Test-Path $templatePath) {
         Copy-Item -Path $templatePath -Destination $tempBoardPath -Force
@@ -6513,12 +6827,92 @@ function Invoke-HeadlessUiTest {
             $popItems = @($txtPrompt.ContextMenu.Items | Where-Object { $_ -is [System.Windows.Controls.MenuItem] -and [string]$_.Header -eq "Open in resizable window" })
         }
         if ($popItems.Count -ne 1) { Add-Fail "Objective pop-out menu item missing" } else { Add-Pass "POPOUT_MENU" }
+
+        # P0 Offline Retention & 8-Cap Removal Assert
+        $dummyOffline = @()
+        for ($i = 1; $i -le 12; $i++) {
+            $dummyOffline += "\\bogus-server\share\proj$i\.ai\blackboard.md"
+        }
+        $testCfg = [PSCustomObject]@{
+            recentBoards = $dummyOffline
+            boardSeats   = [PSCustomObject]@{}
+            profiles     = @()
+        }
+        foreach ($p in $dummyOffline) {
+            $testCfg.boardSeats | Add-Member -NotePropertyName $p -NotePropertyValue ([PSCustomObject]@{ seat1 = "Cursor"; seat2 = "Antigravity" }) -Force
+        }
+        $script:ClientConfig = $testCfg
+        Save-ClientConfiguration
+        if (Test-Path $script:ClientsConfigPath) {
+            $savedCfg = Get-Content $script:ClientsConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if (-not $savedCfg.recentBoards -or $savedCfg.recentBoards.Count -lt 12) {
+                Add-Fail "P0: 12 offline recentBoards were capped or dropped (count=$($savedCfg.recentBoards.Count))"
+            } else {
+                Add-Pass "P0_NOCAP_OFFLINE_RETENTION"
+            }
+            if (-not $savedCfg.workspaces -or $savedCfg.workspaces.Count -lt 12) {
+                Add-Fail "P0: 12 offline workspaces were dropped (count=$($savedCfg.workspaces.Count))"
+            } else {
+                Add-Pass "P0_WORKSPACES_OFFLINE_RETENTION"
+            }
+        } else {
+            Add-Fail "P0: clients.json was not written during test"
+        }
+
+        $script:DriveUncMap['Z:'] = '\\srv\share'
+        $canonMapped = Get-CanonicalProjectPath 'Z:\projects\foo'
+        $canonUnc = Get-CanonicalProjectPath '\\srv\share\projects\foo'
+        if ($canonMapped -ne $canonUnc) {
+            Add-Fail "P1: canonicalizer did not match mapped drive to UNC ($canonMapped vs $canonUnc)"
+        } else {
+            Add-Pass "P1_CANONICAL_PATH"
+        }
+        $localCanon = Get-CanonicalProjectPath 'C:\local\proj'
+        if ($localCanon -ne 'C:\local\proj') {
+            Add-Fail "P1: local path was rewritten ($localCanon)"
+        } else {
+            Add-Pass "P1_LOCAL_PATH_UNCHANGED"
+        }
+        # Use a drive that is not yet cached so the counter is proven live, then repeat the
+        # call and require that it issues no second lookup.
+        $null = $script:DriveUncMap.Remove('R:')
+        $script:DriveUncQueryCount = 0
+        Get-CanonicalProjectPath 'R:\proj\x' | Out-Null
+        $queriesFirstCall = $script:DriveUncQueryCount
+        $script:DriveUncQueryCount = 0
+        Get-CanonicalProjectPath 'R:\proj\x' | Out-Null
+        $queriesSecondCall = $script:DriveUncQueryCount
+        $null = $script:DriveUncMap.Remove('R:')
+        if ($queriesFirstCall -lt 1) {
+            Add-Fail "P1: uncached drive issued no lookup, so the memoization counter is not wired"
+        } elseif ($queriesSecondCall -ne 0) {
+            Add-Fail "P1: cached drive re-queried $queriesSecondCall time(s)"
+        } else {
+            Add-Pass "P1_DRIVE_MAP_MEMOIZED"
+        }
+
+        $entryA = Register-Project -Path 'Z:\projects\foo'
+        $entryB = Register-Project -Path '\\srv\share\projects\foo'
+        $regNow = Get-ProjectRegistry
+        $foo = @($regNow.projects | Where-Object { $_.path -eq '\\srv\share\projects\foo' })
+        if ($foo.Count -ne 1 -or [string]$entryA.id -ne [string]$entryB.id) {
+            Add-Fail "P1: mapped drive and UNC registered as $($foo.Count) entries"
+        } else {
+            Add-Pass "P1_ONE_ENTRY_PER_FOLDER"
+        }
+        $offline = Register-Project -Path '\\bigdog\does-not-exist'
+        if (-not $offline) {
+            Add-Fail "P1: offline project was not registered"
+        } else {
+            Add-Pass "P1_OFFLINE_REGISTERED"
+        }
     }
     finally {
         $script:BlackboardPath = $origBoardPath
         $script:UserConfigDir = $origUserConfigDir
         $script:UserConfigPath = $origUserConfigPath
         $script:ClientsConfigPath = $origClientsConfigPath
+        if ($origProjectsRegistryPath) { $script:ProjectsRegistryPath = $origProjectsRegistryPath }
         if (Test-Path $tempBoardDir) {
             try {
                 if (Test-Path $tempBoardPath) { Remove-Item -Path $tempBoardPath -Force -ErrorAction SilentlyContinue }
@@ -6660,6 +7054,19 @@ if ($HeadlessTest) {
         } else {
             Add-Content -LiteralPath $liveLog -Value "PASS LIVE_CONFIG_INTEGRITY_VERIFIED"
             Write-Output "PASS LIVE_CONFIG_INTEGRITY_VERIFIED"
+        }
+    }
+    $projGuard = $script:LiveProjectsRegistryPath
+    $projBefore = $script:HeadlessProjectsHashBefore
+    if ($projGuard -and (Test-Path -LiteralPath $projGuard)) {
+        $projAfter = (Get-FileHash -LiteralPath $projGuard -Algorithm SHA256).Hash
+        if ($projBefore -ne $projAfter) {
+            Add-Content -LiteralPath $liveLog -Value "FAIL LIVE_PROJECTS_MUTATED"
+            Write-Output "FAIL LIVE_PROJECTS_MUTATED"
+            $script:HeadlessExitCode = 1
+        } else {
+            Add-Content -LiteralPath $liveLog -Value "PASS LIVE_PROJECTS_INTEGRITY_VERIFIED"
+            Write-Output "PASS LIVE_PROJECTS_INTEGRITY_VERIFIED"
         }
     }
     exit $script:HeadlessExitCode
