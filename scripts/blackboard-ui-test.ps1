@@ -23,10 +23,12 @@ if (-not (Test-Path $scriptPath)) {
 $proc = Start-Process -FilePath "pwsh" -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$scriptPath`"", "-HeadlessTest" -PassThru -Wait -NoNewWindow
 $log = Join-Path $env:TEMP "blackboard-ui-test-last.txt"
 $logFail = $false
+$logPassAll = $false
 if (Test-Path $log) {
     $logFail = [bool](Select-String -Path $log -Pattern "^FAIL " -Quiet)
+    $logPassAll = [bool](Select-String -Path $log -Pattern "^PASS ALL" -Quiet)
 }
-if ($proc.ExitCode -eq 0 -and -not $logFail) {
+if ($logPassAll -and -not $logFail) {
     Write-Host "PASS: All blackboard UI headless checks passed." -ForegroundColor Green
     exit 0
 }

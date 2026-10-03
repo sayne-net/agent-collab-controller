@@ -1,7 +1,8 @@
 # AI Collab Controller (WPF UI)
-# Version 1.5.7
+# Version 1.5.8
 # Standalone dual-session controller for multi-agent collaboration with human-in-the-loop steering.
 # SemVer tracks protocol and feature releases. Do not bump the patch on every local edit.
+# 1.5.8: replace closing phase with debrief, AI sign-off gates check across all phases and close, Refactor preset.
 # 1.5.7: single-issue objective input box with HUMn codes, retain objective in debrief, DeepSeek Harness profile, strict 3-signoff close.
 # 1.5.6: kickoff and re-prompt no longer paste scratchpad excerpts or repeat the scratchpad rule.
 # 1.5.5: last-response panes show the whole scratchpad, not the first bold bullet.
@@ -18,8 +19,9 @@ $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
 
-$script:AppVersion = "v1.5.7"
-$script:EnabledPhases = @("pitch","discuss","plan","implement","review","test","closing","debrief")
+$script:HeadlessTest = [bool]$HeadlessTest
+$script:AppVersion = "v1.5.8"
+$script:EnabledPhases = @("pitch","discuss","plan","implement","review","test","debrief")
 $script:UnsignedRollbackStreak = 0
 $script:LastImplementerSeat = $null
 $script:PhaseBeforeReconcile = ""
@@ -375,9 +377,10 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                 <TextBlock Text="⚡ Task Preset:" FontWeight="Bold" FontSize="11" Foreground="#BAC2DE" VerticalAlignment="Center" Margin="0,0,6,0"/>
                 <ComboBox Name="cbPresets" Width="150" SelectedIndex="0" Margin="0,0,10,0" ToolTip="Task preset sets which phase badges are on. It does not assign roles.">
-                    <ComboBoxItem Content="Full" Tag="Full" ToolTip="Phases on: pitch, discuss, plan, implement, review, test, closing, debrief"/>
-                    <ComboBoxItem Content="Hotfix" Tag="Hotfix" ToolTip="Phases on: implement, test, closing, debrief"/>
+                    <ComboBoxItem Content="Full" Tag="Full" ToolTip="Phases on: pitch, discuss, plan, implement, review, test, debrief"/>
+                    <ComboBoxItem Content="Hotfix" Tag="Hotfix" ToolTip="Phases on: implement, test, debrief"/>
                     <ComboBoxItem Content="Docs" Tag="Docs" ToolTip="Phases on: discuss, implement, test, debrief"/>
+                    <ComboBoxItem Content="Refactor" Tag="Refactor" ToolTip="Phases on: discuss, plan, implement, review, test, debrief"/>
                     <ComboBoxItem Content="RFC" Tag="RFC" ToolTip="Phases on: pitch, discuss, debrief"/>
                 </ComboBox>
                 <TextBlock Text="📍 Current Phase:" FontWeight="Bold" FontSize="11" Foreground="#BAC2DE" VerticalAlignment="Center" Margin="0,0,6,0"/>
@@ -389,7 +392,6 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                     <ComboBoxItem Content="implement (Active Coding)"/>
                     <ComboBoxItem Content="review (Audit &amp; Verification)"/>
                     <ComboBoxItem Content="test (Verify scripts/UI)"/>
-                    <ComboBoxItem Content="closing (Final sign-off)"/>
                     <ComboBoxItem Content="debrief (Post-run Review)"/>
                     <ComboBoxItem Content="reconcile (Disagreement turns)"/>
                 </ComboBox>
@@ -3171,7 +3173,6 @@ function Set-RolesForPhase {
         "implement" { "review","review" }
         "review"    { "review","review" }
         "test"      { "review","review" }
-        "closing"   { "idle","idle" }
         "debrief"   { "advise","advise" }
         "reconcile" { "advise","advise" }
         "closed"    { "idle","idle" }
@@ -3192,6 +3193,10 @@ function Set-Phase {
     $script:SuppressRoleDefault = $true
     try {
         $tgt = $targetPhase.Trim().ToLower()
+        if ($tgt -eq "debrief" -and $txtPrompt -and [string]::IsNullOrWhiteSpace($txtPrompt.Text)) {
+            if ($txtStatus) { $txtStatus.Text = "Cannot switch to debrief: Objective prompt cannot be empty." }
+            return
+        }
         if ($tgt -in @("pitch", "discuss", "implement", "test")) {
             $script:ClosingSignoffsCompleted = $false
         }
@@ -3214,7 +3219,7 @@ function Set-Phase {
 
 function Get-NextPhase {
     param([string]$currentPhase)
-    $ladder = @("pitch","discuss","plan","implement","review","test","closing","debrief","ready")
+    $ladder = @("pitch","discuss","plan","implement","review","test","debrief","ready")
     $cur = $currentPhase.ToLower()
     if ($cur -eq "advise") { $cur = "discuss" }
     if ($cur -eq "closed") { $cur = "ready" }
@@ -3255,15 +3260,15 @@ function Test-RequiredSignoffsMet {
         $Mode = Get-AutoStepMode
     }
     if ($chkSignHuman -and -not $chkSignHuman.IsChecked) { return $false }
-    if ($Mode -eq "L1") { return $true }
 
     $seat1 = Get-Seat1Client
     $seat2 = Get-Seat2Client
     $need1 = Test-SeatRequired $cbCursorRole $seat1 $chkGateSeat1
     $need2 = Test-SeatRequired $cbGeminiRole $seat2 $chkGateSeat2
 
+    # L1 and L2 do not skip a seat whose sign-off gate is on.
     if ($need1 -and $chkSignCursor -and -not $chkSignCursor.IsChecked) { return $false }
-    if ($Mode -eq "L2") { return $true }
+    if ($Mode -eq "L2" -and -not $need2) { return $true }
 
     if ($need2 -and $chkSignGemini -and -not $chkSignGemini.IsChecked) { return $false }
     return $true
@@ -3331,22 +3336,14 @@ function Check-PhaseAutoAdvance {
     $nextPhase = Get-NextPhase $currentPhase
     if ($nextPhase -eq $currentPhase) { return }
 
-    if ($currentPhase -eq "closing") {
-        $script:ClosingSignoffsCompleted = $true
-        $askClose = [System.Windows.MessageBox]::Show(
-            "All 3 sign-offs complete for Closing.`n`nShip project code now (run git audit, commit, push) and proceed to Debrief?`n`nClick 'Yes' to Ship code and advance to Debrief.`nClick 'No' to advance to Debrief without shipping yet.",
-            "Ship Code and Advance to Debrief",
-            [System.Windows.MessageBoxButton]::YesNo,
-            [System.Windows.MessageBoxImage]::Question
-        )
-        if ($askClose -eq [System.Windows.MessageBoxResult]::Yes) {
-            Invoke-CloseProjectGitShip -allSigned $true
-        }
+    if ($nextPhase -eq "debrief" -and $txtPrompt -and [string]::IsNullOrWhiteSpace($txtPrompt.Text)) {
+        if ($txtStatus) { $txtStatus.Text = "Auto-advance to debrief blocked: Objective prompt cannot be empty." }
+        return
     }
 
     if ($currentPhase -eq "debrief") {
         $askClose = [System.Windows.MessageBox]::Show(
-            "Debrief complete with all 3 sign-offs.`n`nClose Project now (run git audit, commit, push, archive, and open ready)?`n`nClick 'Yes' to Close and Ship project now.`nClick 'No' to arm New Chat and move to ready.",
+            "Debrief complete with all required sign-offs.`n`nClose Project now (run git audit, commit, push, archive, and open ready)?`n`nClick 'Yes' to Close and Ship project now.`nClick 'No' to arm New Chat and move to ready.",
             "Close Project or Advance to Ready",
             [System.Windows.MessageBoxButton]::YesNo,
             [System.Windows.MessageBoxImage]::Question
@@ -3409,7 +3406,7 @@ function Invoke-UnsignedTestRollback {
     if (-not $script:PendingUnsignedRollback) { return }
     $script:PendingUnsignedRollback = $false
     $phaseNow = Get-PhaseString
-    if ($phaseNow -ne "test" -and $phaseNow -ne "closing") { return }
+    if ($phaseNow -ne "test") { return }
     if ((Get-AutoStepMode) -eq "Off") { return }
     $flow = Get-FlowControlString
     if ($flow -match "STOP|PAUSE") { return }
@@ -3427,7 +3424,7 @@ function Invoke-UnsignedTestRollback {
         if ($txtStatus) { $txtStatus.Text = "Auto step: an AI $phaseNow turn has no Sign-off [x]. Phase badge returned to implement. Roles were left as assigned. Streak $($script:UnsignedRollbackStreak)." }
         if ($script:UnsignedRollbackStreak -ge 3) {
             $swapAsk = [System.Windows.MessageBox]::Show(
-                "This run has rolled back from test or closing 3 times without a sign-off.`n`nSwap the implement seat to the other AI?",
+                "This run has rolled back from test 3 times without a sign-off.`n`nSwap the implement seat to the other AI?",
                 "Swap implement seat?",
                 [System.Windows.MessageBoxButton]::YesNo,
                 [System.Windows.MessageBoxImage]::Question,
@@ -3502,7 +3499,7 @@ function Get-ActiveTurn {
 
     # 2. Closed phase with all 3 signed off -> Ready to close / archive
     $phaseNow = Get-PhaseString
-    if ((Test-RequiredSignoffsMet) -and ($phaseNow -eq "closing" -or $phaseNow -eq "debrief" -or $phaseNow -eq "ready" -or $phaseNow -eq "closed")) {
+    if ((Test-RequiredSignoffsMet) -and ($phaseNow -eq "debrief" -or $phaseNow -eq "ready" -or $phaseNow -eq "closed")) {
         $badgeTurn.Background = [System.Windows.Media.Brushes]::DarkGreen
         $txtActiveTurn.Foreground = [System.Windows.Media.Brushes]::White
         return "✅ Complete - Ready to Close"
@@ -3568,8 +3565,15 @@ function Update-UiActiveTurn {
     $txtActiveTurn.Text = Get-ActiveTurn
     if ($btnCloseProject) {
         $phaseForClose = Get-PhaseString
-        $isSignedOrCompleted = ($chkSignHuman.IsChecked -and $chkSignCursor.IsChecked -and $chkSignGemini.IsChecked) -or ($script:ClosingSignoffsCompleted -and ($phaseForClose -eq "debrief" -or $phaseForClose -eq "ready"))
-        if (($phaseForClose -eq "closing" -or $phaseForClose -eq "debrief" -or $phaseForClose -eq "ready" -or $phaseForClose -eq "closed") -and $isSignedOrCompleted) {
+        $s1 = Get-Seat1Client
+        $s2 = Get-Seat2Client
+        $need1 = Test-SeatRequired $cbCursorRole $s1 $chkGateSeat1
+        $need2 = Test-SeatRequired $cbGeminiRole $s2 $chkGateSeat2
+        $signHuman = if ($chkSignHuman) { [bool]$chkSignHuman.IsChecked } else { $false }
+        $signCursor = if ($chkSignCursor) { [bool]$chkSignCursor.IsChecked } else { $false }
+        $signGemini = if ($chkSignGemini) { [bool]$chkSignGemini.IsChecked } else { $false }
+        $isSigned = $signHuman -and ((-not $need1) -or $signCursor) -and ((-not $need2) -or $signGemini)
+        if (($phaseForClose -eq "debrief" -or $phaseForClose -eq "ready" -or $phaseForClose -eq "closed") -and $isSigned) {
             $btnCloseProject.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#A6E3A1")
             $btnCloseProject.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#11111B")
         } else {
@@ -3910,9 +3914,12 @@ function Update-GitStatusSummary {
 }
 
 function Invoke-CloseProjectGitShip {
-    param([bool]$allSigned)
+    param(
+        [bool]$allSigned,
+        [bool]$promptConfirm = $true
+    )
     if (-not $allSigned) { return }
-    if (Test-SameFullPath $script:RepoRoot $script:ControllerRoot) {
+    if ($promptConfirm -and (Test-SameFullPath $script:RepoRoot $script:ControllerRoot)) {
         $selfAsk = [System.Windows.MessageBox]::Show(
             "The active git root is the controller repo itself:`n$script:RepoRoot`n`nClose Project will commit and push that repo. Continue only if this session is about the controller.",
             "Controller repo is the git target",
@@ -3933,29 +3940,36 @@ function Invoke-CloseProjectGitShip {
     if ($audit.Untracked.Count -gt 0) { [void]$lines.Add("Untracked (will NOT auto-add):`n  " + ($audit.Untracked -join "`n  ")) }
     [void]$lines.Add("")
     if ($audit.Allowed.Count -gt 0) {
-        [void]$lines.Add("Commit these tracked files now?")
-        $commitAsk = [System.Windows.MessageBox]::Show(($lines -join "`n"), "Close Project git audit", [System.Windows.MessageBoxButton]::YesNo, [System.Windows.MessageBoxImage]::Question)
-        if ($commitAsk -eq [System.Windows.MessageBoxResult]::Yes) {
-        foreach ($p in $audit.Allowed) {
-            git -C $script:RepoRoot add -- $p
-        }
-        $issueHint = $txtIssueNum.Text.Trim()
-        $msg = if ($issueHint -and $issueHint -ne "none") {
-            "docs: ship on Close Project (Refs #$issueHint)"
+        $doCommit = if ($promptConfirm) {
+            [void]$lines.Add("Commit these tracked files now?")
+            ([System.Windows.MessageBox]::Show(($lines -join "`n"), "Close Project git audit", [System.Windows.MessageBoxButton]::YesNo, [System.Windows.MessageBoxImage]::Question) -eq [System.Windows.MessageBoxResult]::Yes)
         } else {
-            "docs: ship on Close Project"
+            $false
         }
-        git -C $script:RepoRoot commit -m $msg
-        if ($LASTEXITCODE -ne 0) {
-            $txtStatus.Text = "Warning: git commit on Close Project failed (exit $LASTEXITCODE)."
-        }
+        if ($doCommit) {
+            foreach ($p in $audit.Allowed) {
+                git -C $script:RepoRoot add -- $p
+            }
+            $issueHint = $txtIssueNum.Text.Trim()
+            $msg = if ($issueHint -and $issueHint -ne "none") {
+                "docs: ship on Close Project (Refs #$issueHint)"
+            } else {
+                "docs: ship on Close Project"
+            }
+            git -C $script:RepoRoot commit -m $msg
+            if ($LASTEXITCODE -ne 0) {
+                $txtStatus.Text = "Warning: git commit on Close Project failed (exit $LASTEXITCODE)."
+            }
         }
     }
     if ($audit.Blocked.Count -gt 0) {
-        [System.Windows.MessageBox]::Show("Push skipped. Refused dirty paths are still in the working tree:`n`n" + ($audit.Blocked -join "`n"), "Close Project push skipped", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
+        if ($promptConfirm) {
+            [System.Windows.MessageBox]::Show("Push skipped. Refused dirty paths are still in the working tree:`n`n" + ($audit.Blocked -join "`n"), "Close Project push skipped", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
+        }
         $txtStatus.Text = "Push skipped: refused dirty paths remain."
         return
     }
+    if (-not $promptConfirm) { return }
     git -C $script:RepoRoot fetch origin main 2>$null | Out-Null
     $aheadStr = (git -C $script:RepoRoot rev-list --count origin/main..HEAD 2>$null)
     $behindStr = (git -C $script:RepoRoot rev-list --count HEAD..origin/main 2>$null)
@@ -3999,32 +4013,45 @@ function Invoke-CloseProjectWorkflow {
     param(
         [bool]$promptConfirm = $true
     )
+    $script:ClosingSignoffsCompleted = $false
     $signHuman = if ($chkSignHuman) { [bool]$chkSignHuman.IsChecked } else { $false }
     $signCursor = if ($chkSignCursor) { [bool]$chkSignCursor.IsChecked } else { $false }
     $signGemini = if ($chkSignGemini) { [bool]$chkSignGemini.IsChecked } else { $false }
-    $allSigned = ($signHuman -and $signCursor -and $signGemini) -or $script:ClosingSignoffsCompleted
-    $phaseNow = Get-PhaseString
 
     $s1 = Get-Seat1Client
     $s2 = Get-Seat2Client
+    $need1 = Test-SeatRequired $cbCursorRole $s1 $chkGateSeat1
+    $need2 = Test-SeatRequired $cbGeminiRole $s2 $chkGateSeat2
+
+    $signHumanMet = $signHuman
+    $signSeat1Met = (-not $need1) -or $signCursor
+    $signSeat2Met = (-not $need2) -or $signGemini
+    $allSigned = $signHumanMet -and $signSeat1Met -and $signSeat2Met
+    $phaseNow = Get-PhaseString
 
     if (-not $allSigned) {
+        $neededList = @("Human")
+        if ($need1) { $neededList += $s1 }
+        if ($need2) { $neededList += $s2 }
+        $neededStr = $neededList -join ", "
         if ($promptConfirm) {
             [System.Windows.MessageBox]::Show(
-                "Cannot close project: All three participant sign-offs (Human, $s1, $s2) must be checked ([x]).`n`nPlease ensure all sign-offs are completed before closing.",
+                "Cannot close project: Required participant sign-offs ($neededStr) must be checked ([x]).`n`nPlease ensure all required sign-offs are completed before closing.",
                 "Sign-offs Incomplete",
                 [System.Windows.MessageBoxButton]::OK,
                 [System.Windows.MessageBoxImage]::Warning
             ) | Out-Null
         }
-        if ($txtStatus) { $txtStatus.Text = "Close Project blocked: Human, $s1, and $s2 sign-offs must all be checked." }
+        if ($txtStatus) { $txtStatus.Text = "Close Project blocked: Required sign-offs ($neededStr) must all be checked." }
         return $false
     }
 
+    if ($script:HeadlessTest) { return $true }
+
     if ($promptConfirm) {
-        if ($phaseNow -ne "test" -and $phaseNow -ne "closing" -and $phaseNow -ne "debrief" -and $phaseNow -ne "ready" -and $phaseNow -ne "closed") {
+        if ($phaseNow -ne "test" -and $phaseNow -ne "debrief" -and $phaseNow -ne "ready" -and $phaseNow -ne "closed") {
             $testWarn = [System.Windows.MessageBox]::Show(
-                "Project phase is '$phaseNow' (not test). For programs/scripts, sign-off should follow the test phase.`n`nClose anyway?",
+                "Project phase is '$phaseNow' (not test or debrief). For programs/scripts, sign-off should follow the test phase.`n`nClose anyway?",
                 "Testing phase not reached",
                 [System.Windows.MessageBoxButton]::YesNo,
                 [System.Windows.MessageBoxImage]::Warning
@@ -4034,7 +4061,7 @@ function Invoke-CloseProjectWorkflow {
             }
         }
 
-        $confirmMsg = "All participants (Human, $s1, $s2) have signed off.`n`nClose this project, archive session history, and reset board to idle?"
+        $confirmMsg = "Required participants have signed off.`n`nClose this project, archive session history, and reset board to idle?"
         $result = [System.Windows.MessageBox]::Show($confirmMsg, "Close Project", [System.Windows.MessageBoxButton]::YesNo, [System.Windows.MessageBoxImage]::Question)
         if ($result -ne [System.Windows.MessageBoxResult]::Yes) {
             return $false
@@ -4043,10 +4070,10 @@ function Invoke-CloseProjectWorkflow {
 
     $s1 = Get-Seat1Client
     $s2 = Get-Seat2Client
-    Invoke-CloseProjectGitShip -allSigned ([bool]$allSigned)
+    Invoke-CloseProjectGitShip -allSigned ([bool]$allSigned) -promptConfirm $promptConfirm
 
     $num = if ($txtIssueNum) { $txtIssueNum.Text.Trim() } else { "" }
-    if ($num -and $num -ne "none") {
+    if ($promptConfirm -and $num -and $num -ne "none") {
         $closeIssuePrompt = [System.Windows.MessageBox]::Show("Linked GitHub Issue #$num detected.`n`nClose Issue #$num on GitHub via gh CLI?", "Close GitHub Issue #$num", [System.Windows.MessageBoxButton]::YesNo, [System.Windows.MessageBoxImage]::Question)
         if ($closeIssuePrompt -eq [System.Windows.MessageBoxResult]::Yes) {
             try {
@@ -4075,7 +4102,7 @@ function Invoke-CloseProjectWorkflow {
         }
     }
 
-    Auto-ArchiveSnapshot -customLabel $slug
+    $null = Auto-ArchiveSnapshot -customLabel $slug
     Clear-FormInMemory
     $script:ClosingSignoffsCompleted = $false
     if ($chkNewChatKickoff) {
@@ -4110,9 +4137,6 @@ function Get-RoleGuidance {
     }
     if ($phase -eq "review") {
         return "Project phase is REVIEW. Read the implementer's notes and diff. On this first review pass, write each UI control to the board, read that markdown back into the control, and compare them before sign-off. A parse-only check does not pass review. FORBIDDEN: editing the same tracked files the implementer is changing. GO does not make you implement."
-    }
-    if ($phase -eq "closing") {
-        return "Project phase is CLOSING. Your role is idle. Do not edit tracked files or start new work. Your one action is the final sign-off: write Sign-off: [x] on your top scratchpad bullet and mark your Agent Roles row [x] so the project can advance to debrief."
     }
     if ($phase -eq "test") {
         return "Project phase is TEST. Run scripts/blackboard-ui-test.ps1. It uses a hidden window and does not attach to the already-open controller. Record its PASS or FAIL in your scratchpad. Do not start a second interactive controller. FORBIDDEN: new features. After a recorded pass (or N/A with why), set your Agent Roles Sign-off [x] and scratchpad Sign-off: [x]. GO does not mean implement."
@@ -4160,7 +4184,7 @@ function Get-KickoffPromptForAgent {
     if (-not $fullObj) { $fullObj = "(Refer to $boardPath)" }
 
     $roleGuidance = Get-RoleGuidance $normRole
-    if ($normRole -eq "idle" -or $phase -eq "closing") {
+    if ($normRole -eq "idle") {
         return @"
 You hold IDLE on $script:ProjectName$issueText.
 Phase: $phase. Flow: $flow.
@@ -4202,7 +4226,7 @@ function Get-RepromptPromptForAgent {
     } else {
         "Read $boardPath again and respond to the latest notes from the other agent or the Human Lead."
     }
-    if ($normRole -eq "idle" -or $phase -eq "closing") {
+    if ($normRole -eq "idle") {
         return "IDLE. Phase: $phase. Read $boardPath. Do not act and do not edit files."
     }
     return @"
@@ -5005,6 +5029,9 @@ function Auto-ArchiveSnapshot {
                 }
             } catch {}
         }
+        if (-not (Test-Path $script:HistoryDir)) {
+            New-Item -ItemType Directory -Force -Path $script:HistoryDir | Out-Null
+        }
         $archiveFile = Join-Path $script:HistoryDir ("blackboard-" + $ts + $suffix + ".md")
         Copy-Item -Path $script:BlackboardPath -Destination $archiveFile -Force
         $txtStatus.Text = "Archived snapshot: " + (Split-Path $archiveFile -Leaf)
@@ -5049,7 +5076,7 @@ function Send-AgentChatPaste {
         elseif ($clientName -eq "VS Code") { $procName = "Code" }
         elseif ($clientName -eq "Terminal") { $procName = "WindowsTerminal" }
         elseif ($clientName -eq "Codex" -or $clientName -eq "ChatGPT") { $procName = "ChatGPT" }
-        elseif ($clientName -eq "DeepSeek") { $procName = "harness" }
+        elseif ($clientName -eq "DeepSeek") { $procName = "DeepSeek Harness" }
     }
     
     if ([string]::IsNullOrWhiteSpace($procName)) {
@@ -5211,10 +5238,11 @@ function Apply-SelectedWorkflowPreset {
         $preset = if ($item -and $item.Tag) { [string]$item.Tag } elseif ($item) { [string]$item.Content } else { "Discuss" }
 
         switch -Regex ($preset) {
-            "Hotfix" { $script:EnabledPhases = @("implement","test","closing","debrief") }
-            "Docs"   { $script:EnabledPhases = @("discuss","implement","test","debrief") }
-            "RFC"    { $script:EnabledPhases = @("pitch","discuss","debrief") }
-            default  { $script:EnabledPhases = @("pitch","discuss","plan","implement","review","test","closing","debrief") }
+            "Hotfix"   { $script:EnabledPhases = @("implement","test","debrief") }
+            "Docs"     { $script:EnabledPhases = @("discuss","implement","test","debrief") }
+            "Refactor" { $script:EnabledPhases = @("discuss","plan","implement","review","test","debrief") }
+            "RFC"      { $script:EnabledPhases = @("pitch","discuss","debrief") }
+            default    { $script:EnabledPhases = @("pitch","discuss","plan","implement","review","test","debrief") }
         }
         $script:FormDirty = $true
         $txtStatus.Text = "Task preset applied: $preset. Roles were not changed. Enabled phases: $($script:EnabledPhases -join ', ')"
@@ -6100,7 +6128,7 @@ function Invoke-HeadlessUiTest {
     if (Test-Path $templatePath) {
         Copy-Item -Path $templatePath -Destination $tempBoardPath -Force
     } else {
-        [System.IO.File]::WriteAllText($tempBoardPath, "# Dual-Session Agent Blackboard`n`n> **Flow Control**: ``🟢 GO```n> **Project Phase**: ``ready```n> **Active Turn**: 👤 Waiting on Human (Lead)`n> **GitHub Issue**: none`n> **Enabled Phases**: ``pitch,discuss,plan,implement,review,test,closing,debrief```n> **Implementation Scope**: ``Code```n`n---`n`n## Agent Roles & Safety`n`n| Participant | Active Role | Status | Sign-off (Complete) |`n|---|---|---|---|`n| **Human (Lead)** | ``lead`` | Active | [ ] |`n| **Cursor** | ``idle`` | Active | [ ] |`n| **Antigravity** | ``idle`` | Active | [ ] |`n`n---`n`n## Current Objective & Prompt`n`n`n`n---`n`n## Alignment & Agreed Decisions`n`n`n`n---`n`n## Bugs`n`n`n`n---`n`n## Working Notes & Scratchpads`n`n### Human (Lead)`n- Active steering notes.`n`n### Cursor Scratchpad`n- (Cursor updates here)`n`n### Antigravity Scratchpad`n- (Antigravity updates here)`n")
+        [System.IO.File]::WriteAllText($tempBoardPath, "# Dual-Session Agent Blackboard`n`n> **Flow Control**: ``🟢 GO```n> **Project Phase**: ``ready```n> **Active Turn**: 👤 Waiting on Human (Lead)`n> **GitHub Issue**: none`n> **Enabled Phases**: ``pitch,discuss,plan,implement,review,test,debrief```n> **Implementation Scope**: ``Code```n`n---`n`n## Agent Roles & Safety`n`n| Participant | Active Role | Status | Sign-off (Complete) |`n|---|---|---|---|`n| **Human (Lead)** | ``lead`` | Active | [ ] |`n| **Cursor** | ``idle`` | Active | [ ] |`n| **Antigravity** | ``idle`` | Active | [ ] |`n`n---`n`n## Current Objective & Prompt`n`n`n`n---`n`n## Alignment & Agreed Decisions`n`n`n`n---`n`n## Bugs`n`n`n`n---`n`n## Working Notes & Scratchpads`n`n### Human (Lead)`n- Active steering notes.`n`n### Cursor Scratchpad`n- (Cursor updates here)`n`n### Antigravity Scratchpad`n- (Antigravity updates here)`n")
     }
 
     $script:BlackboardPath = $tempBoardPath
@@ -6176,12 +6204,49 @@ function Invoke-HeadlessUiTest {
         $btnSubmitObjectiveItem.RaiseEvent((New-Object System.Windows.RoutedEventArgs ([System.Windows.Controls.Primitives.ButtonBase]::ClickEvent)))
         if ($txtPrompt.Text -notmatch 'HUM2:\s*Second human issue') { Add-Fail "Objective submit did not add HUM2" } else { Add-Pass "OBJ_SUBMIT_2" }
 
-        # Close Project 3-Signoff Guard Assert
+        # Debrief Empty Objective Guard Assert
+        $txtPrompt.Text = ""
+        Set-Phase "debrief"
+        if ((Get-PhaseString) -eq "debrief") { Add-Fail "Set-Phase debrief allowed switch on empty prompt" } else { Add-Pass "DEBRIEF_EMPTY_OBJ_REFUSED" }
+        $txtPrompt.Text = "HUM1: Active task retained for debrief"
+        Set-Phase "debrief"
+        if ((Get-PhaseString) -ne "debrief") { Add-Fail "Set-Phase debrief failed on non-empty prompt" } else { Add-Pass "DEBRIEF_NONEMPTY_OBJ_ALLOWED" }
+
+        Set-AutoStepMode "L1"
+        $chkGateSeat1.IsChecked = $true
+        $chkGateSeat2.IsChecked = $false
+        $chkSignHuman.IsChecked = $true
+        $chkSignCursor.IsChecked = $false
+        $chkSignGemini.IsChecked = $false
+        if (Test-RequiredSignoffsMet -Mode "L1") { Add-Fail "L1 advanced with seat 1 gate on and unsigned" } else { Add-Pass "L1_GATE_ON_BLOCKS" }
+        $chkGateSeat1.IsChecked = $false
+        if (-not (Test-RequiredSignoffsMet -Mode "L1")) { Add-Fail "L1 blocked when seat 1 gate was off" } else { Add-Pass "L1_GATE_OFF_ALLOWS" }
+        $chkGateSeat1.IsChecked = $true
+        $chkGateSeat2.IsChecked = $true
+
+        # Close Project 3-Signoff Guard & AI Gate Check Assert
+        $chkGateSeat1.IsChecked = $true
+        $chkGateSeat2.IsChecked = $true
         $chkSignHuman.IsChecked = $false
         $chkSignCursor.IsChecked = $true
         $chkSignGemini.IsChecked = $true
         $closeRes = Invoke-CloseProjectWorkflow -promptConfirm $false
-        if ($closeRes -ne $false) { Add-Fail "Close Project permitted close without all 3 sign-offs" } else { Add-Pass "CLOSE_3SIGNOFF_GUARD" }
+        if ($closeRes -ne $false) { Add-Fail "Close Project permitted close without human sign-off" } else { Add-Pass "CLOSE_HUMAN_REQUIRED" }
+
+        # AI Gate OFF does not require that seat. Do not run the full close workflow here.
+        $chkSignHuman.IsChecked = $true
+        $chkSignCursor.IsChecked = $false
+        $chkSignGemini.IsChecked = $true
+        $chkGateSeat1.IsChecked = $false
+        $need1 = Test-SeatRequired $cbCursorRole (Get-Seat1Client) $chkGateSeat1
+        if ($need1 -or -not $chkSignHuman.IsChecked) { Add-Fail "Close Project failed when Gate 1 was OFF" } else { Add-Pass "CLOSE_AI_GATE1_OFF_BYPASS" }
+
+        # Restore gates
+        $chkGateSeat1.IsChecked = $true
+        $chkGateSeat2.IsChecked = $true
+        $chkSignHuman.IsChecked = $false
+        $chkSignCursor.IsChecked = $false
+        $chkSignGemini.IsChecked = $false
 
         # Implement Phase Default Roles Assert
         Set-RolesForPhase "implement"
@@ -6229,18 +6294,40 @@ function Invoke-HeadlessUiTest {
         $chkGateSeat2.IsChecked = $true
         Save-BlackboardContent
 
-        # Auto Step L1-L3 Assert
+        # Workflow Presets & Implementation Scope Separation Assert
+        $scopeBefore = [string]$cbImplementMode.Text
+        for ($i = 0; $i -lt $cbPresets.Items.Count; $i++) {
+            if ([string]$cbPresets.Items[$i].Tag -eq "Refactor") { $cbPresets.SelectedIndex = $i; break }
+        }
+        Apply-SelectedWorkflowPreset
+        if ($script:EnabledPhases -notcontains "plan" -or $script:EnabledPhases -contains "pitch" -or $script:EnabledPhases -contains "closing") {
+            Add-Fail "Refactor preset enabled phases incorrect: $($script:EnabledPhases -join ',')"
+        } else {
+            Add-Pass "PRESET_REFACTOR_PHASES"
+        }
+        if ([string]$cbImplementMode.Text -ne $scopeBefore) {
+            Add-Fail "Preset changed Implementation Scope unexpectedly"
+        } else {
+            Add-Pass "PRESET_SCOPE_SEPARATION"
+        }
+
+        # Auto Step L1-L3 Assert. Gates that are on still count, including at L1 and L2.
         $script:SuppressPhaseAutoAdvance = $true
         try {
             Set-AutoStepMode "L1"
             if ((Get-AutoStepMode) -ne "L1") { Add-Fail "Set-AutoStepMode L1 failed" } else { Add-Pass "AUTOSTEP_L1_SET" }
+            $chkGateSeat1.IsChecked = $false
+            $chkGateSeat2.IsChecked = $false
             $chkSignHuman.IsChecked = $true
             $chkSignCursor.IsChecked = $false
             $chkSignGemini.IsChecked = $false
             if (-not (Test-RequiredSignoffsMet "L1")) { Add-Fail "L1 sign-off check failed with human signed" } else { Add-Pass "AUTOSTEP_L1_CHECK" }
+            $chkGateSeat1.IsChecked = $true
             if (Test-RequiredSignoffsMet "L2") { Add-Fail "L2 sign-off check should be false without Seat 1" } else { Add-Pass "AUTOSTEP_L2_CHECK_FALSE" }
             $chkSignCursor.IsChecked = $true
+            $chkGateSeat2.IsChecked = $false
             if (-not (Test-RequiredSignoffsMet "L2")) { Add-Fail "L2 sign-off check failed with Seat 1 signed" } else { Add-Pass "AUTOSTEP_L2_CHECK_TRUE" }
+            $chkGateSeat2.IsChecked = $true
             if (Test-RequiredSignoffsMet "L3") { Add-Fail "L3 sign-off check should be false without Seat 2" } else { Add-Pass "AUTOSTEP_L3_CHECK_FALSE" }
             $chkSignGemini.IsChecked = $true
             if (-not (Test-RequiredSignoffsMet "L3")) { Add-Fail "L3 sign-off check failed with all signed" } else { Add-Pass "AUTOSTEP_L3_CHECK_TRUE" }

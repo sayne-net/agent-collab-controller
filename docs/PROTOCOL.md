@@ -53,16 +53,16 @@ Phases are status badges. They do not assign seat roles. **Auto Step** mode defa
 
 The phase combo is:
 
-`ready` → `pitch` → `discuss` → `plan` → `implement` → `review` → `test` → `closing` → `debrief`
+`ready` → `pitch` → `discuss` → `plan` → `implement` → `review` → `test` → `debrief`
 
-`debrief` returns to `ready` when that badge advances. `plan`, `review`, and `closing` are real badges, not aliases of the shorter pitch/discuss/implement/test list.
+`debrief` returns to `ready` when that badge advances or project close is confirmed. `plan`, `review`, and `debrief` are real badges, not aliases.
 
 1. **Pitch**: Agents suggest options without touching code. Both seats are `advise`.
 2. **Discuss**: Agents debate trade-offs. Consensus lines can promote to Alignment before exiting discuss.
 3. **Plan**: Architecture notes. Roles stay as the operator set them.
 4. **Implement**: Entering implement defaults both seats to `review`; Human Lead assigns the implementer. Exactly one agent writes code. The other reviews, advises, or idles.
 5. **Review** and **Test**: Verification notes. Roles are not rewritten when the badge changes. In test phase, implementer sign-off is gated on `pwsh .\scripts\blackboard-ui-test.ps1` printing `PASS`.
-6. **Closing** and **Debrief**: Human Lead uses **Close Project** to audit the **target** repo, confirm tracked files, and optionally push. Secrets and `.ai/` are refused. Push waits until refused paths are gone. Snapshots stay in that repo's `.ai/history/`.
+6. **Debrief**: Post-run review with unbounded structured suggestions (Process, Work, Rules). Objective prompt text is strictly preserved until answers are written. Human Lead uses **Close Project** (after debrief completion) to audit the **target** repo, confirm tracked files, and optionally push. Secrets and `.ai/` are refused. Push waits until refused paths are gone. Snapshots stay in that repo's `.ai/history/`.
 
 ### Auto Step Modes & Sign-Off Advancement
 
