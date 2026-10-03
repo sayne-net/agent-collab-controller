@@ -1024,7 +1024,7 @@ function Get-ClientConfiguration {
             "VS Code" = [PSCustomObject]@{ process = "Code"; description = "VS Code / GitHub Copilot" }
             "Terminal" = [PSCustomObject]@{ process = "WindowsTerminal"; description = "Windows Terminal (Claude Code, Aider, CLI)" }
             "Codex" = [PSCustomObject]@{ process = "ChatGPT"; description = "OpenAI Codex in the ChatGPT desktop app" }
-            "DeepSeek" = [PSCustomObject]@{ process = ""; description = "DeepSeek V4 Flash (DeepSeek Harness IDE)" }
+            "DeepSeek" = [PSCustomObject]@{ process = "harness"; description = "DeepSeek V4 Flash (DeepSeek Harness IDE)" }
             "None" = [PSCustomObject]@{ process = ""; description = "Empty seat. Left out of kickoff and the sign-off gate." }
         }
     }
@@ -1046,7 +1046,9 @@ function Get-ClientConfiguration {
                     $obj.profiles | Add-Member -NotePropertyName "Codex" -NotePropertyValue ([PSCustomObject]@{ process = "ChatGPT"; description = "OpenAI Codex in the ChatGPT desktop app" }) -Force
                 }
                 if (-not $obj.profiles.PSObject.Properties['DeepSeek']) {
-                    $obj.profiles | Add-Member -NotePropertyName "DeepSeek" -NotePropertyValue ([PSCustomObject]@{ process = ""; description = "DeepSeek V4 Flash (DeepSeek Harness IDE)" }) -Force
+                    $obj.profiles | Add-Member -NotePropertyName "DeepSeek" -NotePropertyValue ([PSCustomObject]@{ process = "harness"; description = "DeepSeek V4 Flash (DeepSeek Harness IDE)" }) -Force
+                } elseif (-not $obj.profiles.DeepSeek.process) {
+                    $obj.profiles.DeepSeek.process = "harness"
                 }
                 if ($obj.profiles.PSObject.Properties['ChatGPT']) {
                     $obj.profiles.PSObject.Properties.Remove('ChatGPT')
@@ -4744,9 +4746,16 @@ function Show-StatsWindow {
     if (Test-Path $path) {
         try {
             $stats = Get-Content $path -Raw -Encoding UTF8 | ConvertFrom-Json
+            $lines += ("{0,-14} {1,8} {2,8} {3,8} {4,8} {5,8}" -f "Seat", "Phases", "Catches", "Added", "Removed", "Prompts")
+            $lines += ("{0,-14} {1,8} {2,8} {3,8} {4,8} {5,8}" -f "----", "------", "-------", "-----", "-------", "-------")
             foreach ($p in $stats.PSObject.Properties) {
                 $r = $p.Value
-                $lines += ("{0}: runs {1}, catches {2}, +{3}/-{4}, prompts {5}" -f $p.Name, $r.runs, $r.reviewCatches, $r.linesAdded, $r.linesRemoved, $r.promptsCopied)
+                $runs = if ($r.runs -ne $null) { $r.runs } else { 0 }
+                $catches = if ($r.reviewCatches -ne $null) { $r.reviewCatches } else { 0 }
+                $added = if ($r.linesAdded -ne $null) { $r.linesAdded } else { 0 }
+                $removed = if ($r.linesRemoved -ne $null) { $r.linesRemoved } else { 0 }
+                $prompts = if ($r.promptsCopied -ne $null) { $r.promptsCopied } else { 0 }
+                $lines += ("{0,-14} {1,8} {2,8} {3,8} {4,8} {5,8}" -f $p.Name, $runs, $catches, ("+" + $added), ("-" + $removed), $prompts)
             }
         } catch {
             $lines += "Could not parse stats.json."
@@ -4757,9 +4766,11 @@ function Show-StatsWindow {
         $lines += "Stats File: $path"
         $lines += "(No recorded history yet. Baseline for configured seats:)"
         $lines += ""
+        $lines += ("{0,-14} {1,8} {2,8} {3,8} {4,8} {5,8}" -f "Seat", "Phases", "Catches", "Added", "Removed", "Prompts")
+        $lines += ("{0,-14} {1,8} {2,8} {3,8} {4,8} {5,8}" -f "----", "------", "-------", "-----", "-------", "-------")
         $seatsToShow = @($s1, $s2, "Human") | Where-Object { $_ -and $_ -ne "None" } | Select-Object -Unique
         foreach ($seat in $seatsToShow) {
-            $lines += ("{0}: runs 0, catches 0, +0/-0, prompts 0" -f $seat)
+            $lines += ("{0,-14} {1,8} {2,8} {3,8} {4,8} {5,8}" -f $seat, 0, 0, "+0", "-0", 0)
         }
     }
     $body = $lines -join [Environment]::NewLine
@@ -4973,6 +4984,7 @@ function Send-AgentChatPaste {
         elseif ($clientName -eq "VS Code") { $procName = "Code" }
         elseif ($clientName -eq "Terminal") { $procName = "WindowsTerminal" }
         elseif ($clientName -eq "Codex" -or $clientName -eq "ChatGPT") { $procName = "ChatGPT" }
+        elseif ($clientName -eq "DeepSeek") { $procName = "harness" }
     }
     
     if ([string]::IsNullOrWhiteSpace($procName)) {
@@ -6067,7 +6079,7 @@ function Invoke-HeadlessUiTest {
 
         # DeepSeek Profile Assert
         $cfg = Get-ClientConfiguration
-        if (-not $cfg.profiles.DeepSeek -or $cfg.profiles.DeepSeek.description -notmatch "DeepSeek V4 Flash") {
+        if (-not $cfg.profiles.DeepSeek -or $cfg.profiles.DeepSeek.description -notmatch "DeepSeek V4 Flash" -or $cfg.profiles.DeepSeek.process -ne "harness") {
             Add-Fail "DeepSeek profile missing or invalid"
         } else {
             Add-Pass "DEEPSEEK_PROFILE"
