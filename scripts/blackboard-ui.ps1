@@ -4853,6 +4853,15 @@ function Save-BlackboardContent {
         } catch {}
     }
 
+    $objectiveBody = Remove-DanglingSeparators $txtPrompt.Text
+    if ([string]::IsNullOrWhiteSpace($objectiveBody) -and $phase -ne "ready" -and $phase -ne "closed") {
+        try {
+            $disk = if (Test-Path $script:BlackboardPath) { [System.IO.File]::ReadAllText($script:BlackboardPath, [System.Text.Encoding]::UTF8) } else { "" }
+            $kept = Get-LastMarkdownBody $disk '##\s+Current Objective\s*&\s*Prompt'
+            if (-not [string]::IsNullOrWhiteSpace($kept)) { $objectiveBody = $kept.Trim() }
+        } catch {}
+    }
+
     $signHuman = if ($chkSignHuman.IsChecked) { "[x]" } else { "[ ]" }
     $signCursor = if ($chkSignCursor.IsChecked) { "[x]" } else { "[ ]" }
     $signGemini = if ($chkSignGemini.IsChecked) { "[x]" } else { "[ ]" }
@@ -4886,7 +4895,7 @@ function Save-BlackboardContent {
         "",
         "## Current Objective & Prompt",
         "",
-        (Remove-DanglingSeparators $txtPrompt.Text),
+        $objectiveBody,
         "",
         "---",
         "",
@@ -5063,9 +5072,16 @@ function Send-AgentChatPaste {
             return $true
         }
         "DeepSeek" {
-            # DeepSeek Harness: safe fallback (window focused if found, blind keystrokes skipped).
-            # Return $false to prompt manual clipboard paste.
-            return $false
+            # harness.exe composer is not in the UI Automation tree. Click the lower input, then paste.
+            # If the process is not running, FocusProcess already returned false above.
+            if (-not [WinHelper]::ClickLowerComposer([WinHelper]::LastHwnd, 110, 50)) {
+                return $false
+            }
+            Start-Sleep -Milliseconds 200
+            Safe-SendKeys "^v"
+            Start-Sleep -Milliseconds 150
+            Safe-SendKeys "{ENTER}"
+            return $true
         }
         default {
             return $false

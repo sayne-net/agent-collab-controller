@@ -37,6 +37,14 @@
     "Codex": {
       "process": "ChatGPT",
       "description": "OpenAI Codex in the ChatGPT desktop app"
+    },
+    "DeepSeek": {
+      "process": "harness",
+      "description": "DeepSeek V4 Flash (DeepSeek Harness IDE)"
+    },
+    "None": {
+      "process": "",
+      "description": "Empty seat. Left out of kickoff and the sign-off gate."
     }
   }
 }
