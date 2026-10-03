@@ -39,7 +39,7 @@
       "description": "OpenAI Codex in the ChatGPT desktop app"
     },
     "DeepSeek": {
-      "process": "harness",
+      "process": "DeepSeek Harness",
       "description": "DeepSeek V4 Flash (DeepSeek Harness IDE)"
     },
     "None": {

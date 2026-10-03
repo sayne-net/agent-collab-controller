@@ -21,6 +21,7 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
 
 $script:HeadlessTest = [bool]$HeadlessTest
 $script:AppVersion = "v1.5.8"
+$script:ShipBranch = "main"
 $script:EnabledPhases = @("pitch","discuss","plan","implement","review","test","debrief")
 $script:UnsignedRollbackStreak = 0
 $script:LastImplementerSeat = $null
@@ -1229,9 +1230,9 @@ function Save-ClientConfiguration {
 
         $recent = @()
         if ($cfg.recentBoards) {
-            $recent = @($cfg.recentBoards | Where-Object { $_ -and (Test-Path $_) })
+            $recent = @($cfg.recentBoards | Where-Object { $_ -and -not (Test-DisposableBoardPath $_) -and (Test-Path $_) })
         }
-        if ($script:BlackboardPath -and (Test-Path $script:BlackboardPath)) {
+        if ($script:BlackboardPath -and (Test-Path $script:BlackboardPath) -and -not (Test-DisposableBoardPath $script:BlackboardPath)) {
             $resolvedActive = (Resolve-Path $script:BlackboardPath -ErrorAction SilentlyContinue).Path
             if ($resolvedActive) {
                 $recent = @($resolvedActive) + @($recent | Where-Object {
@@ -1242,12 +1243,26 @@ function Save-ClientConfiguration {
             }
         }
         $cfg.recentBoards = $recent
+        if ($cfg.boardSeats) {
+            $keptSeats = [PSCustomObject]@{}
+            foreach ($prop in @($cfg.boardSeats.PSObject.Properties)) {
+                if ((Test-DisposableBoardPath $prop.Name) -or -not (Test-Path -LiteralPath $prop.Name)) { continue }
+                $keptSeats | Add-Member -NotePropertyName $prop.Name -NotePropertyValue $prop.Value -Force
+            }
+            $cfg.boardSeats = $keptSeats
+        }
+        $workspaces = @()
+        foreach ($board in $recent) {
+            $workspaces += [PSCustomObject]@{ name = [System.IO.Path]::GetFileName($board); boardPath = $board }
+        }
+        $cfg | Add-Member -NotePropertyName "workspaces" -NotePropertyValue $workspaces -Force
         $script:ClientConfig = $cfg
         $exportObj = [PSCustomObject]@{
             '$schema'      = "https://json-schema.org/draft/2020-12/schema"
             seat1          = $s1
             seat2          = $s2
             boardPath      = $script:BlackboardPath
+            workspaces     = $workspaces
             recentBoards   = $recent
             boardSeats     = $cfg.boardSeats
             tooltips       = $tooltipsVal
@@ -1264,6 +1279,16 @@ function Save-ClientConfiguration {
         if ($txtStatus) { $txtStatus.Text = "Config save error: $($_.Exception.Message)" }
         Write-Warning "Save-ClientConfiguration failed: $_"
     }
+}
+
+function Test-DisposableBoardPath {
+    param([string]$path)
+    if ([string]::IsNullOrWhiteSpace($path)) { return $true }
+    $n = $path -replace '\\', '/'
+    if ($n -match '(?i)/bb-test-') { return $true }
+    $temp = if ($env:TEMP) { ($env:TEMP -replace '\\', '/').TrimEnd('/') } else { "" }
+    if ($temp -and $n.ToLower().StartsWith($temp.ToLower() + "/")) { return $true }
+    return $false
 }
 
 function Get-AutoStepMode {
@@ -3839,7 +3864,8 @@ function Test-CloseProjectDeniedPath {
     param([string]$relPath)
     $n = ($relPath -replace '\\', '/').Trim().Trim('"')
     if ($n -match '(^|/)\.env($|\.)' -or $n -match '\.pem$' -or $n -match '(?i)secret|credential') { return $true }
-    if ($n -match '(^|/)\.ai/') { return $true }
+    if ($n -match '(?i)(^|/)\.ai/(blackboard\.md|clients\.json)$') { return $true }
+    if ($n -match '(?i)(^|/)\.ai/(history|saved)/') { return $true }
     return $false
 }
 
@@ -3878,7 +3904,8 @@ function Get-CloseProjectGitAudit {
         $path = $line.Substring([Math]::Min(3, $line.Length)).Trim()
         if ($path -match ' -> ') { $path = ($path -split ' -> ')[-1] }
         $path = $path.Trim('"') -replace '\\', '/'
-        if ($path -match '(^|/)\.ai/') { continue }
+        if ($path -match '(?i)(^|/)\.ai/(blackboard\.md|clients\.json)$') { continue }
+        if ($path -match '(?i)(^|/)\.ai/(history|saved)/') { continue }
         if ($isUntracked) { [void]$untracked.Add($path); continue }
         [void]$tracked.Add($path)
         if (Test-CloseProjectAllowedPath $path) { [void]$allowed.Add($path) } else { [void]$blocked.Add($path) }
@@ -3970,9 +3997,9 @@ function Invoke-CloseProjectGitShip {
         return
     }
     if (-not $promptConfirm) { return }
-    git -C $script:RepoRoot fetch origin main 2>$null | Out-Null
-    $aheadStr = (git -C $script:RepoRoot rev-list --count origin/main..HEAD 2>$null)
-    $behindStr = (git -C $script:RepoRoot rev-list --count HEAD..origin/main 2>$null)
+    git -C $script:RepoRoot fetch origin $script:ShipBranch 2>$null | Out-Null
+    $aheadStr = (git -C $script:RepoRoot rev-list --count "origin/$($script:ShipBranch)..HEAD" 2>$null)
+    $behindStr = (git -C $script:RepoRoot rev-list --count "HEAD..origin/$($script:ShipBranch)" 2>$null)
     $aheadCount = 0
     $behindCount = 0
     if ($aheadStr -match '^\d+$') { $aheadCount = [int]$aheadStr }
@@ -4305,7 +4332,7 @@ function Test-UnsignedTestRollback {
         [bool]$padChanged,
         [string]$pad
     )
-    if ($phase -ne "test" -and $phase -ne "closing") { return $false }
+    if ($phase -ne "test") { return $false }
     if (-not $autoStep) { return $false }
     if ($flow -match "STOP|PAUSE") { return $false }
     if (-not $padChanged) { return $false }
@@ -5873,7 +5900,9 @@ function Load-BlackboardIntoUI {
                     $txtIssueTitle.Text = ""
                 }
                 if ($raw -match '>\s*\*\*Enabled Phases\*\*:\s*`([^`]+)`') {
-                    $script:EnabledPhases = @($matches[1].Split(",") | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+                    $known = @("pitch","discuss","plan","implement","review","test","debrief","reconcile")
+                    $script:EnabledPhases = @($matches[1].Split(",") | ForEach-Object { $_.Trim() } | Where-Object { $_ -and ($known -contains $_) })
+                    if ($script:EnabledPhases.Count -eq 0) { $script:EnabledPhases = @("pitch","discuss","plan","implement","review","test","debrief") }
                 }
                 if ($cbImplementMode -and $raw -match '>\s*\*\*(?:Implementation Scope|Implement Mode)\*\*:\s*`([^`]+)`') {
                     $mode = $matches[1].Trim()
@@ -6124,7 +6153,9 @@ function Invoke-HeadlessUiTest {
     $script:UserConfigDir = $tempUserConfigDir
     $script:UserConfigPath = Join-Path $tempUserConfigDir "config.json"
 
-    $templatePath = Join-Path $script:ControllerRoot ".ailackboard.example.md"
+    $origClientsConfigPath = $script:ClientsConfigPath
+    $script:ClientsConfigPath = Join-Path $tempUserConfigDir "clients.json"
+    $templatePath = Join-Path $script:ControllerRoot ".ai\blackboard.example.md"
     if (Test-Path $templatePath) {
         Copy-Item -Path $templatePath -Destination $tempBoardPath -Force
     } else {
@@ -6188,9 +6219,10 @@ function Invoke-HeadlessUiTest {
         if ($txtAlignment.Text -match 'CUR1') { Add-Fail "Demote left CUR1 in Alignment" } else { Add-Pass "DEMOTE" }
 
         # DeepSeek Profile Assert
-        $cfg = Get-ClientConfiguration
-        if (-not $cfg.profiles.DeepSeek -or $cfg.profiles.DeepSeek.description -notmatch "DeepSeek V4 Flash" -or $cfg.profiles.DeepSeek.process -ne "DeepSeek Harness") {
-            Add-Fail "DeepSeek profile missing or invalid"
+        $exampleProfile = Join-Path $script:ControllerRoot ".ai\clients.example.json"
+        $exampleRaw = if (Test-Path $exampleProfile) { Get-Content $exampleProfile -Raw -Encoding UTF8 } else { "" }
+        if ($exampleRaw -notmatch '"DeepSeek Harness"') {
+            Add-Fail "DeepSeek example profile is not DeepSeek Harness"
         } else {
             Add-Pass "DEEPSEEK_PROFILE"
         }
@@ -6423,6 +6455,7 @@ function Invoke-HeadlessUiTest {
         $script:BlackboardPath = $origBoardPath
         $script:UserConfigDir = $origUserConfigDir
         $script:UserConfigPath = $origUserConfigPath
+        $script:ClientsConfigPath = $origClientsConfigPath
         if (Test-Path $tempBoardDir) {
             try {
                 if (Test-Path $tempBoardPath) { Remove-Item -Path $tempBoardPath -Force -ErrorAction SilentlyContinue }
