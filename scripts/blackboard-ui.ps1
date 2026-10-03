@@ -20,6 +20,7 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
 $script:AppVersion = "v1.5.6"
 $script:EnabledPhases = @("pitch","discuss","plan","implement","review","test","closing","debrief")
 $script:UnsignedRollbackStreak = 0
+$script:LastImplementerSeat = $null
 $script:PhaseBeforeReconcile = ""
 $script:ReconcileTurns1 = 0
 $script:ReconcileTurns2 = 0
@@ -685,8 +686,8 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                         <ComboBoxItem Name="cbiKickoffBoth" Content="Both" Tag="Both"/>
                     </ComboBox>
                     <CheckBox Name="chkAutoSwitchSeat" Content="⇄ Auto-Switch" IsChecked="False" Foreground="#BAC2DE" VerticalAlignment="Center" Margin="0,0,6,0" ToolTip="When on, automatically switches kickoff target between Seat 1 and Seat 2 after each prompt copy/send. Inactive when target is Both."/>
-                    <Button Name="btnCopyKickoffPrompt" Content="📋 Copy Prompt" Background="#89B4FA" Foreground="#11111B" FontWeight="Bold" Margin="0,0,4,0" ToolTip="Canonical handoff. Copy the kickoff prompt to the clipboard."/>
-                    <Button Name="btnSendKickoffPrompt" Content="Send (best-effort)" Background="#313244" Foreground="#BAC2DE" Margin="0,0,6,0" ToolTip="Best-effort only. Focus and SendKeys can miss Electron chats. The prompt is also copied to the clipboard."/>
+                    <Button Name="btnSendKickoffPrompt" Content="Send (best-effort)" Background="#313244" Foreground="#BAC2DE" Margin="0,0,4,0" ToolTip="Best-effort only. Focus and SendKeys can miss Electron chats. The prompt is also copied to the clipboard."/>
+                    <Button Name="btnCopyKickoffPrompt" Content="📋 Copy Prompt" Background="#89B4FA" Foreground="#11111B" FontWeight="Bold" Margin="0,0,6,0" ToolTip="Canonical handoff. Copy the kickoff prompt to the clipboard."/>
                     <CheckBox Name="chkNewChatKickoff" Content="New Chat" IsChecked="False" VerticalAlignment="Center" Margin="4,0,4,0" Foreground="#A6E3A1" ToolTip="Optional one-shot on Kickoff. Cursor uses Chat: New Chat; Antigravity uses Ctrl+Shift+I then Ctrl+Shift+L. Codex New Chat is unavailable (desktop app limitation; open new chat manually in Codex). Re-prompt never opens a new chat."/>
                     <CheckBox Name="chkDryRunKickoff" Content="Dry run" IsChecked="False" VerticalAlignment="Center" Margin="4,0,4,0" Foreground="#89B4FA" ToolTip="Record the selected kickoff target, New Chat state, and status. Do not copy or send the prompt."/>
                 </StackPanel>
@@ -3171,11 +3172,15 @@ function Set-RolesForPhase {
 function Set-Phase {
     param([string]$targetPhase)
     if ([string]::IsNullOrWhiteSpace($targetPhase)) { return }
+    $prevPhase = Get-PhaseString
     $script:SuppressRoleDefault = $true
     try {
         $tgt = $targetPhase.Trim().ToLower()
         if ($tgt -in @("pitch", "discuss", "implement", "test")) {
             $script:ClosingSignoffsCompleted = $false
+        }
+        if ($tgt -eq "ready" -and $prevPhase -and $prevPhase -ne "ready") {
+            Record-RunCompletion
         }
         for ($i = 0; $i -lt $cbPhase.Items.Count; $i++) {
             $itemText = [string]$cbPhase.Items[$i].Content
@@ -3358,17 +3363,6 @@ function Check-PhaseAutoAdvance {
         Save-SignoffBaseline
 
         Set-Phase $nextPhase
-        if ($nextPhase -eq "ready") {
-            $implSeat = if ($cbCursorRole -and $cbCursorRole.Text -eq "implement") { Get-Seat1Client } elseif ($cbGeminiRole -and $cbGeminiRole.Text -eq "implement") { Get-Seat2Client } else { "Human" }
-            Add-SeatStat -seat $implSeat -field "runs"
-            $num = @(git -C $script:RepoRoot diff --numstat HEAD 2>$null)
-            $added = 0; $removed = 0
-            foreach ($row in $num) {
-                if ($row -match '^(\d+)\s+(\d+)\s+') { $added += [int]$Matches[1]; $removed += [int]$Matches[2] }
-            }
-            if ($added -gt 0) { Add-SeatStat -seat $implSeat -field "linesAdded" -amount $added }
-            if ($removed -gt 0) { Add-SeatStat -seat $implSeat -field "linesRemoved" -amount $removed }
-        }
 
         if ($currentPhase -eq "debrief" -and $nextPhase -eq "ready") {
             $targetTag = if ($cbKickoffTarget -and $cbKickoffTarget.SelectedItem) { [string]$cbKickoffTarget.SelectedItem.Tag } else { "Both" }
@@ -3593,6 +3587,9 @@ function Test-DualImplementBlocked {
 function Check-Safety {
     $cursor = Get-NormalizedRole (Get-ComboRoleText $cbCursorRole)
     $gemini = Get-NormalizedRole (Get-ComboRoleText $cbGeminiRole)
+    if ($cursor -eq "implement") { $script:LastImplementerSeat = Get-Seat1Client }
+    elseif ($gemini -eq "implement") { $script:LastImplementerSeat = Get-Seat2Client }
+
     if ($cursor -eq "implement" -and $gemini -eq "implement") {
         $txtSafetyWarning.Text = "🛑 SAFETY VIOLATION: Dual implement seats forbidden! Prompt dispatch is blocked."
         $txtSafetyWarning.Foreground = [System.Windows.Media.Brushes]::Salmon
@@ -3603,6 +3600,36 @@ function Check-Safety {
         $txtSafetyWarning.Text = ""
     }
     Update-UiActiveTurn
+}
+
+function Record-RunCompletion {
+    param([string]$implementerOverride = "")
+    $implSeat = $implementerOverride
+    if (-not $implSeat) {
+        $r1 = Get-NormalizedRole (Get-ComboRoleText $cbCursorRole)
+        $r2 = Get-NormalizedRole (Get-ComboRoleText $cbGeminiRole)
+        if ($r1 -eq "implement") {
+            $implSeat = Get-Seat1Client
+        } elseif ($r2 -eq "implement") {
+            $implSeat = Get-Seat2Client
+        } elseif ($script:LastImplementerSeat) {
+            $implSeat = $script:LastImplementerSeat
+        } else {
+            $implSeat = "Human"
+        }
+    }
+    if ($implSeat -and $implSeat -ne "None") {
+        Add-SeatStat -seat $implSeat -field "runs"
+        try {
+            $num = @(git -C $script:RepoRoot diff --numstat HEAD 2>$null)
+            $added = 0; $removed = 0
+            foreach ($row in $num) {
+                if ($row -match '^(\d+)\s+(\d+)\s+') { $added += [int]$Matches[1]; $removed += [int]$Matches[2] }
+            }
+            if ($added -gt 0) { Add-SeatStat -seat $implSeat -field "linesAdded" -amount $added }
+            if ($removed -gt 0) { Add-SeatStat -seat $implSeat -field "linesRemoved" -amount $removed }
+        } catch {}
+    }
 }
 
 function Mark-FormDirty {
@@ -3660,6 +3687,9 @@ $cbPhase.add_SelectionChanged({
         Sync-PresetFromPhase (Get-PhaseString)
     }
     if (-not $script:SuppressRoleDefault -and (Get-AutoStepMode) -eq "Off") {
+        if ((Get-PhaseString) -eq "ready") {
+            Record-RunCompletion
+        }
         Set-RolesForPhase (Get-PhaseString)
     }
     if (-not $script:SuppressAutoAdvanceLatchReset) {
@@ -4098,12 +4128,11 @@ function Get-KickoffPromptForAgent {
     $issueText = if ($issueNum -and $issueNum -ne "none") { " for GitHub Issue #$issueNum" } else { "" }
     $boardPath = $script:BlackboardPath
 
-    $firstObjLine = ""
-    if ($txtPrompt.Text) {
-        $nonEmpty = @($txtPrompt.Text -split "`r?`n" | Where-Object { $_.Trim() -ne "" })
-        if ($nonEmpty.Count -gt 0) { $firstObjLine = $nonEmpty[0].Trim() }
+    $fullObj = ""
+    if ($txtPrompt -and $txtPrompt.Text) {
+        $fullObj = $txtPrompt.Text.Trim()
     }
-    if (-not $firstObjLine) { $firstObjLine = "(Refer to $boardPath)" }
+    if (-not $fullObj) { $fullObj = "(Refer to $boardPath)" }
 
     $roleGuidance = Get-RoleGuidance $normRole
     if ($normRole -eq "idle" -or $phase -eq "closing") {
@@ -4122,7 +4151,7 @@ Read $boardPath. Follow the blackboard skill. Open one other project skill only 
 - Canonical Blackboard: $boardPath
 
 Current Objective:
-$firstObjLine
+$fullObj
 
 $roleGuidance
 "@
@@ -4708,20 +4737,32 @@ function Register-ItemCodeClick {
 
 function Show-StatsWindow {
     $path = Join-Path $script:UserConfigDir "stats.json"
-    $body = "No stats yet."
+    $lines = @()
+    $s1 = Get-Seat1Client
+    $s2 = Get-Seat2Client
+
     if (Test-Path $path) {
         try {
             $stats = Get-Content $path -Raw -Encoding UTF8 | ConvertFrom-Json
-            $lines = @()
             foreach ($p in $stats.PSObject.Properties) {
                 $r = $p.Value
                 $lines += ("{0}: runs {1}, catches {2}, +{3}/-{4}, prompts {5}" -f $p.Name, $r.runs, $r.reviewCatches, $r.linesAdded, $r.linesRemoved, $r.promptsCopied)
             }
-            if ($lines.Count -gt 0) { $body = $lines -join [Environment]::NewLine }
         } catch {
-            $body = "Could not read stats.json."
+            $lines += "Could not parse stats.json."
         }
     }
+
+    if ($lines.Count -eq 0) {
+        $lines += "Stats File: $path"
+        $lines += "(No recorded history yet. Baseline for configured seats:)"
+        $lines += ""
+        $seatsToShow = @($s1, $s2, "Human") | Where-Object { $_ -and $_ -ne "None" } | Select-Object -Unique
+        foreach ($seat in $seatsToShow) {
+            $lines += ("{0}: runs 0, catches 0, +0/-0, prompts 0" -f $seat)
+        }
+    }
+    $body = $lines -join [Environment]::NewLine
     $win = New-Object System.Windows.Window
     $win.Title = "Per-seat stats"
     $win.Width = 520
@@ -5222,6 +5263,7 @@ function Invoke-SendKickoffPrompt {
                 }
                 $pAgent1 = Get-KickoffPromptForAgent -agentName $s1 -role $cbCursorRole.Text -seatId "seat1"
                 Safe-SetClipboard $pAgent1
+                Add-SeatStat -seat $s1 -field "promptsCopied"
                 if (Send-AgentChatPaste -clientName $s1 -newChat $doNew) {
                     Complete-KickoffNewChatOneShot -didNew $doNew
                     $chatNote = if ($doNew) { " (New Chat, then off)" } else { "" }
@@ -5238,6 +5280,7 @@ function Invoke-SendKickoffPrompt {
                 }
                 $pAgent2 = Get-KickoffPromptForAgent -agentName $s2 -role $cbGeminiRole.Text -seatId "seat2"
                 Safe-SetClipboard $pAgent2
+                Add-SeatStat -seat $s2 -field "promptsCopied"
                 if (Send-AgentChatPaste -clientName $s2 -newChat $doNew) {
                     Complete-KickoffNewChatOneShot -didNew $doNew
                     $chatNote = if ($doNew) { " (New Chat, then off)" } else { "" }
@@ -5256,8 +5299,14 @@ function Invoke-SendKickoffPrompt {
                 }
                 $pAgent1 = ""
                 $pAgent2 = ""
-                if (-not $skip1) { $pAgent1 = Get-KickoffPromptForAgent -agentName $s1 -role $cbCursorRole.Text -seatId "seat1" }
-                if (-not $skip2) { $pAgent2 = Get-KickoffPromptForAgent -agentName $s2 -role $cbGeminiRole.Text -seatId "seat2" }
+                if (-not $skip1) {
+                    $pAgent1 = Get-KickoffPromptForAgent -agentName $s1 -role $cbCursorRole.Text -seatId "seat1"
+                    Add-SeatStat -seat $s1 -field "promptsCopied"
+                }
+                if (-not $skip2) {
+                    $pAgent2 = Get-KickoffPromptForAgent -agentName $s2 -role $cbGeminiRole.Text -seatId "seat2"
+                    Add-SeatStat -seat $s2 -field "promptsCopied"
+                }
 
                 $cFocused = $false
                 $gFocused = $false
@@ -5371,6 +5420,7 @@ function Trigger-AgentReprompt {
 
         if ($target -eq "Seat1" -or $target -eq "Cursor" -or $target -eq "Both") {
             Safe-SetClipboard $pAgent1
+            Add-SeatStat -seat $s1 -field "promptsCopied"
             if (Send-AgentChatPaste -clientName $s1 -newChat $false) {
                 $cFocused = $true
             }
@@ -5380,6 +5430,7 @@ function Trigger-AgentReprompt {
         }
         if ($target -eq "Seat2" -or $target -eq "Gemini" -or $target -eq "Both") {
             Safe-SetClipboard $pAgent2
+            Add-SeatStat -seat $s2 -field "promptsCopied"
             if (Send-AgentChatPaste -clientName $s2 -newChat $false) {
                 $gFocused = $true
             }
@@ -6097,6 +6148,30 @@ function Invoke-HeadlessUiTest {
         $txtBugs.Text = "**Disagreed**: headless check"
         Enter-ReconcilePhase
         if ((Get-PhaseString) -ne "reconcile") { Add-Fail "Auto Step did not open reconcile" } else { Add-Pass "RECONCILE" }
+
+        # Multiline Objective Prompt Assert
+        $txtPrompt.Text = "Line 1: Primary task`nLine 2: Secondary requirement`nLine 3: Safety check"
+        $kp = Get-KickoffPromptForAgent -agentName "Cursor" -role "implement" -seatId "seat1"
+        if ($kp -notmatch "Line 1: Primary task" -or $kp -notmatch "Line 3: Safety check") {
+            Add-Fail "Kickoff prompt truncated multiline objective"
+        } else {
+            Add-Pass "MULTILINE_OBJECTIVE_PROMPT"
+        }
+
+        # Stats Recording & Baseline Assert
+        $testSeat = "TestAgent"
+        Add-SeatStat -seat $testSeat -field "promptsCopied" -amount 2
+        $statsFile = Join-Path $script:UserConfigDir "stats.json"
+        if (-not (Test-Path $statsFile)) {
+            Add-Fail "stats.json was not created by Add-SeatStat"
+        } else {
+            $parsedStats = Get-Content $statsFile -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($parsedStats.$testSeat.promptsCopied -lt 2) {
+                Add-Fail "stats.json did not record promptsCopied"
+            } else {
+                Add-Pass "STATS_RECORDED"
+            }
+        }
     }
     finally {
         $script:BlackboardPath = $origBoardPath
