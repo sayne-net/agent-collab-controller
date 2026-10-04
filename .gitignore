@@ -1,5 +1,6 @@
 # Ephemeral live session tape and archives
 .ai/blackboard.md
+.ai/blackboard.md.bak
 .ai/history/
 .ai/saved/
 
@@ -8,6 +9,7 @@
 
 # Local client preferences
 .ai/clients.json
+.ai/clients.json.bak
 .ai/signoff-baseline.json
 .ai/lease.json
 .ai/clients.v1.bak.json

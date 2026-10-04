@@ -1,7 +1,29 @@
 # AI Collab Controller (WPF UI)
-# Version 1.6.0
+# Version 1.6.22
 # Standalone dual-session controller for multi-agent collaboration with human-in-the-loop steering.
 # SemVer tracks protocol and feature releases. Do not bump the patch on every local edit.
+# 1.6.22: a role-table [ ] clears a box that was already checked. The keep path and the clear path are both asserted.
+# 1.6.21: a [x] already in the role table stays checked on load, so the next save does not clear it.
+# 1.6.20: a newly created board drops the template's "Key design choice" lines so Alignment starts empty.
+# 1.6.19: Adopt also ignores .ai/history/ and .ai/saved/, the directories a switched board creates.
+# 1.6.18: Adopt writes the board gitignore rules when the folder has none, and appends only the rules that are missing.
+# 1.6.17: a lease timestamp read back from JSON is already UTC, so staleness does not convert it a second time.
+# 1.6.16: a save keeps an Alignment edit made on disk when the box still matches the last load, and skips the save when both changed.
+# 1.6.15: the reuse warning fires only when the next new id is the one just removed. A gap does not reuse the freed id.
+# 1.6.14: demoting the highest-numbered decision announces that its id will be reused, instead of reusing it silently.
+# 1.6.13: AG ids are stable across saves, so a decision keeps the handle Demote acts on.
+# 1.6.12: a promoted decision keeps every backtick, including one that both begins and ends with a code span.
+# 1.6.11: Demote accepts AG-n so a real Alignment row can be removed, and a promoted decision keeps its opening backtick.
+# 1.6.10: the atomic writer attempts before it decides, so losing the create race no longer discards the new bytes.
+# 1.6.9: every atomic save leaves a .bak (both are gitignored), and the shared-workspace assert registers a real switcher row.
+# 1.6.8: the atomic writer keeps a failed-restore fallback copy, and the replace preserves the previous board as .bak.
+# 1.6.7: the atomic writer never deletes its destination, and the shared-workspace assert uses the real row predicate.
+# 1.6.6: viewer save uses the atomic writer, the atomic writer cleans up and degrades on failure, .tmp is gitignored.
+# 1.6.5: atomic replace passes NullString so an existing board save does not throw.
+# 1.6.4: lease exclusive-create test runs on a local temp path; board and clients.json save via temp plus replace.
+# 1.6.3: lease claim is an exclusive create, and a mapped drive is canonicalized before the network test.
+# 1.6.2: lease.json for network boards, Adopt Folder does not overwrite an existing board.
+# 1.6.1: UNC ProviderPath, no bare separator on join, steering-notes Add box, promote skips duplicates.
 # 1.6.0: project registry (projects.json), UNC canonical paths, offline rows stay disabled in the existing switcher.
 # 1.5.7: single-issue objective input box with HUMn codes, retain objective in debrief, DeepSeek Harness profile, strict 3-signoff close.
 # 1.5.6: kickoff and re-prompt no longer paste scratchpad excerpts or repeat the scratchpad rule.
@@ -20,7 +42,7 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
 [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
 
 $script:HeadlessTest = [bool]$HeadlessTest
-$script:AppVersion = "v1.6.0"
+$script:AppVersion = "v1.6.22"
 $script:ShipBranch = "main"
 $script:SuppressConfigSave = $false
 $script:EnabledPhases = @("pitch","discuss","plan","implement","review","test","debrief")
@@ -88,6 +110,283 @@ function Get-ProjectRootFromTarget {
 function Get-ProjectBoardPath {
     param([string]$ProjectRoot)
     return (Join-Path $ProjectRoot ".ai\blackboard.md")
+}
+
+$script:LeaseTtlSeconds = 120
+
+function Test-NetworkBoardPath {
+    param([string]$BoardPath)
+    if ([string]::IsNullOrWhiteSpace($BoardPath)) { return $false }
+    return ($BoardPath.StartsWith("\\") -or $BoardPath.StartsWith("//"))
+}
+
+function Get-BoardLeasePath {
+    param([string]$BoardPath)
+    if ([string]::IsNullOrWhiteSpace($BoardPath)) { return "" }
+    return (Join-Path (Split-Path -Parent $BoardPath) "lease.json")
+}
+
+function Get-LeaseAcquiredUtc {
+    param($Value)
+    if ($null -eq $Value) { throw "missing lease time" }
+    if ($Value -is [datetime]) {
+        $dt = [datetime]$Value
+        if ($dt.Kind -eq [DateTimeKind]::Utc) { return $dt }
+        if ($dt.Kind -eq [DateTimeKind]::Local) { return $dt.ToUniversalTime() }
+        return [datetime]::SpecifyKind($dt, [DateTimeKind]::Utc)
+    }
+    $parsed = [datetime]::MinValue
+    $styles = [Globalization.DateTimeStyles]::RoundtripKind
+    $ok = [datetime]::TryParse([string]$Value, [Globalization.CultureInfo]::InvariantCulture, $styles, [ref]$parsed)
+    if (-not $ok) { throw "unparsed lease time" }
+    if ($parsed.Kind -eq [DateTimeKind]::Unspecified) {
+        return [datetime]::SpecifyKind($parsed, [DateTimeKind]::Utc)
+    }
+    return $parsed.ToUniversalTime()
+}
+
+function Test-BoardLeaseStale {
+    param($Lease)
+    if (-not $Lease -or -not $Lease.acquiredUtc) { return $true }
+    try {
+        $acquired = Get-LeaseAcquiredUtc $Lease.acquiredUtc
+    } catch {
+        return $true
+    }
+    $ttl = $script:LeaseTtlSeconds
+    if ($Lease.ttlSeconds) { $ttl = [int]$Lease.ttlSeconds }
+    return (([datetime]::UtcNow - $acquired).TotalSeconds -gt $ttl)
+}
+
+function Test-LeaseBlocksWriter {
+    param($Lease)
+    if (-not $Lease) { return $false }
+    if (Test-BoardLeaseStale $Lease) { return $false }
+    return ([string]$Lease.holder -ne "$env:COMPUTERNAME|$PID")
+}
+
+function Write-TextAtomic {
+    param([string]$Path, [string]$Content)
+    # Unique sidecar: two writers must not collide on one temp name.
+    $tmp = "$Path.$([guid]::NewGuid().ToString('N')).tmp"
+    $bak = "$Path.bak"
+    $landed = $false
+    try {
+        [System.IO.File]::WriteAllText($tmp, $Content, [System.Text.Encoding]::UTF8)
+        # Attempt first, decide from the failure second. Checking Test-Path before choosing
+        # Move vs Replace is a check-then-act race: when it was lost, Move threw "Cannot
+        # create a file when that file already exists" and the finally then discarded the
+        # sidecar holding the new bytes.
+        $mode = "replaced"
+        try {
+            # Three-argument ReplaceFile hands us the previous file as $bak as part of the
+            # atomic replace, so the original is never unattended even if the call throws.
+            # This is also the .bak the .gitignore template already lists.
+            [System.IO.File]::Replace($tmp, $Path, $bak)
+        } catch [System.IO.FileNotFoundException] { $mode = "create" }
+        catch [System.IO.DirectoryNotFoundException] { $mode = "create" }
+        catch { $mode = "fallback" }
+
+        if ($mode -eq "create") {
+            try {
+                [System.IO.File]::Move($tmp, $Path)
+            } catch [System.IO.IOException] {
+                # Something created the destination between the Replace attempt and the
+                # Move. It exists now, so Replace is the correct way to overwrite it.
+                [System.IO.File]::Replace($tmp, $Path, $bak)
+            }
+            $landed = $true
+        } elseif ($mode -eq "fallback") {
+            # ReplaceFile can fail while the destination is held open, and some network
+            # redirectors refuse it. Degrade by moving the original aside, putting the new
+            # bytes in place, and restoring on failure. The aside is deleted ONLY after the
+            # new bytes have landed: on any failure path it can be the only surviving copy
+            # of the previous file, so deleting it there would destroy it outright. File.Move
+            # with overwrite is .NET Core only, so this form stays 5.1-safe for the
+            # powershell.exe fallback in blackboard-ui.bat.
+            $aside = "$Path.$([guid]::NewGuid().ToString('N')).old"
+            [System.IO.File]::Move($Path, $aside)
+            try {
+                [System.IO.File]::Move($tmp, $Path)
+                $landed = $true
+            } catch {
+                $restoreErr = ""
+                try { [System.IO.File]::Move($aside, $Path) } catch { $restoreErr = $_.Exception.Message }
+                if ($restoreErr) {
+                    throw "Board write failed and the previous board could not be restored; it is preserved at '$aside'. Restore error: $restoreErr"
+                }
+                throw
+            }
+            # Reached only when the new bytes are in place, so the aside is redundant.
+            if (Test-Path -LiteralPath $aside) {
+                try { Remove-Item -LiteralPath $aside -Force -ErrorAction Stop } catch { }
+            }
+        } else {
+            $landed = $true
+        }
+    } finally {
+        # Only drop the sidecar when its bytes did not become the board. On success it has
+        # already been consumed by Replace/Move; on failure the caller still holds the
+        # previous board and this prevents a stray .tmp in the repo. Cleanup must never
+        # replace the real outcome: -ErrorAction SilentlyContinue is not enough, because an
+        # access-denied from Remove-Item can still surface as a terminating error and mask
+        # (or substitute for) the write result the caller needs to see.
+        if (-not $landed -and (Test-Path -LiteralPath $tmp)) {
+            try { Remove-Item -LiteralPath $tmp -Force -ErrorAction Stop } catch { }
+        }
+    }
+}
+
+function Lock-BoardLease {
+    param(
+        [string]$BoardPath,
+        [string]$Seat = "",
+        # Test-only. Production callers leave this empty so the holder is this process.
+        [string]$Holder = "",
+        [switch]$ForceNetwork
+    )
+    $canonical = if ($ForceNetwork) { $BoardPath } else { Get-CanonicalProjectPath $BoardPath }
+    if (-not $ForceNetwork -and -not (Test-NetworkBoardPath $canonical)) { return $true }
+    $lp = Get-BoardLeasePath $canonical
+    if (-not $lp) { return $false }
+    $who = if ($Holder) { $Holder } else { "$env:COMPUTERNAME|$PID" }
+    $dir = Split-Path -Parent $lp
+    if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+    $obj = [PSCustomObject]@{
+        holder      = $who
+        machine     = [string]$env:COMPUTERNAME
+        user        = [string]$env:USERNAME
+        seat        = $Seat
+        pid         = $PID
+        acquiredUtc = [datetime]::UtcNow.ToString("o")
+        ttlSeconds  = $script:LeaseTtlSeconds
+    }
+    $json = $obj | ConvertTo-Json
+    $claim = {
+        $stream = [System.IO.File]::Open($lp, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+        try {
+            $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
+            $stream.Write($bytes, 0, $bytes.Length)
+        } finally {
+            $stream.Dispose()
+        }
+    }
+    try {
+        & $claim
+        return $true
+    } catch [System.IO.IOException] {
+        if (-not (Test-Path -LiteralPath $lp)) { return $false }
+        try {
+            $existing = Get-Content -LiteralPath $lp -Raw -Encoding UTF8 | ConvertFrom-Json
+        } catch {
+            return $false
+        }
+        if ([string]$existing.holder -eq $who) { return $true }
+        if (-not (Test-BoardLeaseStale $existing)) { return $false }
+        Remove-Item -LiteralPath $lp -Force -ErrorAction SilentlyContinue
+        try {
+            & $claim
+            return $true
+        } catch {
+            return $false
+        }
+    } catch {
+        return $false
+    }
+}
+
+function Unlock-BoardLease {
+    param([string]$BoardPath, [string]$Holder = "")
+    $canonical = Get-CanonicalProjectPath $BoardPath
+    if (-not (Test-NetworkBoardPath $canonical)) { return }
+    $lp = Get-BoardLeasePath $canonical
+    if (-not $lp -or -not (Test-Path -LiteralPath $lp)) { return }
+    $who = if ($Holder) { $Holder } else { "$env:COMPUTERNAME|$PID" }
+    try {
+        $existing = Get-Content -LiteralPath $lp -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ([string]$existing.holder -eq $who) {
+            Remove-Item -LiteralPath $lp -Force -ErrorAction SilentlyContinue
+        }
+    } catch { }
+}
+
+function Add-BoardGitignoreRules {
+    param([string]$Folder)
+    $root = Get-ProjectRootFromTarget $Folder
+    if ([string]::IsNullOrWhiteSpace($root)) { return "skipped" }
+    $rules = @(
+        '.ai/blackboard.md',
+        '.ai/blackboard.md.bak',
+        '.ai/blackboard.md.*.tmp',
+        '.ai/lease.json',
+        '.ai/history/',
+        '.ai/saved/'
+    )
+    $path = Join-Path $root '.gitignore'
+    $existing = ""
+    if (Test-Path -LiteralPath $path) {
+        $existing = [System.IO.File]::ReadAllText($path, [System.Text.Encoding]::UTF8)
+    }
+    $missing = New-Object System.Collections.Generic.List[string]
+    foreach ($rule in $rules) {
+        $has = $false
+        foreach ($line in ($existing -split '\r?\n')) {
+            if ($line.Trim() -eq $rule) { $has = $true; break }
+        }
+        if (-not $has) { [void]$missing.Add($rule) }
+    }
+    if ($missing.Count -eq 0) { return "present" }
+    $block = ($missing -join "`n") + "`n"
+    if ([string]::IsNullOrEmpty($existing)) {
+        $block = "# Dual-Session Agent Blackboard (gitignored live session)`n" + $block
+        [System.IO.File]::WriteAllText($path, $block, [System.Text.Encoding]::UTF8)
+        return "created"
+    }
+    if (-not $existing.EndsWith("`n")) { $block = "`n" + $block }
+    [System.IO.File]::AppendAllText($path, $block, [System.Text.Encoding]::UTF8)
+    return "appended"
+}
+
+function Test-AiChildCoveredByGitignore {
+    param([string]$GitignoreText, [string]$ChildName)
+    foreach ($line in ($GitignoreText -split '\r?\n')) {
+        $rule = $line.Trim()
+        if ($rule.Length -eq 0 -or $rule.StartsWith('#') -or $rule.StartsWith('!')) { continue }
+        if ($rule -notmatch '^\.ai/(.+)$') { continue }
+        $pat = $Matches[1].TrimEnd('/')
+        $regex = '^' + ([regex]::Escape($pat) -replace '\\\*', '.*') + '$'
+        if ($ChildName -match $regex) { return $true }
+    }
+    return $false
+}
+
+function Clear-BoardTemplatePlaceholders {
+    param([string]$BoardPath)
+    if ([string]::IsNullOrWhiteSpace($BoardPath) -or -not (Test-Path -LiteralPath $BoardPath)) { return $false }
+    $text = [System.IO.File]::ReadAllText($BoardPath, [System.Text.Encoding]::UTF8)
+    $cleared = [regex]::Replace($text, '(?m)^- Key design choice \d+[ \t]*(?:\r?\n)?', '')
+    if ($cleared -eq $text) { return $false }
+    [System.IO.File]::WriteAllText($BoardPath, $cleared, [System.Text.Encoding]::UTF8)
+    return $true
+}
+
+function Initialize-AdoptedBoard {
+    param([string]$Folder)
+    $root = Get-ProjectRootFromTarget $Folder
+    if ([string]::IsNullOrWhiteSpace($root)) { return "" }
+    Add-BoardGitignoreRules $root | Out-Null
+    $board = Get-ProjectBoardPath $root
+    if (Test-Path -LiteralPath $board) { return "existing" }
+    $ai = Split-Path -Parent $board
+    if (-not (Test-Path -LiteralPath $ai)) { New-Item -ItemType Directory -Force -Path $ai | Out-Null }
+    $template = Join-Path $script:ControllerRoot ".ai\blackboard.example.md"
+    if (Test-Path -LiteralPath $template) {
+        Copy-Item -LiteralPath $template -Destination $board
+        Clear-BoardTemplatePlaceholders $board | Out-Null
+    } else {
+        [System.IO.File]::WriteAllText($board, "# Dual-Session Agent Blackboard`n", [System.Text.Encoding]::UTF8)
+    }
+    return "created"
 }
 
 function Test-UncServerUp {
@@ -163,23 +462,11 @@ function Save-ProjectRegistry {
         New-Item -ItemType Directory -Force -Path $dir | Out-Null
     }
     $json = $Registry | ConvertTo-Json -Depth 6
-    $tmp = $script:ProjectsRegistryPath + ".tmp"
-    $bak = $script:ProjectsRegistryPath + ".bak"
-    [System.IO.File]::WriteAllText($tmp, $json, [System.Text.Encoding]::UTF8)
-    try {
-        if (Test-Path -LiteralPath $script:ProjectsRegistryPath) {
-            [System.IO.File]::Replace($tmp, $script:ProjectsRegistryPath, $bak)
-        } else {
-            [System.IO.File]::Move($tmp, $script:ProjectsRegistryPath)
-        }
-    } catch {
-        if (Test-Path -LiteralPath $script:ProjectsRegistryPath) {
-            [System.IO.File]::Delete($script:ProjectsRegistryPath)
-        }
-        if (Test-Path -LiteralPath $tmp) {
-            [System.IO.File]::Move($tmp, $script:ProjectsRegistryPath)
-        }
-    }
+    # One atomic writer for every registry-class file. The hand-rolled replace/move pair
+    # that lived here threw "Cannot create a file when that file already exists" whenever
+    # the destination already existed at the Move but Test-Path had reported it absent.
+    # Write-TextAtomic never deletes its own destination, keeps a .bak, and cleans its sidecar.
+    Write-TextAtomic -Path $script:ProjectsRegistryPath -Content $json
 }
 
 function Import-LegacyProjectsIntoRegistry {
@@ -353,10 +640,22 @@ function Save-LastOpenedRepo {
     }
 }
 
+function Get-ResolvedFilesystemPath {
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return "" }
+    try {
+        $item = Resolve-Path -LiteralPath $Path -ErrorAction Stop
+        if ($item.ProviderPath) { return [string]$item.ProviderPath }
+        return [string]$item.Path
+    } catch {
+        return ""
+    }
+}
+
 function Resolve-LaunchRepoRoot {
     if (-not [string]::IsNullOrWhiteSpace($TargetRepo)) {
         if (Test-Path -LiteralPath $TargetRepo) {
-            return (Resolve-Path -LiteralPath $TargetRepo).Path
+            return (Get-ResolvedFilesystemPath $TargetRepo)
         }
         Write-Warning "TargetRepo not found: $TargetRepo"
     }
@@ -370,7 +669,7 @@ function Resolve-LaunchRepoRoot {
     }
     $saved = [string](Get-UserBlackboardConfig).lastOpenedRepo
     if ($saved -and (Test-Path -LiteralPath $saved)) {
-        $resolved = (Resolve-Path -LiteralPath $saved).Path
+        $resolved = Get-ResolvedFilesystemPath $saved
         if (-not (Test-SameFullPath $resolved $script:ControllerRoot)) {
             return $resolved
         }
@@ -739,6 +1038,7 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                         <ComboBox Name="cbRecentBoards" Width="145" Margin="0,0,6,0" ToolTip="Recent project boards (Select to switch)"/>
                         <TextBlock Name="txtBoardPath" Text="" FontSize="10" Foreground="#89B4FA" FontFamily="Consolas, monospace" VerticalAlignment="Center" ToolTip="Active Blackboard.md path (Click to copy)" Cursor="Hand" Margin="0,0,6,0"/>
                         <Button Name="btnNewBoard" Content="➕ New Project Board" FontSize="10" Padding="5,1" Margin="0,0,3,0" Background="#313244" Foreground="#A6E3A1" FontWeight="SemiBold" ToolTip="Ask for a folder, create .ai/blackboard.md, and carry the current objective"/>
+                        <Button Name="btnAdoptFolder" Content="Adopt" FontSize="10" Padding="5,1" Margin="0,0,3,0" Background="#313244" Foreground="#A6E3A1" ToolTip="Register a folder. An existing board is opened unchanged."/>
                         <Button Name="btnSwitchBoard" Content="📂 Browse" FontSize="10" Padding="5,1" Margin="0,0,3,0" Background="#313244" Foreground="#BAC2DE" ToolTip="Browse to select an existing blackboard.md file"/>
                         <Button Name="btnReloadBoard" Content="🔄 Refresh" FontSize="10" Padding="5,1" Margin="0,0,0,0" Background="#313244" Foreground="#89B4FA" FontWeight="SemiBold" ToolTip="Reload the blackboard from disk (F5). If the form is dirty, confirm first. Disk wins."/>
                     </StackPanel>
@@ -902,6 +1202,7 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
                     <Grid Grid.Row="0" Margin="0,0,0,6">
@@ -912,7 +1213,15 @@ if (-not ([System.Management.Automation.PSTypeName]"WinHelper").Type) {
                         <TextBlock Text="👑 HUMAN STEERING NOTES" FontWeight="Bold" FontSize="11" Foreground="#F9E2AF" VerticalAlignment="Center"/>
                         <Button Grid.Column="1" Name="btnPromoteNotes" Content="📝 Promote to Prompt" Background="#313244" Foreground="#F9E2AF" Padding="6,2" FontSize="10" ToolTip="Draft a Prompt from these steering notes (requires confirmation before replacing Current Objective)"/>
                     </Grid>
-                    <TextBox Name="txtHumanNotes" Grid.Row="1" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
+                    <Grid Grid.Row="1" Margin="0,0,0,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBox Name="txtNewNoteItem" Grid.Column="0" Height="24" Padding="4,2" Margin="0,0,4,0" ToolTip="Append one steering note. No item code."/>
+                        <Button Name="btnSubmitNoteItem" Grid.Column="1" Content="➕ Add" Background="#313244" Foreground="#F9E2AF" FontWeight="SemiBold" Padding="8,2" FontSize="10"/>
+                    </Grid>
+                    <TextBox Name="txtHumanNotes" Grid.Row="2" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
                              MinHeight="64" VerticalAlignment="Stretch"
                              Text="- Active steering notes."/>
                 </Grid>
@@ -1077,7 +1386,7 @@ if ($cbRecentBoards) {
         $selectedItem = $cbRecentBoards.SelectedItem
         if ($selectedItem -and $selectedItem.Tag) {
             $target = [string]$selectedItem.Tag
-            $isSame = ($script:BlackboardPath -and ((Resolve-Path $script:BlackboardPath -ErrorAction SilentlyContinue).Path -eq (Resolve-Path $target -ErrorAction SilentlyContinue).Path))
+            $isSame = ($script:BlackboardPath -and ((Get-ResolvedFilesystemPath $script:BlackboardPath) -eq (Get-ResolvedFilesystemPath $target)))
             if ($isSame) {
                 Reload-ActiveBlackboard
                 return
@@ -1092,6 +1401,7 @@ if ($cbRecentBoards) {
 }
 
 $btnNewBoard           = $window.FindName("btnNewBoard")
+$btnAdoptFolder        = $window.FindName("btnAdoptFolder")
 if ($btnNewBoard) {
     $btnNewBoard.add_Click({
         try {
@@ -1116,16 +1426,7 @@ if ($btnNewBoard) {
                         New-Item -ItemType Directory -Force -Path $subPath | Out-Null
                     }
                 }
-                $targetGitignore = Join-Path $chosenFolder ".gitignore"
-                if (Test-Path $targetGitignore) {
-                    try {
-                        $giContent = [System.IO.File]::ReadAllText($targetGitignore, [System.Text.Encoding]::UTF8)
-                        if ($giContent -notmatch '\.ai/blackboard\.md') {
-                            $appendGi = "`n# Dual-Session Agent Blackboard (gitignored live session)`n.ai/blackboard.md`n.ai/blackboard.md.bak`n"
-                            [System.IO.File]::AppendAllText($targetGitignore, $appendGi, [System.Text.Encoding]::UTF8)
-                        }
-                    } catch {}
-                }
+                Add-BoardGitignoreRules $chosenFolder | Out-Null
 
                 if (-not (Test-Path $targetBlackboard)) {
                     $templateSource = if (Test-Path $script:ExamplePath) {
@@ -1138,6 +1439,7 @@ if ($btnNewBoard) {
                     
                     if ($templateSource) {
                         Copy-Item -Path $templateSource -Destination $targetBlackboard -Force
+                        Clear-BoardTemplatePlaceholders $targetBlackboard | Out-Null
                     } else {
                         $newSeat1 = [string](Get-Seat1Client)
                         if ([string]::IsNullOrWhiteSpace($newSeat1) -or $newSeat1 -eq "None") { $newSeat1 = "AI 1" }
@@ -1263,6 +1565,8 @@ $txtNewObjectiveItem    = $window.FindName("txtNewObjectiveItem")
 $btnSubmitObjectiveItem = $window.FindName("btnSubmitObjectiveItem")
 $txtAlignment          = $window.FindName("txtAlignment")
 $txtHumanNotes         = $window.FindName("txtHumanNotes")
+$txtNewNoteItem        = $window.FindName("txtNewNoteItem")
+$btnSubmitNoteItem     = $window.FindName("btnSubmitNoteItem")
 $chkEnableTooltips     = $window.FindName("chkEnableTooltips")
 $chkAudioCue           = $window.FindName("chkAudioCue")
 $badgeTurn             = $window.FindName("badgeTurn")
@@ -1414,6 +1718,7 @@ $script:MasterTooltips = @{
     "cbRecentBoards"       = "Select a recent project board to switch active context"
     "txtBoardPath"         = "Active blackboard file path (Click to copy to clipboard)"
     "btnNewBoard"          = "Initialize a new blackboard in a project folder"
+    "btnAdoptFolder"       = "Adopt a folder. An existing .ai/blackboard.md is not overwritten."
     "btnSwitchBoard"       = "Browse to select an existing blackboard.md file"
     "btnReloadBoard"       = "Reload the blackboard from disk (F5). If the form is dirty, confirm first. Disk wins."
     "cbPhase"              = "Select current project workflow phase (ready, pitch, discuss, plan, implement, review, test, closing, debrief)"
@@ -1439,6 +1744,8 @@ $script:MasterTooltips = @{
     "btnSubmitObjectiveItem" = "Append single issue to Current Objective with next sequential HUMn item code"
     "txtAlignment"         = "Key design rules, architectural constraints, and agreed decisions"
     "txtHumanNotes"        = "Active steering notes and directives from the Human Lead"
+    "txtNewNoteItem"       = "Append one steering note as a plain line. No item code."
+    "btnSubmitNoteItem"    = "Append the steering note line"
     "btnPromoteNotes"      = "Draft a Prompt from these steering notes (appends to Current Objective)"
 
     # Response Panes
@@ -1525,7 +1832,7 @@ function Save-ClientConfiguration {
             $resolvedPath = if ($script:BlackboardPath.StartsWith("\\") -or $script:BlackboardPath.StartsWith("//")) {
                 [System.IO.Path]::GetFullPath($script:BlackboardPath)
             } else {
-                $rp = (Resolve-Path $script:BlackboardPath -ErrorAction SilentlyContinue).Path
+                $rp = Get-ResolvedFilesystemPath $script:BlackboardPath
                 if ($rp) { $rp } else { [System.IO.Path]::GetFullPath($script:BlackboardPath) }
             }
             if ($resolvedPath) {
@@ -1545,7 +1852,7 @@ function Save-ClientConfiguration {
             $resolvedActive = if ($script:BlackboardPath.StartsWith("\\") -or $script:BlackboardPath.StartsWith("//")) {
                 [System.IO.Path]::GetFullPath($script:BlackboardPath)
             } else {
-                $ra = (Resolve-Path $script:BlackboardPath -ErrorAction SilentlyContinue).Path
+                $ra = Get-ResolvedFilesystemPath $script:BlackboardPath
                 if ($ra) { $ra } else { [System.IO.Path]::GetFullPath($script:BlackboardPath) }
             }
             if ($resolvedActive) {
@@ -1554,7 +1861,7 @@ function Save-ClientConfiguration {
                     $r = if ($itemPath.StartsWith("\\") -or $itemPath.StartsWith("//")) {
                         [System.IO.Path]::GetFullPath($itemPath)
                     } else {
-                        $ri = (Resolve-Path $itemPath -ErrorAction SilentlyContinue).Path
+                        $ri = Get-ResolvedFilesystemPath $itemPath
                         if ($ri) { $ri } else { [System.IO.Path]::GetFullPath($itemPath) }
                     }
                     $r -and ($r -ne $resolvedActive)
@@ -1649,7 +1956,7 @@ function Save-ClientConfiguration {
         $dir = Split-Path $script:ClientsConfigPath -Parent
         if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
         $jsonStr = $exportObj | ConvertTo-Json -Depth 5
-        [System.IO.File]::WriteAllText($script:ClientsConfigPath, $jsonStr, [System.Text.Encoding]::UTF8)
+        Write-TextAtomic -Path $script:ClientsConfigPath -Content $jsonStr
     } catch {
         if ($txtStatus) { $txtStatus.Text = "Config save error: $($_.Exception.Message)" }
         Write-Warning "Save-ClientConfiguration failed: $_"
@@ -2031,7 +2338,7 @@ function Populate-SeatClientDropdowns {
     $boardSeat1 = $null
     $boardSeat2 = $null
     if ($script:BlackboardPath) {
-        $resolvedActive = (Resolve-Path $script:BlackboardPath -ErrorAction SilentlyContinue).Path
+        $resolvedActive = Get-ResolvedFilesystemPath $script:BlackboardPath
         $wsSeat = $null
         if ($resolvedActive -and $script:ClientConfig.workspaces) {
             $wsSeat = @($script:ClientConfig.workspaces | Where-Object { $_ -and $_.boardPath -and (Test-SameFullPath $_.boardPath $resolvedActive) }) | Select-Object -First 1
@@ -2125,7 +2432,13 @@ function Populate-RecentBoardsDropdown {
             $label = [string]$proj.name
             if (-not $reachable) {
                 $item.IsEnabled = $false
-                $label = "⛔ $label (offline)"
+                $server = ""
+                if ($board -match '^\\\\([^\\]+)\\') { $server = $Matches[1] }
+                $nameFailed = $false
+                if ($server -and $server -notmatch '^\d{1,3}(\.\d{1,3}){3}$') {
+                    try { $null = [System.Net.Dns]::GetHostAddresses($server) } catch { $nameFailed = $true }
+                }
+                $label = if ($nameFailed) { "⛔ $label (name)" } else { "⛔ $label (offline)" }
             }
             $item.Content = $label
             $item.Tag = $board
@@ -2153,9 +2466,12 @@ function Set-ActiveBlackboardPath {
         [System.Windows.MessageBox]::Show("Blackboard file not found: $targetPath", "Switch Blackboard", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
         return
     }
+    if ($script:BlackboardPath -and ($script:BlackboardPath -ne $targetPath)) {
+        Unlock-BoardLease $script:BlackboardPath
+    }
 
     try {
-        $resolved = (Resolve-Path $targetPath).Path
+        $resolved = Get-ResolvedFilesystemPath $targetPath
         $parentDir = Split-Path $resolved -Parent
         $isDotAi = ((Split-Path $parentDir -Leaf) -eq ".ai")
         
@@ -2193,6 +2509,8 @@ function Set-ActiveBlackboardPath {
 
         $script:FormDirty = $false
         $script:LastReadBlackboardText = ""
+        $script:AlignmentBaselineSet = $false
+        $script:LastLoadedAlignment = ""
         $script:LastCursorPad = $null
         $script:LastGeminiPad = $null
         $script:ActiveTurnOverride = $null
@@ -2220,6 +2538,8 @@ function Reload-ActiveBlackboard {
     }
     $script:FormDirty = $false
     $script:LastReadBlackboardText = ""
+    $script:AlignmentBaselineSet = $false
+    $script:LastLoadedAlignment = ""
     $script:LastCursorPad = $null
     $script:LastGeminiPad = $null
     $script:ActiveTurnOverride = $null
@@ -2252,6 +2572,7 @@ if ($cbSeat2Client) {
 
 if ($window) {
     $window.add_Closing({
+        Unlock-BoardLease $script:BlackboardPath
         Save-ClientConfiguration
     })
 }
@@ -2605,7 +2926,11 @@ function Show-BlackboardViewer {
     
     $btnViewerSave.add_Click({
         try {
-            [System.IO.File]::WriteAllText($script:BlackboardPath, $script:ViewerRawBox.Text, [System.Text.Encoding]::UTF8)
+            if (-not (Lock-BoardLease $script:BlackboardPath)) {
+                $script:ViewerStatus.Text = "Board lease is held by another machine."
+                return
+            }
+            Write-TextAtomic -Path $script:BlackboardPath -Content $script:ViewerRawBox.Text
             $script:ViewerStatus.Text = "💾 Saved edits to .ai/blackboard.md (" + (Get-Date -Format "HH:mm:ss") + ")."
             Load-BlackboardIntoUI
         } catch {
@@ -2684,7 +3009,7 @@ function Add-PngPreview {
         $bmp.BeginInit()
         $bmp.CacheOption = [System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad
         $bmp.CreateOptions = [System.Windows.Media.Imaging.BitmapCreateOptions]::IgnoreImageCache
-        $bmp.UriSource = New-Object System.Uri ((Resolve-Path -LiteralPath $fullPath).Path)
+        $bmp.UriSource = New-Object System.Uri (Get-ResolvedFilesystemPath $fullPath)
         $bmp.DecodePixelWidth = 420
         $bmp.EndInit()
         $bmp.Freeze()
@@ -3122,7 +3447,12 @@ function Get-AgreedSentences {
     if ([string]::IsNullOrEmpty($pad)) { return $out }
     $pattern = '(?im)^\s*[-*]?\s*`?(?:-\s*)?`?\*\*Agreed\*\*`?\s*:\s*(.+)$'
     foreach ($m in [regex]::Matches($pad, $pattern)) {
-        $val = $m.Groups[1].Value.Trim().Trim('`').Trim()
+        # Whitespace only. The capture group is everything after "**Agreed**:", so every
+        # backtick in it belongs to the sentence. Trimming both ends unconditionally stripped
+        # the opening backtick from a decision that began with an inline-code span (how AG-5
+        # lost its first character), and guessing at a "wrapping pair" still corrupted a
+        # sentence that both starts and ends with one, e.g. `Get-ItemCodeToken` parses `AG-4`.
+        $val = $m.Groups[1].Value.Trim()
         if ($val -match '(?i)^\s*[*◦\-`"]*?\s*(?:Summary|Next)\b') { continue }
         if ($val -and ($out -notcontains $val)) { $out += $val }
     }
@@ -3454,6 +3784,10 @@ if ($btnPromoteNotes) {
         $confirm = [System.Windows.MessageBox]::Show("Promote Human Notes to Current Objective & Prompt?`n`n[Notes Preview]:`n$rawNotes`n`nNote: This will append to the Prompt field and mark blackboard dirty. It will not auto-send or create an issue.", "Confirm Promote Notes", [System.Windows.MessageBoxButton]::YesNo, [System.Windows.MessageBoxImage]::Question)
         if ($confirm -eq [System.Windows.MessageBoxResult]::Yes) {
             $clean = $rawNotes -replace '^(?:-\s*|\*\s*)', ''
+            if ($txtPrompt.Text -and $txtPrompt.Text.Contains($clean)) {
+                $txtStatus.Text = "Human Notes are already in the Objective."
+                return
+            }
             $joined = Join-TextWithSeparator -existing $txtPrompt.Text -addition $clean
             $txtPrompt.Text = $joined
             Mark-FormDirty
@@ -3733,6 +4067,11 @@ function Check-PhaseAutoAdvance {
     }
 
     if ($currentPhase -eq "debrief") {
+        # A headless run must never open a modal: MessageBox.Show waits for a click and
+        # blocks the suite indefinitely. It must also not take either real branch, because
+        # advancing here clears the sign-off boxes the close-gate asserts depend on, and
+        # Close Project would run the git audit inside a test. Return instead.
+        if ($script:HeadlessTest) { return }
         $askClose = [System.Windows.MessageBox]::Show(
             "Debrief complete with all required sign-offs.`n`nClose Project now (run git audit, commit, push, archive, and open ready)?`n`nClick 'Yes' to Close and Ship project now.`nClick 'No' to arm New Chat and move to ready.",
             "Close Project or Advance to Ready",
@@ -3814,13 +4153,18 @@ function Invoke-UnsignedTestRollback {
         if ($cbGeminiRole -and $cbGeminiRole.Text -eq "review") { Add-SeatStat -seat (Get-Seat2Client) -field "reviewCatches" }
         if ($txtStatus) { $txtStatus.Text = "Auto step: an AI $phaseNow turn has no Sign-off [x]. Phase badge returned to implement. Roles were left as assigned. Streak $($script:UnsignedRollbackStreak)." }
         if ($script:UnsignedRollbackStreak -ge 3) {
-            $swapAsk = [System.Windows.MessageBox]::Show(
-                "This run has rolled back from test 3 times without a sign-off.`n`nSwap the implement seat to the other AI?",
-                "Swap implement seat?",
-                [System.Windows.MessageBoxButton]::YesNo,
-                [System.Windows.MessageBoxImage]::Question,
+            # Same headless rule as the debrief ask: never block a test run on a modal.
+            $swapAsk = if ($script:HeadlessTest) {
                 [System.Windows.MessageBoxResult]::No
-            )
+            } else {
+                [System.Windows.MessageBox]::Show(
+                    "This run has rolled back from test 3 times without a sign-off.`n`nSwap the implement seat to the other AI?",
+                    "Swap implement seat?",
+                    [System.Windows.MessageBoxButton]::YesNo,
+                    [System.Windows.MessageBoxImage]::Question,
+                    [System.Windows.MessageBoxResult]::No
+                )
+            }
             $script:UnsignedRollbackStreak = 0
             if ($swapAsk -eq [System.Windows.MessageBoxResult]::Yes -and $cbCursorRole -and $cbGeminiRole) {
                 $role1 = [string]$cbCursorRole.Text
@@ -4651,7 +4995,7 @@ function Join-TextWithSeparator {
     if ([string]::IsNullOrWhiteSpace($existing)) { return $add }
     $base = Remove-DanglingSeparators $existing
     if ([string]::IsNullOrWhiteSpace($base)) { return $add }
-    return ($base + [Environment]::NewLine + "---" + [Environment]::NewLine + $add)
+    return ($base + [Environment]::NewLine + [Environment]::NewLine + $add)
 }
 
 function Get-LatestTurnText {
@@ -4885,12 +5229,12 @@ function Sync-SignoffCheckboxes {
     if ($cFreshSignoff) {
         $chkSignCursor.IsChecked = $true
         $script:NewSignoffDuringLoad = $true
+    } elseif ($cTable) {
+        $chkSignCursor.IsChecked = $true
     } elseif (-not [string]::IsNullOrWhiteSpace($cPad) -and -not $cPadSign) {
         $chkSignCursor.IsChecked = $false
     } elseif ($cCleared) {
         $chkSignCursor.IsChecked = $false
-    } elseif ($cTable) {
-        $chkSignCursor.IsChecked = $true
     }
     }
     
@@ -4918,12 +5262,12 @@ function Sync-SignoffCheckboxes {
     if ($gFreshSignoff) {
         $chkSignGemini.IsChecked = $true
         $script:NewSignoffDuringLoad = $true
+    } elseif ($gTable) {
+        $chkSignGemini.IsChecked = $true
     } elseif (-not [string]::IsNullOrWhiteSpace($gPad) -and -not $gPadSign) {
         $chkSignGemini.IsChecked = $false
     } elseif ($gCleared) {
         $chkSignGemini.IsChecked = $false
-    } elseif ($gTable) {
-        $chkSignGemini.IsChecked = $true
     }
     }
 }
@@ -5002,34 +5346,52 @@ function Format-AlignmentIds {
     }
     if ($buf.Count -gt 0) { [void]$blocks.Add(($buf -join "`n").Trim()) }
     $bodies = New-Object System.Collections.Generic.List[string]
+    $bodyIds = New-Object System.Collections.Generic.List[int]
     $other = New-Object System.Collections.Generic.List[string]
     foreach ($b in $blocks) {
         if ([string]::IsNullOrWhiteSpace($b)) { continue }
         if ($b -match '(?s)^\s*-\s+\*\*Agreed\*\*\s*:\s*(.*)$') {
-            $raw = Remove-AlignmentIndexPrefix $Matches[1]
+            $captured = $Matches[1]
+            # Read the id before Remove-AlignmentIndexPrefix removes it. An id already on a row
+            # is an identity, not a position, and must survive the next save unchanged.
+            $existingId = 0
+            if ($captured -match '^\s*\[AG-(\d+)\]') { $existingId = [int]$Matches[1] }
+            $raw = Remove-AlignmentIndexPrefix $captured
             $parts = @($raw -split '(?m)(?=^\s*[◦•]\s*Agreed\s*:)')
             foreach ($part in $parts) {
                 $body = ($part -replace '^\s*[◦•]\s*Agreed\s*:\s*', '').Trim()
-                if ($body) { [void]$bodies.Add($body) }
+                if ($body) {
+                    [void]$bodies.Add($body)
+                    [void]$bodyIds.Add($existingId)
+                    $existingId = 0   # the id belongs to the first continuation only
+                }
             }
         } else {
             [void]$other.Add($b.Trim())
         }
     }
     $keep = New-Object System.Collections.Generic.List[string]
+    $keepIds = New-Object System.Collections.Generic.List[int]
     for ($i = $bodies.Count - 1; $i -ge 0; $i--) {
         $drop = $false
         foreach ($later in $keep) {
             if (Test-AlignmentRepeat $bodies[$i] $later) { $drop = $true; break }
         }
-        if (-not $drop) { $keep.Insert(0, $bodies[$i]) }
+        if (-not $drop) {
+            $keep.Insert(0, $bodies[$i])
+            $keepIds.Insert(0, $bodyIds[$i])
+        }
     }
+    # New rows continue above the highest id already present, so adding a decision never
+    # renumbers the rows above it and AG-n stays a stable handle for Demote.
     $n = 0
+    foreach ($id in $keepIds) { if ($id -gt $n) { $n = $id } }
     $out = New-Object System.Collections.Generic.List[string]
     foreach ($line in $other) { [void]$out.Add($line) }
-    foreach ($body in $keep) {
-        $n++
-        [void]$out.Add("- **Agreed**: [AG-$n] $body")
+    for ($i = 0; $i -lt $keep.Count; $i++) {
+        $id = $keepIds[$i]
+        if ($id -le 0) { $n++; $id = $n }
+        [void]$out.Add("- **Agreed**: [AG-$id] $($keep[$i])")
     }
     return ($out -join "`n`n")
 }
@@ -5037,7 +5399,9 @@ function Format-AlignmentIds {
 function Get-ItemCodeToken {
     param([string]$text)
     if ([string]::IsNullOrWhiteSpace($text)) { return "" }
-    if ($text -match '(?i)\b((?:CUR|ANT|HUM))-?(\d+)\b') {
+    # AG must be recognised: Format-AlignmentIds emits [AG-n] for every decision, so Demote
+    # could not reach the very rows the Promote/Demote row exists to manage.
+    if ($text -match '(?i)\b((?:CUR|ANT|HUM|AG))-?(\d+)\b') {
         return ($Matches[1].ToUpper() + $Matches[2])
     }
     return ""
@@ -5133,6 +5497,22 @@ function Invoke-SubmitObjectiveItem {
     if ($txtStatus) { $txtStatus.Text = "Added objective item $nextCode." }
 }
 
+function Invoke-SubmitNoteItem {
+    if (-not $txtNewNoteItem -or -not $txtHumanNotes) { return }
+    $text = $txtNewNoteItem.Text
+    if ([string]::IsNullOrWhiteSpace($text)) { return }
+    $line = $text.Trim()
+    if ([string]::IsNullOrWhiteSpace($txtHumanNotes.Text)) {
+        $txtHumanNotes.Text = $line
+    } else {
+        $txtHumanNotes.Text = "$($txtHumanNotes.Text.TrimEnd())`r`n$line"
+    }
+    $txtNewNoteItem.Text = ""
+    Mark-FormDirty
+    Save-BlackboardContent
+    if ($txtStatus) { $txtStatus.Text = "Added steering note." }
+}
+
 function Invoke-PromoteItemCode {
     $code = Get-ItemCodeToken $(if ($txtItemCode) { $txtItemCode.Text } else { "" })
     if (-not $code) {
@@ -5180,7 +5560,26 @@ function Invoke-DemoteItemCode {
     $txtAlignment.Text = ($kept -join "`n`n")
     Mark-FormDirty
     Save-BlackboardContent
-    if ($txtStatus) { $txtStatus.Text = "Demoted $code from Alignment." }
+    # The next id is one past the highest id still present. That equals the removed id only
+    # when the removed row was contiguous with what remains. A gap (AG-9 removed while AG-5
+    # remains) makes the next id AG-6, so claiming "reuse AG-9" is false.
+    $freedMaxId = 0
+    if ($code -match '^AG(\d+)$') {
+        $removedNum = [int]$Matches[1]
+        $maxRemaining = 0
+        foreach ($hit in [regex]::Matches($txtAlignment.Text, '\[AG-(\d+)\]')) {
+            $v = [int]$hit.Groups[1].Value
+            if ($v -gt $maxRemaining) { $maxRemaining = $v }
+        }
+        if ($removedNum -eq ($maxRemaining + 1)) { $freedMaxId = $removedNum }
+    }
+    if ($txtStatus) {
+        if ($freedMaxId -gt 0) {
+            $txtStatus.Text = "Demoted $code from Alignment. That was the highest id, so the next new decision will reuse AG-$freedMaxId."
+        } else {
+            $txtStatus.Text = "Demoted $code from Alignment."
+        }
+    }
 }
 
 function Register-ItemCodeClick {
@@ -5267,6 +5666,32 @@ function Show-StatsWindow {
     [void]$win.ShowDialog()
 }
 
+function Get-AlignmentBodyFromRaw {
+    param([string]$Raw)
+    if ([string]::IsNullOrEmpty($Raw)) { return "" }
+    return (Format-AlignmentIds (Remove-DanglingSeparators (Get-LastMarkdownBody $Raw '##\s+Alignment\s*&\s*Agreed Decisions'))).Trim()
+}
+
+function Resolve-AlignmentSaveText {
+    param([string]$Textbox, [string]$DiskRaw)
+    $box = (Format-AlignmentIds (Remove-DanglingSeparators $Textbox)).Trim()
+    if (-not $script:AlignmentBaselineSet) {
+        return [pscustomobject]@{ Text = $box; Source = "box" }
+    }
+    $disk = Get-AlignmentBodyFromRaw $DiskRaw
+    $last = [string]$script:LastLoadedAlignment
+    if ($null -ne $last) { $last = $last.Trim() } else { $last = "" }
+    $diskChanged = ($disk -ne $last)
+    $boxChanged = ($box -ne $last)
+    if ($diskChanged -and -not $boxChanged) {
+        return [pscustomobject]@{ Text = $disk; Source = "disk" }
+    }
+    if ($diskChanged -and $boxChanged) {
+        return [pscustomobject]@{ Text = $box; Source = "conflict" }
+    }
+    return [pscustomobject]@{ Text = $box; Source = "box" }
+}
+
 function Save-BlackboardContent {
     param([string]$customPath = $script:BlackboardPath, [switch]$clearScratchpads)
     
@@ -5339,6 +5764,21 @@ function Save-BlackboardContent {
     $signCursor = if ($chkSignCursor.IsChecked) { "[x]" } else { "[ ]" }
     $signGemini = if ($chkSignGemini.IsChecked) { "[x]" } else { "[ ]" }
 
+    $diskForAlign = ""
+    if ($customPath -and (Test-Path -LiteralPath $customPath)) {
+        try { $diskForAlign = [System.IO.File]::ReadAllText($customPath, [System.Text.Encoding]::UTF8) } catch { $diskForAlign = "" }
+    }
+    $alignDecision = Resolve-AlignmentSaveText -Textbox $(if ($txtAlignment) { $txtAlignment.Text } else { "" }) -DiskRaw $diskForAlign
+    if ($alignDecision.Source -eq "conflict") {
+        if ($txtStatus) { $txtStatus.Text = "Save skipped: Alignment changed on disk and in the box." }
+        return
+    }
+    $alignBody = $alignDecision.Text
+    if ($alignDecision.Source -eq "disk" -and $txtAlignment) {
+        $script:SuppressFormDirty = $true
+        try { $txtAlignment.Text = $alignBody } finally { $script:SuppressFormDirty = $false }
+    }
+
     $q = [char]96
     $lines = @(
         "# Dual-Session Agent Blackboard",
@@ -5374,7 +5814,7 @@ function Save-BlackboardContent {
         "",
         "## Alignment & Agreed Decisions",
         "",
-        (Format-AlignmentIds (Remove-DanglingSeparators $txtAlignment.Text)),
+        $alignBody,
         "",
         "---",
         "",
@@ -5397,9 +5837,15 @@ function Save-BlackboardContent {
     )
     
     $content = $lines -join [Environment]::NewLine
-    [System.IO.File]::WriteAllText($customPath, $content, [System.Text.Encoding]::UTF8)
+    if (-not (Lock-BoardLease $customPath)) {
+        if ($txtStatus) { $txtStatus.Text = "Board lease is held by another machine." }
+        return
+    }
+    Write-TextAtomic -Path $customPath -Content $content
     $script:FormDirty = $false
     $script:LastReadBlackboardText = $content
+    $script:LastLoadedAlignment = $alignBody
+    $script:AlignmentBaselineSet = $true
     $txtLastSaved.Text = "Last write: " + (Get-Date -Format "HH:mm:ss")
     $txtStatus.Text = "Saved blackboard to: " + $customPath
     Update-BlackboardViewer
@@ -5646,8 +6092,32 @@ function Apply-SelectedWorkflowPreset {
     }
 }
 
-if ($btnStats) { $btnStats.add_Click({ Show-StatsWindow }) }
+function Invoke-AdoptFolderDialog {
+    if (-not (Confirm-DiscardUnsavedEdits -actionName "adopting a folder")) { return }
+    $fbd = New-Object System.Windows.Forms.FolderBrowserDialog
+    $fbd.Description = "Select a folder to adopt. An existing board is left unchanged."
+    $fbd.ShowNewFolderButton = $true
+    if ($fbd.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return }
+    $root = Get-ProjectRootFromTarget $fbd.SelectedPath
+    $result = Initialize-AdoptedBoard $root
+    if (-not $result) { return }
+    Register-Project -Path $root | Out-Null
+    Set-ActiveBlackboardPath -targetPath (Get-ProjectBoardPath $root)
+    if ($txtStatus) { $txtStatus.Text = "Adopted folder ($result)." }
+}
+
+if ($btnAdoptFolder) { $btnAdoptFolder.add_Click({ Invoke-AdoptFolderDialog }) }
 if ($btnSubmitObjectiveItem) { $btnSubmitObjectiveItem.add_Click({ Invoke-SubmitObjectiveItem }) }
+if ($btnSubmitNoteItem) { $btnSubmitNoteItem.add_Click({ Invoke-SubmitNoteItem }) }
+if ($txtNewNoteItem) {
+    $txtNewNoteItem.add_KeyDown({
+        param($s, $e)
+        if ($e.Key -eq [System.Windows.Input.Key]::Enter) {
+            Invoke-SubmitNoteItem
+            $e.Handled = $true
+        }
+    })
+}
 if ($txtNewObjectiveItem) {
     $txtNewObjectiveItem.add_KeyDown({
         param($s, $e)
@@ -6143,6 +6613,8 @@ $btnRelaunch.add_Click({ Invoke-ControllerRelaunch })
 $btnUpdateController.add_Click({ Invoke-ControllerUpdate })
 
 $script:LastReadBlackboardText = ""
+$script:LastLoadedAlignment = ""
+$script:AlignmentBaselineSet = $false
 $script:LastCursorPad = $null
 $script:LastGeminiPad = $null
 $script:ActiveTurnOverride = $null
@@ -6368,6 +6840,8 @@ function Load-BlackboardIntoUI {
                 $txtPrompt.Text = Remove-DanglingSeparators (Get-LastMarkdownBody $raw '##\s+Current Objective\s*&\s*Prompt')
                 $alignLoaded = Format-AlignmentIds (Remove-DanglingSeparators (Get-LastMarkdownBody $raw '##\s+Alignment\s*&\s*Agreed Decisions'))
                 $txtAlignment.Text = $alignLoaded
+                $script:LastLoadedAlignment = $alignLoaded.Trim()
+                $script:AlignmentBaselineSet = $true
                 $bugsLoaded = Remove-DanglingSeparators (Get-LastMarkdownBody $raw '##\s+Bugs')
                 if ($txtBugs) {
                     if ($bugsLoaded -and $bugsLoaded.Trim() -ne "_None_") { $txtBugs.Text = $bugsLoaded.Trim() } else { $txtBugs.Text = "" }
@@ -6384,6 +6858,8 @@ function Load-BlackboardIntoUI {
                         $txtPrompt.Text = $promptLoaded
                     }
                     $alignLoaded = Format-AlignmentIds (Remove-DanglingSeparators (Get-LastMarkdownBody $raw '##\s+Alignment\s*&\s*Agreed Decisions'))
+                    $script:LastLoadedAlignment = $alignLoaded.Trim()
+                    $script:AlignmentBaselineSet = $true
                     if ($alignLoaded -ne $txtAlignment.Text) {
                         $txtAlignment.Text = $alignLoaded
                     }
@@ -6472,6 +6948,7 @@ function Ensure-RepoBlackboardFile {
         $example = Join-Path $script:ControllerAiDir "blackboard.example.md"
         if (Test-Path -LiteralPath $example) {
             Copy-Item -LiteralPath $example -Destination $bb
+            Clear-BoardTemplatePlaceholders $bb | Out-Null
         }
     }
     return $bb
@@ -6501,6 +6978,376 @@ function Invoke-HeadlessUiTest {
     try { [System.IO.File]::WriteAllText($log, "") } catch {}
     function Add-Fail([string]$msg) { [void]$fails.Add($msg); Add-Content $log "FAIL $msg"; Write-Output "FAIL $msg" }
     function Add-Pass([string]$msg) { Add-Content $log "PASS $msg"; Write-Output "PASS $msg" }
+
+    $joined = Join-TextWithSeparator -existing "A" -addition "B"
+    if ($joined -match '(?m)^---\s*$') {
+        Add-Fail "JOIN_SEPARATOR_STILL_EMITS_RULE"
+    } else {
+        Add-Pass "JOIN_SEPARATOR_HAS_NO_RULE"
+    }
+    $unc = Get-ResolvedFilesystemPath '\\10.0.0.183\Files'
+    if (-not $unc) {
+        Add-Pass "UNC_RESOLVE_SKIPPED"
+    } elseif ($unc.StartsWith('\\') -and [System.IO.Path]::IsPathRooted($unc)) {
+        Add-Pass "UNC_RESOLVE_STAYS_ROOTED"
+    } else {
+        Add-Fail "UNC_RESOLVE_NOT_ROOTED: $unc"
+    }
+    $staleLease = Test-BoardLeaseStale ([pscustomobject]@{ acquiredUtc = [datetime]::UtcNow.AddMinutes(-5).ToString("o"); ttlSeconds = 30 })
+    $freshLease = Test-BoardLeaseStale ([pscustomobject]@{ acquiredUtc = [datetime]::UtcNow.ToString("o"); ttlSeconds = 120 })
+    $blocks = Test-LeaseBlocksWriter ([pscustomobject]@{ holder = "OTHER|1"; acquiredUtc = [datetime]::UtcNow.ToString("o"); ttlSeconds = 120 })
+    if ($staleLease -and -not $freshLease -and $blocks) { Add-Pass "LEASE_STALE_AND_HELD" } else { Add-Fail "LEASE_STALE_AND_HELD stale=$staleLease fresh=$freshLease blocks=$blocks" }
+    $writtenUtc = [datetime]::UtcNow.AddMinutes(-5)
+    $roundLease = (@{ acquiredUtc = $writtenUtc.ToString("o"); ttlSeconds = 30 } | ConvertTo-Json | ConvertFrom-Json)
+    $roundGot = Get-LeaseAcquiredUtc $roundLease.acquiredUtc
+    $roundDelta = [math]::Abs(($roundGot - $writtenUtc).TotalSeconds)
+    $roundStale = Test-BoardLeaseStale $roundLease
+    $freshRound = (@{ acquiredUtc = [datetime]::UtcNow.ToString("o"); ttlSeconds = 120 } | ConvertTo-Json | ConvertFrom-Json)
+    $freshRoundStale = Test-BoardLeaseStale $freshRound
+    if ($roundDelta -lt 2 -and $roundStale -and -not $freshRoundStale) {
+        Add-Pass "LEASE_JSON_UTC_ROUNDTRIP"
+    } else {
+        Add-Fail "LEASE_JSON_UTC_ROUNDTRIP delta=$roundDelta stale=$roundStale freshStale=$freshRoundStale got=$($roundGot.ToString('o'))"
+    }
+    $leaseProbe = Join-Path $env:TEMP ("bb-lease-" + [guid]::NewGuid().ToString("N"))
+    $leaseBoard = Join-Path $leaseProbe 'blackboard.md'
+    New-Item -ItemType Directory -Path $leaseProbe -Force | Out-Null
+    try {
+        $held = Lock-BoardLease -BoardPath $leaseBoard -Holder 'WRITER-A' -ForceNetwork
+        $refused = Lock-BoardLease -BoardPath $leaseBoard -Holder 'WRITER-B' -ForceNetwork
+        $script:DriveUncMap['Z:'] = '\\10.0.0.183\Files'
+        $canon = Get-CanonicalProjectPath 'Z:\workspaces\demo'
+        $mapped = Test-NetworkBoardPath $canon
+        if ($held -and -not $refused -and $mapped -and $canon.StartsWith('\\')) { Add-Pass "LEASE_EXCLUSIVE_CREATE" } else { Add-Fail "LEASE_EXCLUSIVE_CREATE held=$held refused=$refused mapped=$mapped canon=$canon" }
+    } finally {
+        if ($script:DriveUncMap.ContainsKey('Z:')) { $script:DriveUncMap.Remove('Z:') }
+        Remove-Item -LiteralPath $leaseProbe -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    $adoptDir = Join-Path $env:TEMP ("bb-adopt-" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Path $adoptDir -Force | Out-Null
+    $first = Initialize-AdoptedBoard $adoptDir
+    $hash1 = (Get-FileHash -LiteralPath (Get-ProjectBoardPath $adoptDir) -Algorithm SHA256).Hash
+    $second = Initialize-AdoptedBoard $adoptDir
+    $hash2 = (Get-FileHash -LiteralPath (Get-ProjectBoardPath $adoptDir) -Algorithm SHA256).Hash
+    if ($first -eq "created" -and $second -eq "existing" -and $hash1 -eq $hash2) { Add-Pass "ADOPT_DOES_NOT_OVERWRITE" } else { Add-Fail "ADOPT_DOES_NOT_OVERWRITE first=$first second=$second" }
+    $giText = ""
+    if (Test-Path -LiteralPath (Join-Path $adoptDir '.gitignore')) {
+        $giText = [System.IO.File]::ReadAllText((Join-Path $adoptDir '.gitignore'), [System.Text.Encoding]::UTF8)
+    }
+    $giBoard = @($giText -split '\r?\n' | Where-Object { $_.Trim() -eq '.ai/blackboard.md' }).Count
+    $giLease = @($giText -split '\r?\n' | Where-Object { $_.Trim() -eq '.ai/lease.json' }).Count
+    $giAgain = Add-BoardGitignoreRules $adoptDir
+    $existDir = Join-Path $env:TEMP ("bb-adopt-exist-" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Path (Join-Path $existDir '.ai') -Force | Out-Null
+    $existBoard = Join-Path $existDir '.ai\blackboard.md'
+    [System.IO.File]::WriteAllText($existBoard, "keep-me", [System.Text.Encoding]::UTF8)
+    $existResult = Initialize-AdoptedBoard $existDir
+    $existBody = [System.IO.File]::ReadAllText($existBoard, [System.Text.Encoding]::UTF8)
+    $existGi = ""
+    if (Test-Path -LiteralPath (Join-Path $existDir '.gitignore')) {
+        $existGi = [System.IO.File]::ReadAllText((Join-Path $existDir '.gitignore'), [System.Text.Encoding]::UTF8)
+    }
+    $priorDir = Join-Path $env:TEMP ("bb-adopt-prior-" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Path $priorDir -Force | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $priorDir '.gitignore'), "README.md`n", [System.Text.Encoding]::UTF8)
+    $priorResult = Add-BoardGitignoreRules $priorDir
+    $priorGi = [System.IO.File]::ReadAllText((Join-Path $priorDir '.gitignore'), [System.Text.Encoding]::UTF8)
+    $priorBoardCount = @($priorGi -split '\r?\n' | Where-Object { $_.Trim() -eq '.ai/blackboard.md' }).Count
+    if ($giBoard -eq 1 -and $giLease -eq 1 -and $giAgain -eq 'present' -and $existResult -eq 'existing' -and $existBody -eq 'keep-me' -and $existGi.Contains('.ai/blackboard.md') -and $priorResult -eq 'appended' -and $priorGi.StartsWith('README.md') -and $priorBoardCount -eq 1) {
+        Add-Pass "ADOPT_GITIGNORE"
+    } else {
+        Add-Fail "ADOPT_GITIGNORE board=$giBoard lease=$giLease again=$giAgain exist=$existResult body=$existBody prior=$priorResult priorCount=$priorBoardCount"
+    }
+    Remove-Item -LiteralPath $existDir -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $priorDir -Recurse -Force -ErrorAction SilentlyContinue
+    $coverDir = Join-Path $env:TEMP ("bb-adopt-cover-" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Path $coverDir -Force | Out-Null
+    Initialize-AdoptedBoard $coverDir | Out-Null
+    $coverAi = Join-Path $coverDir '.ai'
+    foreach ($sub in @('history', 'saved')) {
+        New-Item -ItemType Directory -Path (Join-Path $coverAi $sub) -Force | Out-Null
+    }
+    $coverGi = [System.IO.File]::ReadAllText((Join-Path $coverDir '.gitignore'), [System.Text.Encoding]::UTF8)
+    $uncovered = New-Object System.Collections.Generic.List[string]
+    foreach ($child in (Get-ChildItem -LiteralPath $coverAi -Force)) {
+        if (-not (Test-AiChildCoveredByGitignore -GitignoreText $coverGi -ChildName $child.Name)) {
+            [void]$uncovered.Add($child.Name)
+        }
+    }
+    $hasHistory = @($coverGi -split '\r?\n' | Where-Object { $_.Trim() -eq '.ai/history/' }).Count -eq 1
+    $hasSaved = @($coverGi -split '\r?\n' | Where-Object { $_.Trim() -eq '.ai/saved/' }).Count -eq 1
+    if ($uncovered.Count -eq 0 -and $hasHistory -and $hasSaved) {
+        Add-Pass "ADOPT_GITIGNORE_COVERS"
+    } else {
+        Add-Fail ("ADOPT_GITIGNORE_COVERS uncovered=" + ($uncovered -join ',') + " history=$hasHistory saved=$hasSaved")
+    }
+    Remove-Item -LiteralPath $coverDir -Recurse -Force -ErrorAction SilentlyContinue
+    $placeholderDir = Join-Path $env:TEMP ("bb-adopt-ph-" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Path $placeholderDir -Force | Out-Null
+    $templatePathForAdopt = Join-Path $script:ControllerRoot ".ai\blackboard.example.md"
+    $templateBody = ""
+    if (Test-Path -LiteralPath $templatePathForAdopt) {
+        $templateBody = [System.IO.File]::ReadAllText($templatePathForAdopt, [System.Text.Encoding]::UTF8)
+    }
+    $templateHash = ""
+    if (Test-Path -LiteralPath $templatePathForAdopt) {
+        $templateHash = (Get-FileHash -LiteralPath $templatePathForAdopt -Algorithm SHA256).Hash
+    }
+    Initialize-AdoptedBoard $placeholderDir | Out-Null
+    $createdBody = ""
+    $createdBoard = Get-ProjectBoardPath $placeholderDir
+    if (Test-Path -LiteralPath $createdBoard) {
+        $createdBody = [System.IO.File]::ReadAllText($createdBoard, [System.Text.Encoding]::UTF8)
+    }
+    $templateHashAfter = ""
+    if (Test-Path -LiteralPath $templatePathForAdopt) {
+        $templateHashAfter = (Get-FileHash -LiteralPath $templatePathForAdopt -Algorithm SHA256).Hash
+    }
+    $templateHas = $templateBody -match '(?m)^- Key design choice 1\s*$'
+    $createdHas = $createdBody -match '(?m)^- Key design choice \d+\s*$'
+    if ($templateHas -and -not $createdHas -and $templateHash -eq $templateHashAfter -and $createdBody.Length -gt 0) {
+        Add-Pass "ADOPT_TEMPLATE_DECISIONS"
+    } else {
+        Add-Fail "ADOPT_TEMPLATE_DECISIONS templateHas=$templateHas createdHas=$createdHas hashSame=$($templateHash -eq $templateHashAfter) bodyLen=$($createdBody.Length)"
+    }
+    Remove-Item -LiteralPath $placeholderDir -Recurse -Force -ErrorAction SilentlyContinue
+    $atomicDir = Join-Path $env:TEMP ("bb-atomic-" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Path $atomicDir -Force | Out-Null
+    $atomicFile = Join-Path $atomicDir "board.md"
+    [System.IO.File]::WriteAllText($atomicFile, "old", [System.Text.Encoding]::UTF8)
+    try {
+        Write-TextAtomic -Path $atomicFile -Content "new"
+        $atomicBody = [System.IO.File]::ReadAllText($atomicFile, [System.Text.Encoding]::UTF8)
+        if ($atomicBody -eq "new") { Add-Pass "ATOMIC_REPLACE_EXISTING" } else { Add-Fail "ATOMIC_REPLACE_EXISTING body=$atomicBody" }
+        $tmpLeft = @(Get-ChildItem -LiteralPath $atomicDir -Filter '*.tmp' -Force).Count
+        if ($tmpLeft -eq 0) { Add-Pass "ATOMIC_NO_TEMP_LEFT" } else { Add-Fail "ATOMIC_NO_TEMP_LEFT count=$tmpLeft" }
+        if (Test-Path -LiteralPath "$atomicFile.bak") { Add-Pass "ATOMIC_BACKUP_CREATED" } else { Add-Fail "ATOMIC_BACKUP_CREATED previous board was not preserved" }
+
+        # Failure path: a failed write must leave the previous board intact and no sidecars.
+        $atomicLocked = Join-Path $atomicDir "locked.md"
+        [System.IO.File]::WriteAllText($atomicLocked, "old", [System.Text.Encoding]::UTF8)
+        $hold = [System.IO.File]::Open($atomicLocked, [System.IO.FileMode]::Open, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+        $threw = $false
+        try { Write-TextAtomic -Path $atomicLocked -Content "new" } catch { $threw = $true }
+        $leftover = @(Get-ChildItem -LiteralPath $atomicDir -Filter '*.tmp' -Force).Count
+        $asides   = @(Get-ChildItem -LiteralPath $atomicDir -Filter '*.old' -Force).Count
+        # Release the exclusive hold before reading, or the read itself throws and the
+        # assert fails for a harness reason rather than a writer reason.
+        $hold.Dispose()
+        $survivor = ""
+        try { $survivor = [System.IO.File]::ReadAllText($atomicLocked, [System.Text.Encoding]::UTF8) } catch { $survivor = "<unreadable>" }
+        if ($threw -and $leftover -eq 0 -and $asides -eq 0 -and $survivor -eq "old") {
+            Add-Pass "ATOMIC_FAILURE_KEEPS_ORIGINAL"
+        } else {
+            Add-Fail "ATOMIC_FAILURE_KEEPS_ORIGINAL threw=$threw tmpLeft=$leftover oldLeft=$asides body=$survivor"
+        }
+    } catch {
+        Add-Fail "ATOMIC_REPLACE_EXISTING $_"
+    } finally {
+        Remove-Item -LiteralPath $atomicDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    # Guard the defect class this round found: a second board write that bypasses the
+    # atomic writer. Scan production code only — the headless test itself legitimately
+    # writes fixture boards with WriteAllText.
+    $srcAll = ""
+    if ($script:ScriptFilePath -and (Test-Path -LiteralPath $script:ScriptFilePath)) { $srcAll = [System.IO.File]::ReadAllText($script:ScriptFilePath, [System.Text.Encoding]::UTF8) }
+    $cut = $srcAll.IndexOf("function Invoke-HeadlessUiTest")
+    $prod = if ($cut -gt 0) { $srcAll.Substring(0, $cut) } else { $srcAll }
+    if ($prod -match 'WriteAllText\(\s*\$script:BlackboardPath' -or $prod -match 'WriteAllText\(\s*\$customPath') {
+        Add-Fail "ATOMIC_ONLY_BOARD_WRITES a board write bypasses Write-TextAtomic"
+    } else {
+        Add-Pass "ATOMIC_ONLY_BOARD_WRITES"
+    }
+
+    # The data-loss hazard a review caught: deleting the live destination to make room for
+    # the new bytes means a failed move destroys both copies. The writer must never remove
+    # its own destination, only move it aside so it stays recoverable.
+    $fnMatch = [regex]::Match($prod, '(?s)function Write-TextAtomic \{.*?\r?\n\}')
+    if (-not $fnMatch.Success) {
+        Add-Fail "ATOMIC_NEVER_DELETES_DESTINATION could not locate Write-TextAtomic"
+    } elseif ($fnMatch.Value -match 'Remove-Item -LiteralPath \$Path') {
+        Add-Fail "ATOMIC_NEVER_DELETES_DESTINATION writer deletes its own destination"
+    } else {
+        Add-Pass "ATOMIC_NEVER_DELETES_DESTINATION"
+    }
+
+    # The check-then-act race: choosing Move vs Replace from a Test-Path on the destination
+    # loses when the destination appears in between, and the finally then throws away the
+    # sidecar holding the new bytes. The writer must attempt and inspect the failure instead.
+    if ($fnMatch.Success -and $fnMatch.Value -match 'Test-Path -LiteralPath \$Path') {
+        Add-Fail "ATOMIC_NO_CHECK_THEN_ACT writer picks its branch from Test-Path on the destination"
+    } else {
+        Add-Pass "ATOMIC_NO_CHECK_THEN_ACT"
+    }
+
+    # The twin hazard: a finally that removes the aside copy destroys the only surviving
+    # board when the restore itself fails. Walk the AST instead of a regex so a nested
+    # block cannot hide the delete from the check.
+    $fnAst = $null
+    if ($fnMatch.Success) {
+        $tok = $null; $astErr = $null
+        $fnAst = [System.Management.Automation.Language.Parser]::ParseInput($fnMatch.Value, [ref]$tok, [ref]$astErr)
+    }
+    $asideDeletedInFinally = $false
+    if ($fnAst) {
+        $tryFinder = { param($n) $n -is [System.Management.Automation.Language.TryStatementAst] }
+        foreach ($try in $fnAst.FindAll($tryFinder, $true)) {
+            if (-not $try.Finally) { continue }
+            $varFinder = { param($n) $n -is [System.Management.Automation.Language.VariableExpressionAst] }
+            foreach ($v in $try.Finally.FindAll($varFinder, $true)) {
+                if ($v.VariablePath.UserPath -eq 'aside') { $asideDeletedInFinally = $true }
+            }
+        }
+    }
+    if (-not $fnAst) {
+        Add-Fail "ATOMIC_KEEPS_FALLBACK_ON_FAILURE could not parse Write-TextAtomic"
+    } elseif ($asideDeletedInFinally) {
+        Add-Fail "ATOMIC_KEEPS_FALLBACK_ON_FAILURE a finally removes the fallback board copy"
+    } else {
+        Add-Pass "ATOMIC_KEEPS_FALLBACK_ON_FAILURE"
+    }
+
+    # A headless run must never reach a modal: MessageBox.Show waits for a click and blocks
+    # the suite indefinitely. Every modal in the auto-step path needs a -HeadlessTest guard.
+    $autoMatch = [regex]::Match($prod, '(?s)function Check-PhaseAutoAdvance \{.*?\r?\n\}')
+    if (-not $autoMatch.Success) {
+        Add-Fail "HEADLESS_NO_MODAL_AUTOSTEP could not locate Check-PhaseAutoAdvance"
+    } else {
+        $modalCount = ([regex]::Matches($autoMatch.Value, 'MessageBox\]::Show\(')).Count
+        $guardCount = ([regex]::Matches($autoMatch.Value, '\$script:HeadlessTest')).Count
+        if ($modalCount -eq 0 -or $guardCount -ge $modalCount) {
+            Add-Pass "HEADLESS_NO_MODAL_AUTOSTEP"
+        } else {
+            Add-Fail "HEADLESS_NO_MODAL_AUTOSTEP modals=$modalCount guards=$guardCount"
+        }
+    }
+    Remove-Item -LiteralPath $adoptDir -Recurse -Force -ErrorAction SilentlyContinue
+
+    # P0 #8: adopt a real workspace on the shared root. Gated on reachability so the suite
+    # still runs where the share is absent, and confined to a dedicated dot-folder that is
+    # removed in finally so no test artifact is left in the production workspace root.
+    $shareRoot = '\\10.0.0.183\Files\workspaces'
+    if (-not (Test-Path -LiteralPath $shareRoot)) {
+        Add-Pass "SHARED_WORKSPACE_ADOPT_SKIPPED"
+    } else {
+        $accRoot = Join-Path $shareRoot (".accept-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Path $accRoot -Force | Out-Null
+            $accCreated = Initialize-AdoptedBoard $accRoot
+            $accBoard = Get-ProjectBoardPath $accRoot
+            $accResolved = Get-ResolvedFilesystemPath $accBoard
+            $accRooted = $accResolved.StartsWith('\\') -and [System.IO.Path]::IsPathRooted($accResolved)
+            $accReadable = Test-Path -LiteralPath $accBoard
+            # The switcher sets $item.IsEnabled from Test-PathQuick, which short-circuits to
+            # false under -HeadlessTest by design. Flip that guard off for this one call, on a
+            # share already confirmed reachable, so the assert evaluates the real row predicate
+            # (445 probe plus a real Test-Path) rather than a stand-in.
+            $savedHeadless = $script:HeadlessTest
+            try {
+                $script:HeadlessTest = $false
+                $accRowEnabled = Test-PathQuick $accBoard
+            } finally {
+                $script:HeadlessTest = $savedHeadless
+            }
+            $accHeld = Lock-BoardLease -BoardPath $accBoard -Holder 'ACCEPT|1'
+            $accLease = Join-Path (Split-Path -Parent $accBoard) 'lease.json'
+            $accWritten = Test-Path -LiteralPath $accLease
+            Unlock-BoardLease -BoardPath $accBoard -Holder 'ACCEPT|1'
+            $accReleased = -not (Test-Path -LiteralPath $accLease)
+            # Cursor's open point: register the adopted folder for real and confirm the
+            # persisted switcher row. The registry is redirected into its own temp directory,
+            # and only ProjectsRegistryPath is moved, so Save-ProjectRegistry's headless guard
+            # still permits the write while the operator's projects.json is never touched.
+            $savedRegPath = $script:ProjectsRegistryPath
+            $accRegDir = Join-Path $env:TEMP ("bb-acc-reg-" + [guid]::NewGuid().ToString("N"))
+            $accHasRow = $false
+            try {
+                New-Item -ItemType Directory -Path $accRegDir -Force | Out-Null
+                $script:ProjectsRegistryPath = Join-Path $accRegDir "projects.json"
+                [void](Register-Project -Path $accRoot)
+                $accReg = Get-ProjectRegistry
+                $accCanonicalRoot = Get-CanonicalProjectPath $accRoot
+                $accHasRow = @($accReg.projects | Where-Object {
+                    $_ -and $_.path -and ([string]$_.path).ToLowerInvariant() -eq $accCanonicalRoot.ToLowerInvariant()
+                }).Count -eq 1
+            } catch {
+                $accHasRow = $false
+            } finally {
+                $script:ProjectsRegistryPath = $savedRegPath
+                try { Remove-Item -LiteralPath $accRegDir -Recurse -Force -ErrorAction Stop } catch { }
+            }
+            if ($accCreated -eq 'created' -and $accRooted -and $accReadable -and $accRowEnabled -and $accHasRow -and $accHeld -and $accWritten -and $accReleased) {
+                Add-Pass "SHARED_WORKSPACE_ADOPT"
+            } else {
+                Add-Fail "SHARED_WORKSPACE_ADOPT created=$accCreated rooted=$accRooted readable=$accReadable row=$accRowEnabled registryRow=$accHasRow held=$accHeld written=$accWritten released=$accReleased resolved=$accResolved"
+            }
+        } catch {
+            Add-Fail "SHARED_WORKSPACE_ADOPT $_"
+        } finally {
+            Remove-Item -LiteralPath $accRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    # A hand edit of Alignment on disk must survive a save when the box still matches the last
+    # load. v1.6.15 wrote the box and dropped that edit. If the box also changed, the save
+    # skips so neither side is overwritten.
+    $alignKeepDir = Join-Path $env:TEMP ("bb-align-" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Path $alignKeepDir -Force | Out-Null
+    $alignBoard = Join-Path $alignKeepDir "blackboard.md"
+    $alignBaseline = "- **Agreed**: [AG-1] baseline decision"
+    $alignHand = "- **Agreed**: [AG-1] baseline decision`r`n`r`n- **Agreed**: [AG-4] disk hand edit"
+    $writeAlign = {
+        param([string]$Body)
+        $raw = "## Alignment & Agreed Decisions`r`n`r`n$Body`r`n`r`n## Bugs`r`n`r`n_None_`r`n"
+        [System.IO.File]::WriteAllText($alignBoard, $raw, [System.Text.Encoding]::UTF8)
+    }
+    $savedAlignPath = $script:BlackboardPath
+    $savedAlignBox = $txtAlignment.Text
+    $savedAlignBase = $script:LastLoadedAlignment
+    $savedAlignBaseSet = $script:AlignmentBaselineSet
+    $savedAlignDirty = $script:FormDirty
+    try {
+        $script:BlackboardPath = $alignBoard
+        & $writeAlign $alignBaseline
+        $script:SuppressFormDirty = $true
+        $txtAlignment.Text = $alignBaseline
+        $script:SuppressFormDirty = $false
+        $script:LastLoadedAlignment = (Format-AlignmentIds $alignBaseline).Trim()
+        $script:AlignmentBaselineSet = $true
+        $script:FormDirty = $true
+        & $writeAlign $alignHand
+        Save-BlackboardContent
+        $keptDisk = [System.IO.File]::ReadAllText($alignBoard, [System.Text.Encoding]::UTF8)
+        if ($keptDisk -match 'disk hand edit') { Add-Pass "ALIGN_DISK_EDIT_KEPT" } else { Add-Fail "ALIGN_DISK_EDIT_KEPT body missing the disk edit" }
+
+        $script:LastLoadedAlignment = (Format-AlignmentIds $alignBaseline).Trim()
+        $script:AlignmentBaselineSet = $true
+        $script:SuppressFormDirty = $true
+        $txtAlignment.Text = "- **Agreed**: [AG-2] box edit"
+        $script:SuppressFormDirty = $false
+        & $writeAlign $alignHand
+        $beforeConflict = [System.IO.File]::ReadAllText($alignBoard, [System.Text.Encoding]::UTF8)
+        Save-BlackboardContent
+        $afterConflict = [System.IO.File]::ReadAllText($alignBoard, [System.Text.Encoding]::UTF8)
+        $conflictStatus = if ($txtStatus) { [string]$txtStatus.Text } else { "" }
+        if ($afterConflict -eq $beforeConflict -and $conflictStatus -match 'Save skipped: Alignment changed on disk and in the box') {
+            Add-Pass "ALIGN_DISK_EDIT_CONFLICT"
+        } else {
+            Add-Fail "ALIGN_DISK_EDIT_CONFLICT status=[$conflictStatus] same=$($afterConflict -eq $beforeConflict)"
+        }
+    } catch {
+        Add-Fail "ALIGN_DISK_EDIT_KEPT $_"
+    } finally {
+        $script:BlackboardPath = $savedAlignPath
+        $script:SuppressFormDirty = $true
+        $txtAlignment.Text = $savedAlignBox
+        $script:SuppressFormDirty = $false
+        $script:LastLoadedAlignment = $savedAlignBase
+        $script:AlignmentBaselineSet = $savedAlignBaseSet
+        $script:FormDirty = $savedAlignDirty
+        Remove-Item -LiteralPath $alignKeepDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
 
     # Isolate operator blackboard in `$env:TEMP` with pre/post SHA256 integrity hash verification
     $origBoardPath = $script:BlackboardPath
@@ -6550,6 +7397,21 @@ function Invoke-HeadlessUiTest {
         $latest = @($formatted -split "`n" | Where-Object { $_ -match 'latest decision' })
         if ($latest.Count -ne 1) { Add-Fail "repeated Alignment line count $($latest.Count)" } else { Add-Pass "TRIM" }
 
+        # Ids are identities, not positions. A row that already carries [AG-n] must come back
+        # with the same id after a save, and adding a decision must not renumber the rows above
+        # it — otherwise Demote can act on a different decision than the one the operator read.
+        $idFixture = "- **Agreed**: [AG-5] older decision`r`n`r`n- **Agreed**: [AG-9] newest decision"
+        $idFormatted = Format-AlignmentIds $idFixture
+        $keptFive = [bool]($idFormatted -match '\[AG-5\] older decision')
+        $keptNine = [bool]($idFormatted -match '\[AG-9\] newest decision')
+        $idAdded = Format-AlignmentIds ($idFixture + "`r`n`r`n- **Agreed**: brand new decision")
+        $newId = if ($idAdded -match '\[AG-(\d+)\] brand new decision') { [int]$Matches[1] } else { 0 }
+        if ($keptFive -and $keptNine -and $newId -gt 9) {
+            Add-Pass "AG_IDS_STABLE"
+        } else {
+            Add-Fail "AG_IDS_STABLE five=$keptFive nine=$keptNine newId=$newId formatted=[$idFormatted]"
+        }
+
         $token = "ROUNDTRIP-" + [guid]::NewGuid().ToString("N").Substring(0, 8)
         $txtPrompt.Text = $token
         Save-BlackboardContent
@@ -6586,6 +7448,72 @@ function Invoke-HeadlessUiTest {
         $btnDemoteCode.RaiseEvent((New-Object System.Windows.RoutedEventArgs ([System.Windows.Controls.Primitives.ButtonBase]::ClickEvent)))
         if ($txtAlignment.Text -match 'CUR1') { Add-Fail "Demote left CUR1 in Alignment" } else { Add-Pass "DEMOTE" }
 
+        # The CUR1 pass above proves the button for a code shape Alignment never emits. This
+        # fixture is built from the real one, AG-n, which Format-AlignmentIds writes, and it
+        # fails on any revision whose token parser does not accept AG.
+        $savedAlignText = $txtAlignment.Text
+        $savedItemCode = if ($txtItemCode) { $txtItemCode.Text } else { "" }
+        try {
+            $txtAlignment.Text = "- **Agreed**: [AG-1] first decision`r`n`r`n- **Agreed**: [AG-2] second decision"
+            $txtItemCode.Text = "AG-1"
+            Invoke-DemoteItemCode
+            if ($txtAlignment.Text -notmatch 'first decision' -and $txtAlignment.Text -match 'second decision') {
+                Add-Pass "DEMOTE_AG_ID"
+            } else {
+                Add-Fail "DEMOTE_AG_ID remaining=[$($txtAlignment.Text)]"
+            }
+        } finally {
+            $txtAlignment.Text = $savedAlignText
+            if ($txtItemCode) { $txtItemCode.Text = $savedItemCode }
+            Save-BlackboardContent
+        }
+
+        # The one residual of the id scheme: nothing in the board records an id once its row is
+        # gone, so removing the highest-numbered decision frees that id. Silent reuse would let
+        # a quoted AG-n drift onto a different decision, so the demote must announce it.
+        $reuseSavedAlign = $txtAlignment.Text
+        $reuseSavedCode = if ($txtItemCode) { $txtItemCode.Text } else { "" }
+        try {
+            $txtAlignment.Text = "- **Agreed**: [AG-1] first`r`n`r`n- **Agreed**: [AG-2] second"
+            $txtItemCode.Text = "AG-2"
+            Invoke-DemoteItemCode
+            $reuseStatus = if ($txtStatus) { [string]$txtStatus.Text } else { "" }
+            if ($reuseStatus -match 'reuse AG-2') {
+                Add-Pass "DEMOTE_MAX_ID_WARNS"
+            } else {
+                Add-Fail "DEMOTE_MAX_ID_WARNS status=[$reuseStatus]"
+            }
+            # A gap must not claim the freed id is next. Removing AG-9 while AG-5 remains
+            # leaves the next id at AG-6. The v1.6.14 warning said "reuse AG-9" here.
+            $txtAlignment.Text = "- **Agreed**: [AG-5] older`r`n`r`n- **Agreed**: [AG-9] newest"
+            $txtItemCode.Text = "AG-9"
+            Invoke-DemoteItemCode
+            $gapStatus = if ($txtStatus) { [string]$txtStatus.Text } else { "" }
+            if ($gapStatus -notmatch 'reuse AG-9' -and $gapStatus -match 'Demoted AG9 from Alignment') {
+                Add-Pass "DEMOTE_GAP_ID_NO_REUSE_WARN"
+            } else {
+                Add-Fail "DEMOTE_GAP_ID_NO_REUSE_WARN status=[$gapStatus]"
+            }
+        } finally {
+            $txtAlignment.Text = $reuseSavedAlign
+            if ($txtItemCode) { $txtItemCode.Text = $reuseSavedCode }
+            Save-BlackboardContent
+        }
+
+        # A promoted decision must keep every backtick it was written with. Two shapes matter:
+        # one that merely begins with a code span, and one that both begins and ends with one,
+        # because a "strip a wrapping pair" rule corrupts exactly that second shape while the
+        # first still passes.
+        $btLeading = @(Get-AgreedSentences "- **Agreed**: ``Invoke-DemoteItemCode`` cannot remove any entry.")
+        $btBoth    = @(Get-AgreedSentences "- **Agreed**: ``Get-ItemCodeToken`` parses ``AG-4``")
+        $btLeadingOk = ($btLeading.Count -eq 1 -and $btLeading[0].StartsWith('`') -and $btLeading[0].EndsWith('.'))
+        $btBothOk    = ($btBoth.Count -eq 1 -and $btBoth[0].StartsWith('`') -and $btBoth[0].EndsWith('`') -and $btBoth[0] -match 'parses')
+        if ($btLeadingOk -and $btBothOk) {
+            Add-Pass "AGREED_BACKTICK_KEPT"
+        } else {
+            Add-Fail "AGREED_BACKTICK_KEPT leading=[$($btLeading -join '|')] both=[$($btBoth -join '|')]"
+        }
+
         # DeepSeek Profile Assert
         $exampleProfile = Join-Path $script:ControllerRoot ".ai\clients.example.json"
         $exampleRaw = if (Test-Path $exampleProfile) { Get-Content $exampleProfile -Raw -Encoding UTF8 } else { "" }
@@ -6603,6 +7531,17 @@ function Invoke-HeadlessUiTest {
         $txtNewObjectiveItem.Text = "Second human issue"
         $btnSubmitObjectiveItem.RaiseEvent((New-Object System.Windows.RoutedEventArgs ([System.Windows.Controls.Primitives.ButtonBase]::ClickEvent)))
         if ($txtPrompt.Text -notmatch 'HUM2:\s*Second human issue') { Add-Fail "Objective submit did not add HUM2" } else { Add-Pass "OBJ_SUBMIT_2" }
+
+        $txtHumanNotes.Text = "existing note"
+        $txtNewNoteItem.Text = "shared workspace note"
+        $btnSubmitNoteItem.RaiseEvent((New-Object System.Windows.RoutedEventArgs ([System.Windows.Controls.Primitives.ButtonBase]::ClickEvent)))
+        if ($txtHumanNotes.Text -notmatch 'shared workspace note') {
+            Add-Fail "NOTE_SUBMIT_MISSING"
+        } elseif ($txtHumanNotes.Text -match '(?m)^---\s*$') {
+            Add-Fail "NOTE_SUBMIT_INJECTED_SEPARATOR"
+        } else {
+            Add-Pass "NOTE_SUBMIT_PLAIN"
+        }
 
         # Debrief Empty Objective Guard Assert
         $txtPrompt.Text = ""
@@ -6645,6 +7584,64 @@ function Invoke-HeadlessUiTest {
         $chkGateSeat1.IsChecked = $true
         $chkGateSeat2.IsChecked = $true
         $chkSignHuman.IsChecked = $false
+        $chkSignCursor.IsChecked = $false
+        $chkSignGemini.IsChecked = $false
+
+        $seat2Name = Get-Seat2Client
+        $qTick = [char]96
+        $tickBoard = @"
+## Agent Roles & Safety
+
+| Participant | Active Role | Status | Sign-off (Complete) |
+|-------------|-------------|--------|---------------------|
+| **Human (Lead)** | ${qTick}lead${qTick} | Active | [ ] |
+| **Cursor** | ${qTick}implement${qTick} | Active | [x] |
+| **$seat2Name** | ${qTick}review${qTick} | Active | [x] |
+
+### Cursor Scratchpad
+- Role notes with no sign-off token.
+
+### $seat2Name Scratchpad
+- Role notes with no sign-off token.
+"@
+        $chkSignCursor.IsChecked = $false
+        $chkSignGemini.IsChecked = $false
+        Sync-SignoffCheckboxes $tickBoard
+        $cursorKept = [bool]$chkSignCursor.IsChecked
+        $seat2Kept = [bool]$chkSignGemini.IsChecked
+        $cursorMark = if ($chkSignCursor.IsChecked) { "[x]" } else { "[ ]" }
+        $seat2Mark = if ($chkSignGemini.IsChecked) { "[x]" } else { "[ ]" }
+        if ($cursorKept -and $seat2Kept -and $cursorMark -eq "[x]" -and $seat2Mark -eq "[x]") {
+            Add-Pass "SIGNOFF_TABLE_SURVIVES"
+        } else {
+            Add-Fail "SIGNOFF_TABLE_SURVIVES cursor=$cursorMark seat2=$seat2Mark"
+        }
+        $chkSignCursor.IsChecked = $false
+        $chkSignGemini.IsChecked = $false
+
+        $clearBoard = @"
+## Agent Roles & Safety
+
+| Participant | Active Role | Status | Sign-off (Complete) |
+|-------------|-------------|--------|---------------------|
+| **Human (Lead)** | ${qTick}lead${qTick} | Active | [ ] |
+| **Cursor** | ${qTick}implement${qTick} | Active | [ ] |
+| **$seat2Name** | ${qTick}review${qTick} | Active | [ ] |
+
+### Cursor Scratchpad
+
+### $seat2Name Scratchpad
+"@
+        $chkSignCursor.IsChecked = $true
+        $chkSignGemini.IsChecked = $true
+        Sync-SignoffCheckboxes $clearBoard
+        $cursorCleared = -not [bool]$chkSignCursor.IsChecked
+        $seat2Cleared = -not [bool]$chkSignGemini.IsChecked
+        if ($cursorCleared -and $seat2Cleared) {
+            Add-Pass "SIGNOFF_TABLE_CLEARS"
+        } else {
+            Add-Fail "SIGNOFF_TABLE_CLEARS cursor=$([bool]$chkSignCursor.IsChecked) seat2=$([bool]$chkSignGemini.IsChecked)"
+        }
         $chkSignCursor.IsChecked = $false
         $chkSignGemini.IsChecked = $false
 
