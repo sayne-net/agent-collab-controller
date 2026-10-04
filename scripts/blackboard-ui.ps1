@@ -1,5 +1,7 @@
 # AI Collab Controller (WPF UI)
-# Version 1.6.22
+# Version 1.6.24
+# 1.6.24: the save compares the board's bytes, not its size and timestamp, immediately before it writes, so an outside write of the same length inside the timestamp granularity still wins.
+# 1.6.23: a save keeps text under a later heading inside a seat pad and re-reads pads from disk before write. Adopt ignore rules include .ai/blackboard.md.*.old.
 # Standalone dual-session controller for multi-agent collaboration with human-in-the-loop steering.
 # SemVer tracks protocol and feature releases. Do not bump the patch on every local edit.
 # 1.6.22: a role-table [ ] clears a box that was already checked. The keep path and the clear path are both asserted.
@@ -42,7 +44,7 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
 [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
 
 $script:HeadlessTest = [bool]$HeadlessTest
-$script:AppVersion = "v1.6.22"
+$script:AppVersion = "v1.6.24"
 $script:ShipBranch = "main"
 $script:SuppressConfigSave = $false
 $script:EnabledPhases = @("pitch","discuss","plan","implement","review","test","debrief")
@@ -318,6 +320,7 @@ function Add-BoardGitignoreRules {
         '.ai/blackboard.md',
         '.ai/blackboard.md.bak',
         '.ai/blackboard.md.*.tmp',
+        '.ai/blackboard.md.*.old',
         '.ai/lease.json',
         '.ai/history/',
         '.ai/saved/'
@@ -5063,6 +5066,71 @@ function Get-LastMarkdownBody {
     return $ms[$ms.Count - 1].Groups[1].Value.Trim()
 }
 
+# A seat pad runs until the next participant heading. A later ### line inside the pad
+# is that seat's own note. Stopping at every ### dropped those notes on the next save.
+function Get-SeatScratchpadBody {
+    param(
+        [string]$Raw,
+        [string[]]$HeadingPattern
+    )
+    if ([string]::IsNullOrEmpty($Raw) -or -not $HeadingPattern) { return "" }
+    $lines = @($Raw -split '\r?\n')
+    $start = -1
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        foreach ($p in $HeadingPattern) {
+            if ($lines[$i] -match ('^(?:###|##)\s+' + $p + '\s*$')) {
+                $start = $i
+                break
+            }
+        }
+        if ($start -ge 0) { break }
+    }
+    if ($start -lt 0) { return "" }
+    $end = $lines.Count
+    for ($j = $start + 1; $j -lt $lines.Count; $j++) {
+        $line = $lines[$j]
+        if ($line -match '^## [^#]') { $end = $j; break }
+        $same = $false
+        foreach ($p in $HeadingPattern) {
+            if ($line -match ('^(?:###|##)\s+' + $p + '\s*$')) { $same = $true; break }
+        }
+        if ($same) { continue }
+        if ($line -match '^(?:###|##)\s+.+\s+Scratchpad\s*$') { $end = $j; break }
+        if ($line -match '^(?:###|##)\s+(?:Human(?:\s+\(Lead\))?|.+\s+\(Lead\))\s*$') { $end = $j; break }
+    }
+    if ($end -le ($start + 1)) { return "" }
+    return (($lines[($start + 1)..($end - 1)] -join "`n").Trim())
+}
+
+function Read-SaveScratchpads {
+    param(
+        [string]$Path,
+        [string]$Seat1,
+        [string]$Seat2,
+        [bool]$Clear
+    )
+    $cursor = "- ($Seat1 updates here)"
+    $gemini = "- ($Seat2 updates here)"
+    if ($Clear -or [string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path)) {
+        return @{ Cursor = $cursor; Gemini = $gemini }
+    }
+    $raw = [System.IO.File]::ReadAllText($Path, [System.Text.Encoding]::UTF8)
+    $s1Esc = [regex]::Escape($Seat1)
+    $s2Esc = [regex]::Escape($Seat2)
+    $cPat = @("$s1Esc\s+Scratchpad", 'Cursor\s+Scratchpad', 'Agent\s*1\s+Scratchpad', '(?:Windsurf|VS\s*Code|Terminal)\s+Scratchpad')
+    $gPat = @("$s2Esc\s+Scratchpad", 'Gemini(?:\s+\(Antigravity\))?\s+Scratchpad', 'Antigravity\s+Scratchpad', 'Agent\s*2\s+Scratchpad')
+    $cPad = Get-SeatScratchpadBody -Raw $raw -HeadingPattern $cPat
+    $gPad = Get-SeatScratchpadBody -Raw $raw -HeadingPattern $gPat
+    if ($cPad) { $cursor = $cPad }
+    if ($gPad) { $gemini = $gPad }
+    $item = Get-Item -LiteralPath $Path
+    # Raw travels back with the pads so the writer can compare the file's actual bytes
+    # immediately before it writes. Size plus timestamp misses an outside write that
+    # changes content without changing length inside the filesystem's timestamp
+    # granularity; the bytes cannot miss it. Ticks/Length stay for the settle loop.
+    return @{ Cursor = $cursor; Gemini = $gemini; Raw = $raw; Ticks = $item.LastWriteTimeUtc.Ticks; Length = $item.Length }
+}
+
 function Get-ScratchpadExcerpt {
     param(
         [string]$body,
@@ -5729,24 +5797,10 @@ function Save-BlackboardContent {
             }
 
             if (-not $clearScratchpads) {
-                # Preserve and migrate Seat 1 scratchpad notes under new client heading
-                $cPad = Get-LastMarkdownBody $existing "(?:###|##)\s+$s1Esc(?:\s+Scratchpad)?"
-                if (-not $cPad) { $cPad = Get-LastMarkdownBody $existing "(?:###|##)\s+Cursor(?:\s+Scratchpad)?" }
-                if (-not $cPad) { $cPad = Get-LastMarkdownBody $existing "(?:###|##)\s+Agent\s*1(?:\s+Scratchpad)?" }
-                if (-not $cPad) { $cPad = Get-LastMarkdownBody $existing "(?:###|##)\s+(?:Windsurf|VS\s*Code|Terminal)(?:\s+Scratchpad)?" }
-
-                # Preserve and migrate Seat 2 scratchpad notes under new client heading
-                $gPad = Get-LastMarkdownBody $existing "(?:###|##)\s+$s2Esc(?:\s+Scratchpad)?"
-                if (-not $gPad) { $gPad = Get-LastMarkdownBody $existing "(?:###|##)\s+Gemini(?:\s+\(Antigravity\))?(?:\s+Scratchpad)?" }
-                if (-not $gPad) { $gPad = Get-LastMarkdownBody $existing "(?:###|##)\s+Antigravity(?:\s+Scratchpad)?" }
-                if (-not $gPad) { $gPad = Get-LastMarkdownBody $existing "(?:###|##)\s+Agent\s*2(?:\s+Scratchpad)?" }
-
-                if ($cPad) { 
-                    $cursorScratchpad = $cPad
-                }
-                if ($gPad) { 
-                    $geminiScratchpad = $gPad
-                }
+                $padPath = if ($customPath) { $customPath } else { $script:BlackboardPath }
+                $pads = Read-SaveScratchpads -Path $padPath -Seat1 $s1 -Seat2 $s2 -Clear $false
+                $cursorScratchpad = $pads.Cursor
+                $geminiScratchpad = $pads.Gemini
             }
         } catch {}
     }
@@ -5780,7 +5834,17 @@ function Save-BlackboardContent {
     }
 
     $q = [char]96
-    $lines = @(
+    $padPath = if ($customPath) { $customPath } else { $script:BlackboardPath }
+    $content = ""
+    $padReadRaw = ""
+    for ($padPass = 0; $padPass -lt 2; $padPass++) {
+        if (-not $clearScratchpads) {
+            $pads = Read-SaveScratchpads -Path $padPath -Seat1 $s1 -Seat2 $s2 -Clear $false
+            $cursorScratchpad = $pads.Cursor
+            $geminiScratchpad = $pads.Gemini
+        }
+    $buildLines = {
+        @(
         "# Dual-Session Agent Blackboard",
         "",
         ("> **Flow Control**: " + $q + $flow + $q),
@@ -5834,12 +5898,32 @@ function Save-BlackboardContent {
         "",
         $agent2Header,
         $geminiScratchpad
-    )
-    
+        )
+    }
+    $lines = & $buildLines
+
+    if (-not $clearScratchpads) { $padReadRaw = $pads.Raw }
     $content = $lines -join [Environment]::NewLine
+        if ($clearScratchpads) { break }
+        $again = Read-SaveScratchpads -Path $padPath -Seat1 $s1 -Seat2 $s2 -Clear $false
+        $padReadRaw = $again.Raw
+        if ($again.Cursor -eq $cursorScratchpad -and $again.Gemini -eq $geminiScratchpad) { break }
+    }
     if (-not (Lock-BoardLease $customPath)) {
         if ($txtStatus) { $txtStatus.Text = "Board lease is held by another machine." }
         return
+    }
+    if (-not $clearScratchpads -and (Test-Path -LiteralPath $padPath)) {
+        # Byte compare, not stat compare: an outside writer that changes the board
+        # between the last read and this point must win, not be overwritten.
+        $diskNow = [System.IO.File]::ReadAllText($padPath, [System.Text.Encoding]::UTF8)
+        if ($diskNow -ne $padReadRaw) {
+            $pads = Read-SaveScratchpads -Path $padPath -Seat1 $s1 -Seat2 $s2 -Clear $false
+            $cursorScratchpad = $pads.Cursor
+            $geminiScratchpad = $pads.Gemini
+            $lines = & $buildLines
+            $content = $lines -join [Environment]::NewLine
+        }
     }
     Write-TextAtomic -Path $customPath -Content $content
     $script:FormDirty = $false
@@ -7082,6 +7166,9 @@ function Invoke-HeadlessUiTest {
         Add-Fail ("ADOPT_GITIGNORE_COVERS uncovered=" + ($uncovered -join ',') + " history=$hasHistory saved=$hasSaved")
     }
     Remove-Item -LiteralPath $coverDir -Recurse -Force -ErrorAction SilentlyContinue
+    $oldRule = @($coverGi -split '\r?\n' | Where-Object { $_.Trim() -eq '.ai/blackboard.md.*.old' }).Count -eq 1
+    $oldCovered = Test-AiChildCoveredByGitignore -GitignoreText $coverGi -ChildName 'blackboard.md.abc123.old'
+    if ($oldRule -and $oldCovered) { Add-Pass "ADOPT_GITIGNORE_OLD" } else { Add-Fail "ADOPT_GITIGNORE_OLD rule=$oldRule covered=$oldCovered" }
     $placeholderDir = Join-Path $env:TEMP ("bb-adopt-ph-" + [guid]::NewGuid().ToString("N"))
     New-Item -ItemType Directory -Path $placeholderDir -Force | Out-Null
     $templatePathForAdopt = Join-Path $script:ControllerRoot ".ai\blackboard.example.md"
@@ -7926,7 +8013,32 @@ function Invoke-HeadlessUiTest {
         }
     }
 
-    if ($fails.Count -eq 0) { Add-Pass "ALL"; return 0 }
+    $padSample = "### Cursor Scratchpad`ncursor-keep`n### DeepSeek Scratchpad`ndeep-keep`n### DeepSeek Scratchpad (reconcile turn 2)`ndeep-extra`n#### inside`n"
+$padCursor = Get-SeatScratchpadBody -Raw $padSample -HeadingPattern @('Cursor\s+Scratchpad')
+$padDeep = Get-SeatScratchpadBody -Raw $padSample -HeadingPattern @('DeepSeek\s+Scratchpad')
+if ($padCursor -eq 'cursor-keep' -and $padDeep.Contains('deep-keep') -and $padDeep.Contains('deep-extra') -and $padDeep.Contains('#### inside')) {
+    Add-Pass "SCRATCHPAD_KEEPS_LATER_HEADING"
+} else {
+    Add-Fail "SCRATCHPAD_KEEPS_LATER_HEADING cursor=$padCursor deep=$padDeep"
+}
+# The pre-write guard must compare bytes. Same length plus an unchanged timestamp
+# granularity is the case a stat compare cannot see.
+$saveGuardDir = Join-Path ([System.IO.Path]::GetTempPath()) ("bb-save-guard-" + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $saveGuardDir -Force | Out-Null
+$saveGuardPath = Join-Path $saveGuardDir 'board.md'
+[System.IO.File]::WriteAllText($saveGuardPath, "### Cursor Scratchpad`nAAAA`n### DeepSeek Scratchpad`nBBBB`n", (New-Object System.Text.UTF8Encoding($false)))
+$firstRead = Read-SaveScratchpads -Path $saveGuardPath -Seat1 'Cursor' -Seat2 'DeepSeek' -Clear $false
+[System.IO.File]::WriteAllText($saveGuardPath, "### Cursor Scratchpad`nCCCC`n### DeepSeek Scratchpad`nDDDD`n", (New-Object System.Text.UTF8Encoding($false)))
+$secondRead = Read-SaveScratchpads -Path $saveGuardPath -Seat1 'Cursor' -Seat2 'DeepSeek' -Clear $false
+$sameLength = ([System.IO.File]::ReadAllText($saveGuardPath)).Length -eq $firstRead.Raw.Length
+$guardSees = $secondRead.Raw -ne $firstRead.Raw
+if ($saveGuardDir -and (Test-Path -LiteralPath $saveGuardDir)) { Remove-Item -LiteralPath $saveGuardDir -Recurse -Force -ErrorAction SilentlyContinue }
+if ($guardSees -and $sameLength) {
+    Add-Pass "SAVE_GUARD_COMPARES_BYTES"
+} else {
+    Add-Fail "SAVE_GUARD_COMPARES_BYTES sees=$guardSees sameLength=$sameLength"
+}
+if ($fails.Count -eq 0) { Add-Pass "ALL"; return 0 }
     Add-Fail ("count " + $fails.Count)
     return 1
 }

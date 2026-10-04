@@ -1,6 +1,7 @@
 # Ephemeral live session tape and archives
 .ai/blackboard.md
 .ai/blackboard.md.bak
+.ai/blackboard.md.*.old
 .ai/history/
 .ai/saved/
 
